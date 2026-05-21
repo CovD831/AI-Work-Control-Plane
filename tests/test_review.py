@@ -1,0 +1,54 @@
+import pytest
+
+from agent_orchestrator.review import Finding, ReviewResult
+
+
+def test_review_result_can_approve_without_findings() -> None:
+    result = ReviewResult(verdict="approve", summary="Looks good.")
+
+    assert result.to_dict() == {
+        "verdict": "approve",
+        "summary": "Looks good.",
+        "findings": [],
+        "next_steps": [],
+    }
+
+
+def test_review_result_can_request_attention_with_findings() -> None:
+    finding = Finding(
+        severity="high",
+        title="Missing validation",
+        body="Input reaches storage without validation.",
+        file="src/app.py",
+        line_start=10,
+        line_end=12,
+        confidence=0.9,
+        recommendation="Validate input before persistence.",
+    )
+    result = ReviewResult(
+        verdict="needs_attention",
+        summary="One issue found.",
+        findings=[finding],
+        next_steps=["Route to rescue if policy allows."],
+    )
+
+    assert result.to_dict()["findings"][0]["severity"] == "high"
+
+
+def test_review_result_rejects_invalid_verdict_findings_combination() -> None:
+    finding = Finding(
+        severity="low",
+        title="Tiny issue",
+        body="Issue body.",
+        file="src/app.py",
+        line_start=1,
+        line_end=1,
+        confidence=0.5,
+        recommendation="Fix later.",
+    )
+
+    with pytest.raises(ValueError):
+        ReviewResult(verdict="approve", summary="Approved?", findings=[finding])
+
+    with pytest.raises(ValueError):
+        ReviewResult(verdict="needs_attention", summary="Missing findings.")
