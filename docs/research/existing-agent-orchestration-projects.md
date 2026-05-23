@@ -27,11 +27,13 @@ The plugin projects are mostly **bidirectional tool bridges**:
 Our framework should sit above both shapes:
 
 ```text
-policy router + task contract
-  -> bridge adapters for Claude/Codex tools
-  -> durable job runtime for background execution
+strategy core + task contract
+  -> execution plugins for Claude/Codex tools
+  -> optional durable job/runtime backends
   -> structured review/rescue results
 ```
+
+That means we should learn from these projects without trying to absorb their entire product surface. Bridge behavior, background job handling, tmux sessions, and provider-native continuation are important integration points, but they should remain plugin concerns around our core strategy engine.
 
 ## Design Implications For This Repo
 
@@ -102,6 +104,8 @@ The adapters should expose a shared lifecycle rather than one-shot `execute()` o
 
 This allows long-running Claude/Codex jobs, course correction, and partial progress capture.
 
+This is still an integration boundary, not the core value of the repository. We should support it through pluggable runtime interfaces rather than make background execution completeness the roadmap's main success condition.
+
 ### 5. Add Recursion And Delegation Guards
 
 Because `codex-plugin-cc` and `cc-plugin-codex` can point at each other, our policy router needs explicit loop prevention:
@@ -115,13 +119,29 @@ Because `codex-plugin-cc` and `cc-plugin-codex` can point at each other, our pol
 
 `codex-orchestrator` highlights the value of a `docs/CODEBASE_MAP.md` context map. Our task contract should support optional shared context artifacts, and Codex-style workers should receive them when present.
 
+## What Not To Rebuild
+
+These projects already validate several lower-level concerns:
+
+- bidirectional bridge commands
+- background job persistence and session control
+- provider-specific continuation flows
+- tmux-backed orchestration runtime mechanics
+
+Our repository should avoid repeating those as primary roadmap goals. The differentiated layer should be:
+
+- strategy inputs
+- route/review/rescue/replay/reroute decisions
+- explainability for why a decision happened
+- policy guardrails such as ping-pong, recursion, and budget control
+
 ## Recommended Next Implementation Step
 
-Upgrade the MVP in this order:
+Upgrade the strategy-first MVP in this order:
 
-1. Add `JobRequest`, `AgentJob`, `JobResult`, and `JobRuntime` interfaces.
-2. Add an in-memory job runtime for tests and a file-backed runtime for local durability.
-3. Replace `WorkerAdapter.execute()` with `start/status/result` capable adapters while keeping a synchronous convenience wrapper.
-4. Add `ReviewResult` and `Finding` models.
-5. Update policy routing so review and rescue are distinct job kinds with different sandbox defaults.
-6. Add tests for job lifecycle, review-result parsing, and delegation depth guards.
+1. Formalize strategy inputs: task, risk, dependency, failure, and budget signals.
+2. Formalize strategy outputs: route, review level, rescue mode, replay scope, reroute policy, and stop reason.
+3. Add structured explanation fields so runs can justify why a route or escalation happened.
+4. Stabilize plugin interfaces for providers, bridges, and job runtimes.
+5. Add guardrail tests for depth, ping-pong prevention, and budget-aware stopping.
+6. Benchmark `auto` strategy against fixed modes on real task samples.

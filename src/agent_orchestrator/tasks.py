@@ -22,6 +22,142 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:8]}"
 
 
+def _policy_from_payload(payload: dict[str, object]) -> PolicyProfile:
+    provider_flow = tuple(str(step) for step in payload.get("provider_flow", []))
+    return PolicyProfile(
+        mode=OrchestrationMode(payload["mode"]),
+        max_depth=int(payload["max_depth"]),
+        planner_agents=int(payload["planner_agents"]),
+        review_required=payload["review_required"],
+        rescue_enabled=bool(payload["rescue_enabled"]),
+        rescue_policy=str(payload["rescue_policy"]),
+        parallelism=payload["parallelism"],
+        agent_enabled=bool(payload.get("agent_enabled", True)),
+        topology_depth=int(payload.get("topology_depth", payload["max_depth"])),
+        provider_flow=provider_flow,  # type: ignore[arg-type]
+    )
+
+
+def _failure_signal_from_payload(payload: dict[str, object]) -> FailureSignal:
+    return FailureSignal(
+        action=payload["action"],
+        next_mode=OrchestrationMode(payload["next_mode"]) if payload.get("next_mode") else None,
+        next_agent_enabled=payload.get("next_agent_enabled"),
+        next_depth=payload.get("next_depth"),
+        upgrade_kind=payload.get("upgrade_kind", "abort"),
+        work_unit_ids=list(payload.get("work_unit_ids", [])),
+        root_cause_work_unit_ids=list(payload.get("root_cause_work_unit_ids", [])),
+        affected_work_unit_ids=list(payload.get("affected_work_unit_ids", [])),
+        reasons=list(payload.get("reasons", [])),
+        confidence=float(payload.get("confidence", 0.5)),
+    )
+
+
+def _failure_decision_from_payload(payload: dict[str, object]) -> FailureDecision:
+    return FailureDecision(
+        action=payload["action"],
+        next_mode=OrchestrationMode(payload["next_mode"]) if payload.get("next_mode") else None,
+        next_agent_enabled=payload.get("next_agent_enabled"),
+        next_depth=payload.get("next_depth"),
+        upgrade_kind=payload.get("upgrade_kind", "abort"),
+        work_unit_ids=list(payload.get("work_unit_ids", [])),
+        root_cause_work_unit_ids=list(payload.get("root_cause_work_unit_ids", [])),
+        affected_work_unit_ids=list(payload.get("affected_work_unit_ids", [])),
+        reasons=list(payload.get("reasons", [])),
+        confidence=float(payload.get("confidence", 0.5)),
+    )
+
+
+@dataclass(slots=True)
+class DecisionSignals:
+    task: dict[str, object]
+    risk: dict[str, object]
+    dependency: dict[str, object]
+    failure: dict[str, object]
+    budget: dict[str, object]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "task": self.task,
+            "risk": self.risk,
+            "dependency": self.dependency,
+            "failure": self.failure,
+            "budget": self.budget,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "DecisionSignals":
+        return cls(
+            task=dict(data.get("task", {})),
+            risk=dict(data.get("risk", {})),
+            dependency=dict(data.get("dependency", {})),
+            failure=dict(data.get("failure", {})),
+            budget=dict(data.get("budget", {})),
+        )
+
+
+@dataclass(slots=True)
+class DecisionArtifact:
+    route: dict[str, object]
+    review_level: dict[str, object]
+    rescue_mode: dict[str, object]
+    replay_scope: dict[str, object]
+    reroute_policy: dict[str, object]
+    stop_reason: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "route": self.route,
+            "review_level": self.review_level,
+            "rescue_mode": self.rescue_mode,
+            "replay_scope": self.replay_scope,
+            "reroute_policy": self.reroute_policy,
+            "stop_reason": self.stop_reason,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "DecisionArtifact":
+        return cls(
+            route=dict(data.get("route", {})),
+            review_level=dict(data.get("review_level", {})),
+            rescue_mode=dict(data.get("rescue_mode", {})),
+            replay_scope=dict(data.get("replay_scope", {})),
+            reroute_policy=dict(data.get("reroute_policy", {})),
+            stop_reason=str(data.get("stop_reason", "unknown")),
+        )
+
+
+@dataclass(slots=True)
+class ExecutionContract:
+    source: str
+    goal: str
+    acceptance_criteria: list[str]
+    topology: dict[str, object]
+    provider_recommendation: dict[str, object]
+    gating: dict[str, object]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "source": self.source,
+            "goal": self.goal,
+            "acceptance_criteria": self.acceptance_criteria,
+            "topology": self.topology,
+            "provider_recommendation": self.provider_recommendation,
+            "gating": self.gating,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "ExecutionContract":
+        return cls(
+            source=str(data.get("source", "")),
+            goal=str(data.get("goal", "")),
+            acceptance_criteria=[str(item) for item in data.get("acceptance_criteria", [])],
+            topology=dict(data.get("topology", {})),
+            provider_recommendation=dict(data.get("provider_recommendation", {})),
+            gating=dict(data.get("gating", {})),
+        )
+
+
 @dataclass(slots=True)
 class TaskContract:
     goal: str
@@ -86,6 +222,7 @@ class WorkUnit:
     owner_type: OwnerType
     max_depth: int
     failure_policy: FailurePolicy
+    provider_hint: str | None = None
     depends_on: list[str] = field(default_factory=list)
     id: str = field(default_factory=lambda: _new_id("work"))
 
@@ -102,6 +239,7 @@ class WorkUnit:
             "owner_type": self.owner_type,
             "max_depth": self.max_depth,
             "failure_policy": self.failure_policy,
+            "provider_hint": self.provider_hint,
             "depends_on": self.depends_on,
         }
 
@@ -118,6 +256,7 @@ class WorkUnit:
             owner_type=data["owner_type"],
             max_depth=int(data["max_depth"]),
             failure_policy=data["failure_policy"],
+            provider_hint=data.get("provider_hint"),
             depends_on=list(data.get("depends_on", [])),
             id=str(data["id"]),
         )
@@ -223,6 +362,8 @@ class OrchestrationAttempt:
     job_status_summary: dict[str, int] = field(default_factory=dict)
     current_mode: OrchestrationMode | None = None
     lineage: list[dict[str, object]] = field(default_factory=list)
+    signals: DecisionSignals | None = None
+    decision_artifact: DecisionArtifact | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -251,19 +392,13 @@ class OrchestrationAttempt:
             "job_status_summary": self.job_status_summary,
             "current_mode": self.current_mode.value if self.current_mode else None,
             "lineage": self.lineage,
+            "signals": self.signals.to_dict() if self.signals else None,
+            "decision_artifact": self.decision_artifact.to_dict() if self.decision_artifact else None,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "OrchestrationAttempt":
-        policy = PolicyProfile(
-            mode=OrchestrationMode(data["policy"]["mode"]),
-            max_depth=int(data["policy"]["max_depth"]),
-            planner_agents=int(data["policy"]["planner_agents"]),
-            review_required=data["policy"]["review_required"],
-            rescue_enabled=bool(data["policy"]["rescue_enabled"]),
-            rescue_policy=str(data["policy"]["rescue_policy"]),
-            parallelism=data["policy"]["parallelism"],
-        )
+        policy = _policy_from_payload(data["policy"])
         routing_decision = None
         if data.get("routing_decision"):
             routing_decision_payload = data["routing_decision"]
@@ -280,42 +415,18 @@ class OrchestrationAttempt:
                     recommended_mode=OrchestrationMode(profile_payload["recommended_mode"]),
                     reasons=list(profile_payload.get("reasons", [])),
                 ),
-                policy=PolicyProfile(
-                    mode=OrchestrationMode(routing_decision_payload["policy"]["mode"]),
-                    max_depth=int(routing_decision_payload["policy"]["max_depth"]),
-                    planner_agents=int(routing_decision_payload["policy"]["planner_agents"]),
-                    review_required=routing_decision_payload["policy"]["review_required"],
-                    rescue_enabled=bool(routing_decision_payload["policy"]["rescue_enabled"]),
-                    rescue_policy=str(routing_decision_payload["policy"]["rescue_policy"]),
-                    parallelism=routing_decision_payload["policy"]["parallelism"],
-                ),
+                policy=_policy_from_payload(routing_decision_payload["policy"]),
                 reasons=list(routing_decision_payload.get("reasons", [])),
                 confidence=float(routing_decision_payload.get("confidence", 0.5)),
             )
         failure_signal = None
         if data.get("failure_signal"):
-            failure_signal_payload = data["failure_signal"]
-            failure_signal = FailureSignal(
-                action=failure_signal_payload["action"],
-                next_mode=OrchestrationMode(failure_signal_payload["next_mode"]) if failure_signal_payload.get("next_mode") else None,
-                work_unit_ids=list(failure_signal_payload.get("work_unit_ids", [])),
-                root_cause_work_unit_ids=list(failure_signal_payload.get("root_cause_work_unit_ids", [])),
-                affected_work_unit_ids=list(failure_signal_payload.get("affected_work_unit_ids", [])),
-                reasons=list(failure_signal_payload.get("reasons", [])),
-                confidence=float(failure_signal_payload.get("confidence", 0.5)),
-            )
+            failure_signal = _failure_signal_from_payload(data["failure_signal"])
         failure_decision = None
         if data.get("failure_decision"):
-            failure_decision_payload = data["failure_decision"]
-            failure_decision = FailureDecision(
-                action=failure_decision_payload["action"],
-                next_mode=OrchestrationMode(failure_decision_payload["next_mode"]) if failure_decision_payload.get("next_mode") else None,
-                work_unit_ids=list(failure_decision_payload.get("work_unit_ids", [])),
-                root_cause_work_unit_ids=list(failure_decision_payload.get("root_cause_work_unit_ids", [])),
-                affected_work_unit_ids=list(failure_decision_payload.get("affected_work_unit_ids", [])),
-                reasons=list(failure_decision_payload.get("reasons", [])),
-                confidence=float(failure_decision_payload.get("confidence", 0.5)),
-            )
+            failure_decision = _failure_decision_from_payload(data["failure_decision"])
+        signals = DecisionSignals.from_dict(data["signals"]) if data.get("signals") else None
+        decision_artifact = DecisionArtifact.from_dict(data["decision_artifact"]) if data.get("decision_artifact") else None
         return cls(
             attempt_id=str(data["attempt_id"]),
             run_id=data.get("run_id"),
@@ -342,6 +453,8 @@ class OrchestrationAttempt:
             job_status_summary=dict(data.get("job_status_summary", {})),
             current_mode=OrchestrationMode(data["current_mode"]) if data.get("current_mode") else None,
             lineage=list(data.get("lineage", [])),
+            signals=signals,
+            decision_artifact=decision_artifact,
         )
 
 
@@ -370,6 +483,9 @@ class OrchestrationRun:
     active_attempt_id: str | None = None
     lineage: list[dict[str, object]] = field(default_factory=list)
     lock_status: dict[str, object] | None = None
+    signals: DecisionSignals | None = None
+    decision_artifact: DecisionArtifact | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -396,6 +512,9 @@ class OrchestrationRun:
             "active_attempt_id": self.active_attempt_id,
             "lineage": self.lineage,
             "lock_status": self.lock_status,
+            "signals": self.signals.to_dict() if self.signals else None,
+            "decision_artifact": self.decision_artifact.to_dict() if self.decision_artifact else None,
+            "metadata": self.metadata,
         }
 
     @classmethod
@@ -416,18 +535,12 @@ class OrchestrationRun:
                     recommended_mode=OrchestrationMode(profile_payload["recommended_mode"]),
                     reasons=list(profile_payload.get("reasons", [])),
                 ),
-                policy=PolicyProfile(
-                    mode=OrchestrationMode(routing_payload["policy"]["mode"]),
-                    max_depth=int(routing_payload["policy"]["max_depth"]),
-                    planner_agents=int(routing_payload["policy"]["planner_agents"]),
-                    review_required=routing_payload["policy"]["review_required"],
-                    rescue_enabled=bool(routing_payload["policy"]["rescue_enabled"]),
-                    rescue_policy=str(routing_payload["policy"]["rescue_policy"]),
-                    parallelism=routing_payload["policy"]["parallelism"],
-                ),
+                policy=_policy_from_payload(routing_payload["policy"]),
                 reasons=list(routing_payload.get("reasons", [])),
                 confidence=float(routing_payload.get("confidence", 0.5)),
             )
+        signals = DecisionSignals.from_dict(data["signals"]) if data.get("signals") else None
+        decision_artifact = DecisionArtifact.from_dict(data["decision_artifact"]) if data.get("decision_artifact") else None
         return cls(
             run_id=str(data["run_id"]),
             parent_run_id=data.get("parent_run_id"),
@@ -443,15 +556,7 @@ class OrchestrationRun:
             events=list(data.get("events", [])),
             jobs=[AgentJob.from_dict(job) for job in data.get("jobs", [])],
             routing_decision=routing_decision,
-            policy=PolicyProfile(
-                mode=OrchestrationMode(data["policy"]["mode"]),
-                max_depth=int(data["policy"]["max_depth"]),
-                planner_agents=int(data["policy"]["planner_agents"]),
-                review_required=data["policy"]["review_required"],
-                rescue_enabled=bool(data["policy"]["rescue_enabled"]),
-                rescue_policy=str(data["policy"]["rescue_policy"]),
-                parallelism=data["policy"]["parallelism"],
-            ) if data.get("policy") else None,
+            policy=_policy_from_payload(data["policy"]) if data.get("policy") else None,
             contract=TaskContract.from_dict(data["contract"]) if data.get("contract") else None,
             work_units=[WorkUnit.from_dict(unit) for unit in data.get("work_units", [])],
             results=[WorkUnitResult.from_dict(result) for result in data.get("results", [])],
@@ -460,6 +565,9 @@ class OrchestrationRun:
             active_attempt_id=data.get("active_attempt_id"),
             lineage=list(data.get("lineage", [])),
             lock_status=data.get("lock_status"),
+            signals=signals,
+            decision_artifact=decision_artifact,
+            metadata=dict(data.get("metadata", {})),
         )
 
 

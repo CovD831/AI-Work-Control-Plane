@@ -55,13 +55,21 @@ class MockClaudePlanner:
         if not goal:
             goal = "Clarify and implement the requested change"
 
+        topology = policy.execution_topology
+        if not topology.agent_enabled:
+            context = "Run through the control plane without spawning agent topology."
+            non_goals = ["Do not recurse into agent delegation when agent mode is disabled"]
+        else:
+            context = (
+                "Use the success-first parent architecture and downgrade behavior "
+                f"through policy when requested. Provider flow: {' -> '.join(topology.provider_flow)}."
+            )
+            non_goals = ["Do not recurse beyond the selected policy depth"]
+
         return TaskContract(
             goal=goal,
-            non_goals=["Do not recurse beyond the selected policy depth"],
-            context=(
-                "Use the success-first parent architecture and downgrade behavior "
-                "through policy when requested."
-            ),
+            non_goals=non_goals,
+            context=context,
             inputs=[goal],
             outputs=["task tree", "worker results", "review summary"],
             acceptance_criteria=[
@@ -83,6 +91,25 @@ class MockClaudeDecomposer:
 
     def decompose(self, contract: TaskContract, policy: PolicyProfile) -> list[WorkUnit]:
         context = f"{contract.context} {contract.goal}"
+        flow = policy.provider_flow
+        if not policy.agent_enabled or policy.topology_depth == 0:
+            return [
+                WorkUnit(
+                    goal="Execute the requested change directly",
+                    context=context,
+                    inputs=contract.inputs,
+                    outputs=["patch", "validation notes"],
+                    acceptance_criteria=["Direct execution completes without agent delegation"],
+                    risk_level=contract.risk_level,
+                    parallelizable=False,
+                    owner_type="single_worker",
+                    max_depth=contract.max_depth,
+                    failure_policy=contract.failure_policy,
+                    provider_hint="codex",
+                    depends_on=[],
+                )
+            ]
+
         base_units = [
             WorkUnit(
                 goal="Define task contract and acceptance criteria",
@@ -95,6 +122,7 @@ class MockClaudeDecomposer:
                 owner_type="codex_swarm",
                 max_depth=contract.max_depth,
                 failure_policy=contract.failure_policy,
+                provider_hint=_flow_provider(flow, 0, fallback="claude"),
                 depends_on=[],
             ),
             WorkUnit(
@@ -108,6 +136,7 @@ class MockClaudeDecomposer:
                 owner_type="codex_swarm",
                 max_depth=contract.max_depth,
                 failure_policy=contract.failure_policy,
+                provider_hint=_flow_provider(flow, 1, fallback="codex"),
                 depends_on=[],
             ),
             WorkUnit(
@@ -121,6 +150,7 @@ class MockClaudeDecomposer:
                 owner_type="claude_team",
                 max_depth=contract.max_depth,
                 failure_policy="rescue",
+                provider_hint=_flow_provider(flow, 2, fallback="claude"),
                 depends_on=[],
             ),
         ]
@@ -128,8 +158,10 @@ class MockClaudeDecomposer:
         base_units[1].depends_on = [base_units[0].id]
         base_units[2].depends_on = [base_units[1].id]
 
-        if policy.parallelism == "limited":
+        if policy.topology_depth <= 1 or policy.parallelism == "limited":
             return base_units[:1]
+        if policy.topology_depth == 2:
+            return base_units[:2]
         if policy.parallelism == "aggressive":
             compatibility = WorkUnit(
                     goal="Run speculative compatibility check",
@@ -142,6 +174,7 @@ class MockClaudeDecomposer:
                     owner_type="codex_swarm",
                     max_depth=contract.max_depth,
                     failure_policy="retry",
+                    provider_hint=_flow_provider(flow, 1, fallback="codex"),
                     depends_on=[base_units[1].id],
                 )
             return base_units + [compatibility]
@@ -155,10 +188,11 @@ class MockCodexWorker:
     runtime: JobRuntime = field(default_factory=InMemoryJobRuntime)
 
     def execute(self, work_unit: WorkUnit, policy: PolicyProfile) -> WorkUnitResult:
+        provider = _work_unit_provider(work_unit, default="codex")
         job = self.runtime.start(
             JobRequest(
                 task_id=work_unit.id,
-                provider="codex",
+                provider=provider,
                 kind="implementation",
                 prompt=work_unit.goal,
                 cwd=str(Path.cwd()),
@@ -230,11 +264,12 @@ class MockClaudeReviewRescue:
         result: WorkUnitResult,
         policy: PolicyProfile,
     ) -> WorkUnitResult:
+        review_provider = _review_provider(policy)
         if result.status == "failed" and policy.rescue_enabled:
             job = self.runtime.start(
                 JobRequest(
                     task_id=work_unit.id,
-                    provider="claude",
+                    provider=review_provider,
                     kind="rescue",
                     prompt=f"Rescue failed work unit: {work_unit.goal}",
                     cwd=str(Path.cwd()),
@@ -268,7 +303,7 @@ class MockClaudeReviewRescue:
             job = self.runtime.start(
                 JobRequest(
                     task_id=work_unit.id,
-                    provider="claude",
+                    provider=review_provider,
                     kind="review",
                     prompt=f"Review work unit result: {work_unit.goal}",
                     cwd=str(Path.cwd()),
@@ -351,16 +386,17 @@ class RuntimeProviderAdapter:
     """Executes work units through a concrete provider-backed JobRuntime."""
 
     runtime: JobRuntime
-    provider: str
     kind: str
+    default_provider: str = "codex"
     poll_interval_seconds: float = 0.01
     poll_attempts: int = 200
 
     def execute(self, work_unit: WorkUnit, policy: PolicyProfile) -> WorkUnitResult:
+        provider = _work_unit_provider(work_unit, default=self.default_provider)
         job = self.runtime.start(
             JobRequest(
                 task_id=work_unit.id,
-                provider=self.provider,  # type: ignore[arg-type]
+                provider=provider,  # type: ignore[arg-type]
                 kind=self.kind,  # type: ignore[arg-type]
                 prompt=work_unit.goal,
                 cwd=str(Path.cwd()),
@@ -423,6 +459,106 @@ class RuntimeProviderAdapter:
             job_status=completed_job.status,
             job_phase=completed_job.phase,
             job_lifecycle=[_job_ref(completed_job)],
+        )
+
+
+@dataclass(slots=True)
+class RuntimeProviderReviewRescueAdapter:
+    """Executes review/rescue work units through a command-backed runtime."""
+
+    runtime: JobRuntime
+    default_provider: str = "claude"
+    poll_interval_seconds: float = 0.01
+    poll_attempts: int = 200
+
+    def review_or_rescue(
+        self,
+        work_unit: WorkUnit,
+        result: WorkUnitResult,
+        policy: PolicyProfile,
+    ) -> WorkUnitResult:
+        provider = _work_unit_provider(work_unit, default=self.default_provider)
+        kind = "rescue" if result.status == "failed" and policy.rescue_enabled else "review"
+        failure_reason = result.summary if kind == "rescue" else None
+        job = self.runtime.start(
+            JobRequest(
+                task_id=work_unit.id,
+                provider=provider,  # type: ignore[arg-type]
+                kind=kind,  # type: ignore[arg-type]
+                prompt=f"{kind.title()} work unit: {work_unit.goal}",
+                cwd=str(Path.cwd()),
+                max_depth=policy.max_depth,
+                failure_reason=failure_reason,
+                metadata={
+                    "context": work_unit.context,
+                    "inputs": work_unit.inputs,
+                    "outputs": work_unit.outputs,
+                    "acceptance_criteria": work_unit.acceptance_criteria,
+                    "origin_status": result.status,
+                },
+            )
+        )
+
+        completed_job = self.runtime.status(job.id)
+        for _ in range(self.poll_attempts):
+            if completed_job.status in {"completed", "failed", "cancelled"}:
+                break
+            sleep(self.poll_interval_seconds)
+            completed_job = self.runtime.status(job.id)
+
+        if completed_job.status in {"failed", "cancelled"}:
+            return WorkUnitResult(
+                work_unit_id=work_unit.id,
+                status="failed",
+                summary=completed_job.error or completed_job.summary or "Provider review job failed.",
+                patch=result.patch,
+                tests=[*result.tests, f"{kind} failed"],
+                needs_rescue=True,
+                job_id=completed_job.id,
+                job_ids=[completed_job.id, *result.job_ids],
+                job_status=completed_job.status,
+                job_phase=completed_job.phase,
+                job_lifecycle=[*result.job_lifecycle, _job_ref(completed_job)],
+                recovery_origin_status=result.status if result.status != "failed" else result.recovery_origin_status,
+            )
+
+        parsed_review = _parse_provider_review_payload(completed_job.parsed_payload)
+        if kind == "review" and parsed_review is None:
+            parsed_review = ReviewResult(
+                verdict="approve",
+                summary=completed_job.summary or f"Reviewed by provider {provider}.",
+                next_steps=["Continue as planned."],
+            )
+        if kind == "rescue" and policy.rescue_enabled:
+            return WorkUnitResult(
+                work_unit_id=work_unit.id,
+                status="rescued",
+                summary=completed_job.summary or f"Rescued via {job.id}: {work_unit.goal}",
+                patch=result.patch or f"rescued-patch-for-{work_unit.id}",
+                tests=[*result.tests, "rescue validation passed"],
+                needs_rescue=False,
+                job_id=completed_job.id,
+                job_ids=[completed_job.id, *result.job_ids],
+                job_status=completed_job.status,
+                job_phase=completed_job.phase,
+                job_lifecycle=[*result.job_lifecycle, _job_ref(completed_job)],
+                recovery_origin_status=result.status,
+            )
+
+        return WorkUnitResult(
+            work_unit_id=work_unit.id,
+            status=result.status,
+            summary=completed_job.summary or f"Reviewed by provider {provider}: {result.summary}",
+            patch=result.patch,
+            tests=[*result.tests, "review passed"],
+            needs_rescue=False,
+            job_id=completed_job.id,
+            job_ids=[completed_job.id, *result.job_ids],
+            job_status=completed_job.status,
+            job_phase=completed_job.phase,
+            job_lifecycle=[*result.job_lifecycle, _job_ref(completed_job)],
+            review_result=parsed_review,
+            recovery_origin_status=result.recovery_origin_status,
         )
 
 
@@ -496,3 +632,48 @@ def _merge_job_ids(result: WorkUnitResult, job: AgentJob) -> list[str]:
     if job.id in existing:
         return existing
     return [*existing, job.id]
+
+
+def _flow_provider(flow: tuple[str, ...], index: int, *, fallback: str) -> str:
+    if index < len(flow):
+        return flow[index]
+    return fallback
+
+
+def _work_unit_provider(work_unit: WorkUnit, *, default: str) -> str:
+    provider = work_unit.provider_hint or default
+    return provider if provider in {"claude", "codex"} else default
+
+
+def _review_provider(policy: PolicyProfile) -> str:
+    if policy.provider_flow:
+        last = policy.provider_flow[-1]
+        if last in {"claude", "codex"}:
+            return last
+    return "claude"
+
+
+def _parse_provider_review_payload(payload: dict[str, Any] | None) -> ReviewResult | None:
+    if not payload:
+        return None
+    review_payload = payload.get("review_result")
+    if not review_payload:
+        return None
+    return ReviewResult(
+        verdict=review_payload["verdict"],
+        summary=str(review_payload["summary"]),
+        findings=[
+            Finding(
+                severity=finding["severity"],
+                title=str(finding["title"]),
+                body=str(finding["body"]),
+                file=str(finding["file"]),
+                line_start=int(finding["line_start"]),
+                line_end=int(finding["line_end"]),
+                confidence=float(finding["confidence"]),
+                recommendation=str(finding["recommendation"]),
+            )
+            for finding in review_payload.get("findings", [])
+        ],
+        next_steps=list(review_payload.get("next_steps", [])),
+    )

@@ -1,5 +1,6 @@
 from agent_orchestrator.policies import OrchestrationMode
 from agent_orchestrator.routing import PolicyRouter
+from agent_orchestrator.topology import build_execution_topology
 
 
 def test_router_selects_success_first_for_high_risk() -> None:
@@ -37,3 +38,16 @@ def test_router_risk_wins_over_speed_signal() -> None:
 
     assert decision.mode == OrchestrationMode.SUCCESS_FIRST
     assert "High risk forces success_first." in decision.reasons
+
+
+def test_topology_defaults_match_mode_strength() -> None:
+    success = build_execution_topology(OrchestrationMode.SUCCESS_FIRST.value)
+    speed = build_execution_topology(OrchestrationMode.SPEED_FIRST.value)
+    cost = build_execution_topology(OrchestrationMode.COST_FIRST.value)
+
+    assert success.depth == 3
+    assert success.provider_flow == ("claude", "codex", "claude")
+    assert speed.depth == 2
+    assert speed.provider_flow == ("claude", "codex")
+    assert cost.depth == 0
+    assert cost.provider_flow == ()

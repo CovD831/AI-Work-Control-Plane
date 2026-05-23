@@ -10,15 +10,19 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from agent_orchestrator.jobs import JobStatus
-from agent_orchestrator.policies import OrchestrationMode
+from agent_orchestrator.policies import OrchestrationMode, get_policy
 
 FailureAction = Literal["retry_same_mode", "upgrade_mode", "partial_rescue", "abort"]
+UpgradeKind = Literal["depth_upgrade", "mode_upgrade", "abort"]
 
 
 @dataclass(frozen=True, slots=True)
 class FailureSignal:
     action: FailureAction
     next_mode: OrchestrationMode | None
+    next_agent_enabled: bool | None = None
+    next_depth: int | None = None
+    upgrade_kind: UpgradeKind = "abort"
     work_unit_ids: list[str] = field(default_factory=list)
     root_cause_work_unit_ids: list[str] = field(default_factory=list)
     affected_work_unit_ids: list[str] = field(default_factory=list)
@@ -29,6 +33,9 @@ class FailureSignal:
         return {
             "action": self.action,
             "next_mode": self.next_mode.value if self.next_mode else None,
+            "next_agent_enabled": self.next_agent_enabled,
+            "next_depth": self.next_depth,
+            "upgrade_kind": self.upgrade_kind,
             "work_unit_ids": self.work_unit_ids,
             "root_cause_work_unit_ids": self.root_cause_work_unit_ids,
             "affected_work_unit_ids": self.affected_work_unit_ids,
@@ -41,6 +48,9 @@ class FailureSignal:
 class FailureDecision:
     action: FailureAction
     next_mode: OrchestrationMode | None
+    next_agent_enabled: bool | None = None
+    next_depth: int | None = None
+    upgrade_kind: UpgradeKind = "abort"
     work_unit_ids: list[str] = field(default_factory=list)
     root_cause_work_unit_ids: list[str] = field(default_factory=list)
     affected_work_unit_ids: list[str] = field(default_factory=list)
@@ -51,6 +61,9 @@ class FailureDecision:
         return {
             "action": self.action,
             "next_mode": self.next_mode.value if self.next_mode else None,
+            "next_agent_enabled": self.next_agent_enabled,
+            "next_depth": self.next_depth,
+            "upgrade_kind": self.upgrade_kind,
             "work_unit_ids": self.work_unit_ids,
             "root_cause_work_unit_ids": self.root_cause_work_unit_ids,
             "affected_work_unit_ids": self.affected_work_unit_ids,
@@ -63,7 +76,7 @@ class FailureDecision:
 class FailureRouter:
     """Inspect a completed run and decide whether to upgrade the whole run."""
 
-    max_auto_upgrades: int = 1
+    max_auto_upgrades: int = 3
 
     def inspect(self, run: object) -> FailureDecision:
         mode = self._mode(run)
@@ -111,6 +124,9 @@ class FailureRouter:
             return FailureDecision(
                 action="abort",
                 next_mode=None,
+                next_agent_enabled=None,
+                next_depth=None,
+                upgrade_kind="abort",
                 work_unit_ids=[],
                 root_cause_work_unit_ids=[],
                 affected_work_unit_ids=[],
@@ -123,6 +139,9 @@ class FailureRouter:
             return FailureDecision(
                 action="partial_rescue",
                 next_mode=None,
+                next_agent_enabled=None,
+                next_depth=None,
+                upgrade_kind="abort",
                 work_unit_ids=[*root_cause_work_unit_ids, *[unit_id for unit_id in affected_work_unit_ids if unit_id not in root_cause_work_unit_ids]],
                 root_cause_work_unit_ids=root_cause_work_unit_ids,
                 affected_work_unit_ids=affected_work_unit_ids,
@@ -130,11 +149,14 @@ class FailureRouter:
                 confidence=0.85,
             )
 
-        next_mode = self.choose_next_mode(mode, self._signal(mode, reasons, high_risk_review))
-        if next_mode is None:
+        signal = self._signal(run, reasons, high_risk_review)
+        if signal.next_mode is None:
             return FailureDecision(
                 action="abort",
                 next_mode=None,
+                next_agent_enabled=None,
+                next_depth=None,
+                upgrade_kind="abort",
                 work_unit_ids=[],
                 root_cause_work_unit_ids=[],
                 affected_work_unit_ids=[],
@@ -148,7 +170,10 @@ class FailureRouter:
             action = "retry_same_mode"
         return FailureDecision(
             action=action,
-            next_mode=next_mode,
+            next_mode=signal.next_mode,
+            next_agent_enabled=signal.next_agent_enabled,
+            next_depth=signal.next_depth,
+            upgrade_kind=signal.upgrade_kind,
             work_unit_ids=[],
             root_cause_work_unit_ids=[],
             affected_work_unit_ids=[],
@@ -169,21 +194,60 @@ class FailureRouter:
 
     def _signal(
         self,
-        current_mode: OrchestrationMode,
+        run: object,
         reasons: list[str],
         high_risk_review: bool,
     ) -> FailureSignal:
-        next_mode = self.choose_next_mode(current_mode, FailureSignal(action="abort", next_mode=None))
+        current_mode = self._mode(run)
+        policy = getattr(run, "policy", None)
+        current_depth = int(getattr(policy, "topology_depth", 0) or 0)
+        current_agent_enabled = bool(getattr(policy, "agent_enabled", False))
+        target = self._choose_next_topology(current_mode, current_agent_enabled, current_depth)
+        next_mode = target["mode"] if target else None
         action: FailureAction = "upgrade_mode" if next_mode else "abort"
         return FailureSignal(
             action=action,
             next_mode=next_mode,
+            next_agent_enabled=target["agent_enabled"] if target else None,
+            next_depth=target["depth"] if target else None,
+            upgrade_kind=target["upgrade_kind"] if target else "abort",
             work_unit_ids=[],
             root_cause_work_unit_ids=[],
             affected_work_unit_ids=[],
             reasons=reasons,
             confidence=0.9 if high_risk_review else 0.6,
         )
+
+    def _choose_next_topology(
+        self,
+        current_mode: OrchestrationMode,
+        current_agent_enabled: bool,
+        current_depth: int,
+    ) -> dict[str, object] | None:
+        current_policy = get_policy(current_mode, agent_enabled=current_agent_enabled, depth=current_depth)
+        mode_cap = get_policy(current_mode).topology_depth
+
+        if current_policy.agent_enabled and current_policy.topology_depth < mode_cap:
+            return {
+                "mode": current_mode,
+                "agent_enabled": True,
+                "depth": current_policy.topology_depth + 1,
+                "upgrade_kind": "depth_upgrade",
+            }
+
+        next_mode = self.choose_next_mode(
+            current_mode,
+            FailureSignal(action="abort", next_mode=None),
+        )
+        if next_mode is None:
+            return None
+        next_policy = get_policy(next_mode)
+        return {
+            "mode": next_mode,
+            "agent_enabled": next_policy.agent_enabled,
+            "depth": next_policy.topology_depth,
+            "upgrade_kind": "mode_upgrade",
+        }
 
     @staticmethod
     def _mode(run: object) -> OrchestrationMode:

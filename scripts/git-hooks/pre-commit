@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+cd "$repo_root"
+
+set --
+for file in $(git diff --cached --name-only --diff-filter=ACMR); do
+    case "$file" in
+        README.md|docs/process/*.md|docs/architecture/*.md|src/agent_orchestrator/*.py)
+            set -- "$@" --changed-file="$file"
+            ;;
+        *)
+            continue
+            ;;
+    esac
+done
+
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance "$@"

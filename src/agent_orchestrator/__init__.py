@@ -4,6 +4,9 @@ from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode, PolicyProfile, get_policy
 from agent_orchestrator.failure import FailureDecision, FailureRouter, FailureSignal
 from agent_orchestrator.tasks import (
+    DecisionArtifact,
+    ExecutionContract,
+    DecisionSignals,
     OrchestrationAttempt,
     OrchestrationAttemptHandle,
     OrchestrationRun,
@@ -24,6 +27,22 @@ from agent_orchestrator.command import (
     PromptRenderer,
     SubprocessCommandRunner,
 )
+from agent_orchestrator.topology import ExecutionTopology, build_execution_topology
+from agent_orchestrator.adapters import RuntimeProviderAdapter, RuntimeProviderReviewRescueAdapter
+from agent_orchestrator.planning import (
+    GateVerdict,
+    PlanChecklistItem,
+    PlanResumeState,
+    PlanReviewRound,
+    PlanSession,
+    PlanSessionStatus,
+    PlanStore,
+    PlanSubtask,
+    RoundController,
+    StructuredPlanBrief,
+    TeamOrchestrator,
+    TeamRole,
+)
 
 __all__ = [
     "AgentJob",
@@ -32,6 +51,10 @@ __all__ = [
     "CommandJobRuntime",
     "CommandResult",
     "CommandSpec",
+    "DecisionArtifact",
+    "ExecutionContract",
+    "DecisionSignals",
+    "ExecutionTopology",
     "FailureDecision",
     "FailureRouter",
     "FailureSignal",
@@ -48,13 +71,28 @@ __all__ = [
     "Orchestrator",
     "PolicyProfile",
     "PolicyRouter",
+    "PlanChecklistItem",
+    "PlanResumeState",
+    "PlanReviewRound",
+    "PlanSession",
+    "PlanSessionStatus",
+    "PlanStore",
+    "PlanSubtask",
+    "RoundController",
+    "StructuredPlanBrief",
     "RoutingDecision",
     "TaskProfile",
+    "TeamOrchestrator",
+    "TeamRole",
     "PromptRenderer",
     "ProviderHealthCheck",
     "ReviewResult",
+    "RuntimeProviderAdapter",
+    "RuntimeProviderReviewRescueAdapter",
     "SubprocessCommandRunner",
     "TaskContract",
     "WorkUnit",
+    "build_execution_topology",
+    "GateVerdict",
     "get_policy",
 ]

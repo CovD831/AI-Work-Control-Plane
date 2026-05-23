@@ -25,7 +25,11 @@ from agent_orchestrator.routing import PolicyRouter, RoutingDecision
 from agent_orchestrator.state_machine import StateMachine
 from agent_orchestrator.failure import FailureRouter
 from agent_orchestrator.run_store import RunStore
+from agent_orchestrator.topology import build_execution_topology
 from agent_orchestrator.tasks import (
+    DecisionArtifact,
+    DecisionSignals,
+    ExecutionContract,
     OrchestrationAttempt,
     OrchestrationAttemptHandle,
     OrchestrationRun,
@@ -59,14 +63,16 @@ class Orchestrator:
         mode: OrchestrationMode | None = OrchestrationMode.SUCCESS_FIRST,
         reroute: bool = True,
         parent_run_id: str | None = None,
+        agent_enabled: bool | None = None,
+        depth: int | None = None,
     ) -> OrchestrationRunHandle:
         routing_decision: RoutingDecision | None = None
         if mode is None:
             routing_decision = self.router.route(requirement)
-            policy = routing_decision.policy
+            policy = get_policy(routing_decision.mode, agent_enabled=agent_enabled, depth=depth)
             initial_mode = routing_decision.mode
         else:
-            policy = get_policy(mode)
+            policy = get_policy(mode, agent_enabled=agent_enabled, depth=depth)
             initial_mode = mode
 
         run_id = f"run-{uuid4().hex[:8]}"
@@ -93,6 +99,7 @@ class Orchestrator:
             job_status_summary={},
             active_attempt_id=None,
             lineage=[],
+            metadata={},
         )
         self._store_run(run)
 
@@ -114,6 +121,8 @@ class Orchestrator:
                 "mode": mode,
                 "reroute": reroute,
                 "parent_run_id": parent_run_id,
+                "agent_enabled": agent_enabled,
+                "depth": depth,
             },
             daemon=True,
             name=f"orchestrator-run-{run_id}",
@@ -154,6 +163,8 @@ class Orchestrator:
                     "mode": run.initial_mode,
                     "reroute": run.reroute_enabled,
                     "parent_run_id": run.parent_run_id,
+                    "agent_enabled": run.policy.agent_enabled if run.policy else None,
+                    "depth": run.policy.topology_depth if run.policy else None,
                 },
                 daemon=True,
                 name=f"orchestrator-resume-{run_id}",
@@ -174,15 +185,24 @@ class Orchestrator:
                 final_mode=run.final_mode,
                 parent_run_id=run.parent_run_id,
             )
-        return self.start_run(run.contract.goal if run.contract else "", next_mode, reroute=True, parent_run_id=run.run_id)
+        return self.start_run(
+            run.contract.goal if run.contract else "",
+            next_mode,
+            reroute=True,
+            parent_run_id=run.run_id,
+            agent_enabled=run.policy.agent_enabled if run.policy else None,
+            depth=run.policy.topology_depth if run.policy else None,
+        )
 
     def run(
         self,
         requirement: str,
         mode: OrchestrationMode | None = OrchestrationMode.SUCCESS_FIRST,
         reroute: bool = True,
+        agent_enabled: bool | None = None,
+        depth: int | None = None,
     ) -> OrchestrationRun:
-        handle = self.start_run(requirement, mode, reroute=reroute)
+        handle = self.start_run(requirement, mode, reroute=reroute, agent_enabled=agent_enabled, depth=depth)
         return self._wait_for_run(handle.run_id)
 
     def _background_run(
@@ -193,6 +213,8 @@ class Orchestrator:
         mode: OrchestrationMode | None,
         reroute: bool,
         parent_run_id: str | None,
+        agent_enabled: bool | None,
+        depth: int | None,
     ) -> None:
         heartbeat_stop = threading.Event()
         heartbeat_thread = threading.Thread(
@@ -204,7 +226,15 @@ class Orchestrator:
         heartbeat_thread.start()
         try:
             self._set_run_status(run_id, "running")
-            run = self._execute_run(requirement, mode, reroute=reroute, parent_run_id=parent_run_id, run_id=run_id)
+            run = self._execute_run(
+                requirement,
+                mode,
+                reroute=reroute,
+                parent_run_id=parent_run_id,
+                run_id=run_id,
+                agent_enabled=agent_enabled,
+                depth=depth,
+            )
             self._store_run(run)
         except Exception as exc:  # pragma: no cover - background safety net
             try:
@@ -235,6 +265,7 @@ class Orchestrator:
                     job_status_summary=run.job_status_summary,
                     active_attempt_id=run.active_attempt_id,
                     lineage=run.lineage,
+                    metadata=run.metadata,
                 )
             )
         finally:
@@ -249,14 +280,16 @@ class Orchestrator:
         reroute: bool = True,
         parent_run_id: str | None = None,
         run_id: str | None = None,
+        agent_enabled: bool | None = None,
+        depth: int | None = None,
     ) -> OrchestrationRun:
         routing_decision: RoutingDecision | None = None
         if mode is None:
             routing_decision = self.router.route(requirement)
-            policy = routing_decision.policy
+            policy = get_policy(routing_decision.mode, agent_enabled=agent_enabled, depth=depth)
             initial_mode = routing_decision.mode
         else:
-            policy = get_policy(mode)
+            policy = get_policy(mode, agent_enabled=agent_enabled, depth=depth)
             initial_mode = mode
 
         attempts: list[OrchestrationAttempt] = []
@@ -317,9 +350,24 @@ class Orchestrator:
             decision = self.failure_router.inspect(attempt)
             attempt.failure_decision = decision
             attempt.failure_signal = (
-                self.failure_router._signal(current_mode, decision.reasons, any("high-risk" in reason for reason in decision.reasons))
+                self.failure_router._signal(attempt, decision.reasons, any("high-risk" in reason for reason in decision.reasons))
                 if decision.next_mode or decision.work_unit_ids
                 else None
+            )
+            attempt.signals = _build_decision_signals(
+                contract=contract,
+                work_units=work_units,
+                results=results,
+                reroute_enabled=reroute,
+                routing_decision=routing_decision,
+            )
+            attempt.decision_artifact = _build_decision_artifact(
+                policy=policy,
+                results=results,
+                decision=decision,
+                reroute_enabled=reroute,
+                accepted=attempt.accepted,
+                routing_decision=routing_decision,
             )
 
             if reroute and decision.action == "partial_rescue" and decision.work_unit_ids:
@@ -349,7 +397,7 @@ class Orchestrator:
                 decision = self._upgrade_after_dependency_rescue(current_mode, attempt, work_units)
                 attempt.failure_decision = decision
                 attempt.failure_signal = (
-                    self.failure_router._signal(current_mode, decision.reasons, any("high-risk" in reason for reason in decision.reasons))
+                    self.failure_router._signal(attempt, decision.reasons, any("high-risk" in reason for reason in decision.reasons))
                     if decision.next_mode
                     else attempt.failure_signal
                 )
@@ -360,6 +408,14 @@ class Orchestrator:
                     attempt.final_state = state.current
                     attempt.status = "completed"
                     attempt_events.record("run_finished", accepted=True)
+                    attempt.decision_artifact = _build_decision_artifact(
+                        policy=policy,
+                        results=attempt.results,
+                        decision=decision,
+                        reroute_enabled=reroute,
+                        accepted=attempt.accepted,
+                        routing_decision=routing_decision,
+                    )
                     break
 
             if attempt.accepted and attempt.final_state == "review" and decision.next_mode is None:
@@ -376,6 +432,15 @@ class Orchestrator:
                 attempt.status = "completed" if attempt.accepted else "blocked"
                 attempt_events.record("run_finished", accepted=attempt.accepted)
 
+            attempt.decision_artifact = _build_decision_artifact(
+                policy=policy,
+                results=attempt.results,
+                decision=decision,
+                reroute_enabled=reroute,
+                accepted=attempt.accepted,
+                routing_decision=routing_decision,
+            )
+
             if not reroute or decision.next_mode is None or upgrades_used >= self.failure_router.max_auto_upgrades:
                 break
 
@@ -383,6 +448,11 @@ class Orchestrator:
                 {
                     "from_mode": current_mode.value,
                     "to_mode": decision.next_mode.value,
+                    "from_agent_enabled": policy.agent_enabled,
+                    "to_agent_enabled": decision.next_agent_enabled,
+                    "from_depth": policy.topology_depth,
+                    "to_depth": decision.next_depth,
+                    "upgrade_kind": decision.upgrade_kind,
                     "reasons": decision.reasons,
                     "confidence": decision.confidence,
                 }
@@ -390,8 +460,21 @@ class Orchestrator:
             run_events.record("reroute", from_mode=current_mode.value, to_mode=decision.next_mode.value)
             upgrades_used += 1
             current_mode = decision.next_mode
-            policy = get_policy(current_mode)
-            lineage = [*lineage, {"from_mode": reroute_history[-1]["from_mode"], "to_mode": reroute_history[-1]["to_mode"]}]
+            agent_enabled = decision.next_agent_enabled
+            depth = decision.next_depth
+            policy = get_policy(current_mode, agent_enabled=agent_enabled, depth=depth)
+            lineage = [
+                *lineage,
+                {
+                    "from_mode": reroute_history[-1]["from_mode"],
+                    "to_mode": reroute_history[-1]["to_mode"],
+                    "from_agent_enabled": reroute_history[-1]["from_agent_enabled"],
+                    "to_agent_enabled": reroute_history[-1]["to_agent_enabled"],
+                    "from_depth": reroute_history[-1]["from_depth"],
+                    "to_depth": reroute_history[-1]["to_depth"],
+                    "upgrade_kind": reroute_history[-1]["upgrade_kind"],
+                },
+            ]
 
         if final_attempt is None:
             raise RuntimeError("No orchestration attempts were executed.")
@@ -419,6 +502,15 @@ class Orchestrator:
             results=final_attempt.results,
             active_attempt_id=active_attempt_id,
             lineage=lineage,
+            signals=final_attempt.signals,
+            decision_artifact=final_attempt.decision_artifact,
+            metadata=_build_run_metadata(
+                requirement=requirement,
+                mode=final_attempt.policy.mode.value,
+                contract=final_attempt.contract,
+                work_units=final_attempt.work_units,
+                routing_decision=routing_decision,
+            ),
         )
 
     def _load_run(self, run_id: str) -> OrchestrationRun:
@@ -430,7 +522,29 @@ class Orchestrator:
         return run
 
     def _store_run(self, run: OrchestrationRun) -> None:
-        self.run_store.write(run.run_id, run.to_dict())
+        payload = run.to_dict()
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.setdefault("entrypoint", "direct_run")
+        metadata.setdefault(
+            "provenance",
+            {
+                "source_requirement": run.requirement,
+                "selected_mode": run.final_mode.value,
+            },
+        )
+        metadata.setdefault(
+            "execution_contract",
+            _build_execution_contract_payload(
+                requirement=run.requirement,
+                policy_mode=run.final_mode.value,
+                contract=run.contract,
+                work_units=run.work_units,
+            ),
+        )
+        payload["metadata"] = metadata
+        self.run_store.write(run.run_id, payload)
 
     def _set_run_status(self, run_id: str, status: str) -> None:
         run = self._load_run(run_id)
@@ -458,6 +572,7 @@ class Orchestrator:
                 job_status_summary=run.job_status_summary,
                 active_attempt_id=run.active_attempt_id,
                 lineage=run.lineage,
+                metadata=run.metadata,
             )
         )
 
@@ -497,6 +612,8 @@ class Orchestrator:
                     "mode": run.initial_mode,
                     "reroute": run.reroute_enabled,
                     "parent_run_id": run.parent_run_id,
+                    "agent_enabled": run.policy.agent_enabled if run.policy else None,
+                    "depth": run.policy.topology_depth if run.policy else None,
                 },
                 daemon=True,
                 name=f"orchestrator-restore-{run.run_id}",
@@ -510,7 +627,7 @@ class Orchestrator:
                 return
 
     def _next_mode(self, current_mode: OrchestrationMode) -> OrchestrationMode | None:
-        return self.failure_router.choose_next_mode(current_mode, self.failure_router._signal(current_mode, [], False))
+        return self.failure_router.choose_next_mode(current_mode, self.failure_router._signal(_policy_run(get_policy(current_mode)), [], False))
 
     def _execute_work_unit(
         self,
@@ -580,13 +697,13 @@ class Orchestrator:
         ):
             reasons.append("dependency rescue still involves high-risk work units")
 
-        next_mode = self.failure_router.choose_next_mode(
-            current_mode,
-            self.failure_router._signal(current_mode, reasons, any("high-risk" in reason for reason in reasons)),
-        )
+        signal = self.failure_router._signal(attempt, reasons, any("high-risk" in reason for reason in reasons))
         return type(attempt.failure_decision)(
-            action="upgrade_mode" if next_mode else "abort",
-            next_mode=next_mode,
+            action="upgrade_mode" if signal.next_mode else "abort",
+            next_mode=signal.next_mode,
+            next_agent_enabled=signal.next_agent_enabled,
+            next_depth=signal.next_depth,
+            upgrade_kind=signal.upgrade_kind,
             work_unit_ids=[],
             reasons=reasons or ["dependency rescue did not require escalation"],
             confidence=0.8 if reasons else 0.5,
@@ -609,6 +726,10 @@ def _results_accepted(results: list[WorkUnitResult]) -> bool:
     )
 
 
+def _policy_run(policy: object) -> object:
+    return type("PolicyRun", (), {"policy": policy})()
+
+
 def _merge_results(
     results: list[WorkUnitResult],
     replacements: list[WorkUnitResult],
@@ -627,6 +748,12 @@ def _runtime_jobs(adapter: object) -> list[AgentJob]:
     jobs = getattr(runtime, "jobs", None)
     if isinstance(jobs, dict):
         return list(jobs.values())
+    list_recent = getattr(runtime, "list_recent", None)
+    if callable(list_recent):
+        try:
+            return list(list_recent())
+        except Exception:
+            return []
     return []
 
 
@@ -639,3 +766,158 @@ def _job_status_summary(jobs: list[AgentJob]) -> dict[str, int]:
     for job in jobs:
         summary[job.status] = summary.get(job.status, 0) + 1
     return summary
+
+
+def _build_decision_signals(
+    *,
+    contract: object,
+    work_units: list[WorkUnit],
+    results: list[WorkUnitResult],
+    reroute_enabled: bool,
+    routing_decision: RoutingDecision | None,
+) -> DecisionSignals:
+    has_failures = any(
+        result.status == "failed" or result.recovery_origin_status == "failed"
+        for result in results
+    )
+    has_rescues = any(result.status == "rescued" for result in results)
+    needs_review_attention = any(
+        result.review_result and result.review_result.verdict == "needs_attention"
+        for result in results
+    )
+    return DecisionSignals(
+        task={
+            "owner_type": contract.owner_type,
+            "parallelism": "high" if contract.parallelizable else "low",
+            "goal": contract.goal,
+            "route_source": "router" if routing_decision else "explicit_mode",
+        },
+        risk={
+            "contract_risk": contract.risk_level,
+            "review_attention": needs_review_attention,
+            "routing_risk": routing_decision.profile.risk if routing_decision else contract.risk_level,
+        },
+        dependency={
+            "work_unit_count": len(work_units),
+            "has_dependencies": any(unit.depends_on for unit in work_units),
+        },
+        failure={
+            "has_failures": has_failures,
+            "has_rescues": has_rescues,
+            "failed_work_unit_count": sum(
+                1
+                for result in results
+                if result.status == "failed" or result.recovery_origin_status == "failed"
+            ),
+        },
+        budget={
+            "reroute_enabled": reroute_enabled,
+            "max_depth": contract.max_depth,
+        },
+    )
+
+
+def _build_decision_artifact(
+    *,
+    policy: object,
+    results: list[WorkUnitResult],
+    decision: object,
+    reroute_enabled: bool,
+    accepted: bool,
+    routing_decision: RoutingDecision | None,
+) -> DecisionArtifact:
+    replay_policy = "none"
+    if any(result.recovery_origin_status == "failed" for result in results):
+        replay_policy = "dependency_affected"
+    elif any(result.status == "failed" for result in results):
+        replay_policy = "failed_only"
+
+    stop_reason = "accepted" if accepted else "blocked"
+    if getattr(decision, "next_mode", None) is not None and reroute_enabled:
+        stop_reason = "rerouted"
+
+    return DecisionArtifact(
+        route={
+            "selected_mode": policy.mode.value,
+            "agent_enabled": policy.agent_enabled,
+            "topology_depth": policy.topology_depth,
+            "source": "router" if routing_decision else "explicit_mode",
+        },
+        review_level={
+            "policy": "required" if policy.review_required is True else str(policy.review_required),
+        },
+        rescue_mode={
+            "policy": policy.rescue_policy,
+            "enabled": policy.rescue_enabled,
+        },
+        replay_scope={
+            "policy": replay_policy,
+        },
+        reroute_policy={
+            "enabled": reroute_enabled,
+            "next_mode": getattr(getattr(decision, "next_mode", None), "value", None),
+            "upgrade_kind": getattr(decision, "upgrade_kind", "abort"),
+        },
+        stop_reason=stop_reason,
+    )
+
+
+def _build_execution_contract_payload(
+    *,
+    requirement: str,
+    policy_mode: str,
+    contract: TaskContract | None,
+    work_units: list[WorkUnit],
+) -> dict[str, object]:
+    goal = contract.goal if contract else requirement
+    acceptance_criteria = list(contract.acceptance_criteria) if contract else []
+    single_worker_only = len(work_units) == 1 and work_units[0].owner_type == "single_worker"
+    topology = build_execution_topology(
+        policy_mode,
+        agent_enabled=False if single_worker_only else None,
+        depth=len([unit for unit in work_units if unit.provider_hint]),
+    )
+    return ExecutionContract(
+        source="approved_plan_style_direct_run",
+        goal=goal,
+        acceptance_criteria=acceptance_criteria,
+        topology={
+            "selected_mode": policy_mode,
+            "selected_topology": topology.topology_name,
+            "provider_flow": [unit.provider_hint for unit in work_units if unit.provider_hint],
+            "work_unit_count": len(work_units),
+        },
+        provider_recommendation={
+            "author": "codex",
+            "reviewer": "claude",
+        },
+        gating={
+            "contract_source": "direct_requirement_with_planning_contract",
+            "review_required": bool(contract and "review summary" in contract.outputs),
+        },
+    ).to_dict()
+
+
+def _build_run_metadata(
+    *,
+    requirement: str,
+    mode: str,
+    contract: TaskContract,
+    work_units: list[WorkUnit],
+    routing_decision: RoutingDecision | None,
+) -> dict[str, object]:
+    metadata = {
+        "entrypoint": "direct_run",
+        "provenance": {
+            "source_requirement": requirement,
+            "selected_mode": mode,
+            "route_source": "router" if routing_decision else "explicit_mode",
+        },
+        "execution_contract": _build_execution_contract_payload(
+            requirement=requirement,
+            policy_mode=mode,
+            contract=contract,
+            work_units=work_units,
+        ),
+    }
+    return metadata

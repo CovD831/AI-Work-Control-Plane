@@ -1,0 +1,19 @@
+# Module Manifest
+
+- file-header contract
+- root map
+- `adapters.py`: Adapter interfaces and deterministic MVP implementations.
+- `cli.py`: Command line interface for the orchestration MVP.
+- `command.py`: Command-based provider integration for real Claude/Codex runs.
+- `failure.py`: Failure detection and reroute decisions for whole-run upgrades.  This router only supports full-run escalation between modes. It does not attempt partial DAG rollback, branch splitting, or multi-path replay.
+- `jobs.py`: Durable job lifecycle models and runtimes.
+- `observability.py`: Lightweight event recording for orchestration runs.
+- `orchestrator.py`: End-to-end adaptive orchestration pipeline.
+- `planning.py`: Planning governance models and team orchestration helpers.
+- `policies.py`: Policy profiles for deriving modes from the success-first parent architecture.
+- `review.py`: Structured review result models.
+- `routing.py`: Deterministic policy routing for automatic orchestration mode selection.
+- `run_store.py`: Local persistence for orchestration runs.
+- `state_machine.py`: Task state machine for orchestration runs.
+- `tasks.py`: Task contract and result models for the orchestration pipeline.
+- `topology.py`: Execution topology helpers for agent-enabled orchestration.

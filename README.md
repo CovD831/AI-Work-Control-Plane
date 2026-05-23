@@ -1,59 +1,148 @@
 # Agent Orchestrator
 
-Agent Orchestrator is an MVP implementation of a success-first orchestration framework:
+Agent Orchestrator is a local-first agent orchestration system for personal workflows.
+
+中文说明入口：
+
+- 分层说明见 [docs/architecture/决策核心-执行拓扑-运行时分层说明.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
+- 长周期执行章程见 [docs/process/长周期主执行计划.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/长周期主执行计划.md)
+- operator 操作说明见 [docs/process/agent-team-operator-runbook.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/agent-team-operator-runbook.md)
+- 后续实现默认按 `决策核心层 + 执行拓扑层 + Provider / Runtime 层` 三层来归类
+- 当前仓库的默认目标是先做到 `internal default`，并按“验证通过后自动进入下一段”的长周期方式持续推进
+
+It has two first-class product layers:
+
+- `Planning Governance Layer`
+  - generates plans
+  - runs fixed dual-model adversarial plan review before execution
+  - persists plan files, checklists, and resume state
+  - emits decision verdicts with topology/provider recommendations
+  - enforces documentation and process synchronization
+- `Execution Strategy Layer`
+  - turns approved plans into routed execution
+  - decides review/rescue/replay/reroute behavior
+  - drives pluggable execution backends
+  - emits explainable run artifacts with approved-plan provenance
 
 ```text
-Claude planner team
-  -> Codex parallel workers
-      -> Claude review/rescue team
+task input
+  -> planning governance loop
+      -> decision verdict + approved plan artifact
+          -> execution strategy layer
+              -> pluggable execution backends
+                  -> explainable run artifacts + synchronized docs
 ```
 
-The framework implements one full parent architecture, then derives `speed_first` and `cost_first` behavior through policy instead of maintaining three separate systems.
+The system is intentionally not trying to win by rebuilding every bridge, session runtime, or provider shell. Its value comes from stronger planning governance, stronger execution decisions, and stronger project discipline around docs, hooks, and recoverable plan state.
+
+## Product Shape
+
+The intended v1 product shape is:
+
+- a local-first CLI tool
+- optimized for the author's real workflows before broader generalization
+- built around pluggable providers, bridges, runtimes, and job backends
+- centered on plan governance before code execution
+- centered on explainable strategy decisions during execution
+- backed by enforced documentation synchronization and hook-based compliance checks
+
+In practice, a user gives the CLI a task plus optional strategy constraints, and the system returns:
+
+- a persisted plan artifact
+- a decision verdict describing approval status, topology choice, and provider/runtime choice
+- a shared `ExecutionContract` schema used by both approved-plan sessions and direct runs
+- a decision verdict that can record provider fallback when a preferred reviewer/runtime is unavailable
+- review rounds and checklist progress
+- an approved execution-ready plan
+- routing and execution choices
+- review/rescue/replay/reroute decisions
+- a structured run record describing why the system chose that path
+- synchronized documentation updates and compliance results
+- direct-run artifacts that also carry entrypoint and provenance metadata
+- direct-run artifacts that also carry an approved-plan-style execution contract, including topology and provider recommendations
+
+The v1 product is not a bridge product, a tmux/session manager, or a provider-specific orchestration shell. Those concerns remain plugin boundaries around the two core layers.
 
 ## Modes
 
-- `success_first`: full Claude-Codex-Claude loop with required review and rescue.
-- `speed_first`: thinner planning, aggressive parallelism, risk-based review.
-- `cost_first`: shallow planning, limited parallelism, rescue only on failure.
+- `success_first`: strongest policy profile with required review and conservative rescue/escalation behavior.
+- `speed_first`: thinner planning, aggressive parallelism, and risk-based review.
+- `cost_first`: shallow planning, limited parallelism, and rescue only on failure.
 - `auto`: deterministic heuristic routing to one of the three modes.
 
-## MVP Capabilities
+## Core Value
+
+The unique part of this repository is the combination of:
+
+- adversarial plan review before code execution
+- persisted plan artifacts with checklist and resume state
+- strategy decisions for route/review/rescue/replay/reroute
+- explainable execution artifacts
+- enforced document/code synchronization through hooks and loopback checks
+
+LLM providers, bridges, command runtimes, job stores, and background execution are expected to be pluggable modules around those cores.
+
+## V1 Success Criteria
+
+The first product-quality version should be able to:
+
+- accept a real coding or review task through the CLI
+- run a rule-driven plan governance loop before execution
+- persist plan files into the project and resume them after interruption
+- choose among `success_first`, `speed_first`, `cost_first`, or `auto` strategy behavior
+- drive at least one replaceable execution backend without changing strategy semantics
+- emit a run artifact that explains the chosen route, review intensity, rescue behavior, and escalation path
+- enforce project rules with hook-based checks instead of prompt-only discipline
+- keep global maps, module manifests, and file-level declarations in sync with code changes
+- justify why the system performs better than a fixed, one-size-fits-all workflow for at least a small set of real tasks
+
+## Current Capabilities
 
 - Clarifies fuzzy requirements into a task contract.
-- Decomposes the contract into work units.
+- Runs a fixed dual-model planning loop: author draft, adversarial review, decision verdict.
+- Decomposes the approved plan into execution-ready work units.
 - Routes execution through a policy profile.
-- Simulates Codex worker execution.
-- Sends failed, uncertain, or high-risk work to Claude-style review/rescue.
+- Sends failed, uncertain, or high-risk work to review/rescue paths.
 - Tracks task state transitions and observability events.
 - Tracks agent jobs through a separate `JobRuntime` lifecycle.
-- Models structured review findings for future real review adapters.
+- Models structured review findings for pluggable review adapters.
+- Supports work-unit partial rescue and dependency-aware replay before whole-run reroute.
+- Persists basic product roadmap and process supervision documents in-project.
 
-## Job Runtime
+## Product Layers And Plugins
 
-MVP v2 separates task state from external agent job lifecycle. Adapters can use:
+The intended module boundary is:
 
-- `InMemoryJobRuntime` for deterministic tests and synchronous mock jobs.
-- `FileJobRuntime` for durable local records under `.agent_orchestrator/jobs/`.
-- `CommandJobRuntime` for conservative synchronous Claude/Codex command execution.
+- `Planning Governance Layer`
+  - plan authoring
+  - reviewer and adversarial reviewer loops
+  - plan artifact persistence
+  - checklist tracking
+  - resume metadata
+  - documentation synchronization checks
+- `Execution Strategy Layer`
+  - policy, routing, failure semantics, rescue/escalation, explainability
+- `Execution Plugins`
+  - provider adapters, bridge adapters, command/runtime backends, job stores
+- `Observability / Governance`
+  - run evidence, plan review evidence, hook failures, and audit-friendly traces
 
-The shared lifecycle is:
+Execution plugins may use local commands, hosted APIs, bridge tools, or mock runtimes. Both product layers should remain valid even as those plugins change.
 
-```text
-start -> status -> result
-             ├── send
-             └── cancel
-```
+中文补充：
 
-Review and research jobs default to `read-only`; implementation and rescue jobs default to `workspace-write`.
+- `agent team` 应归到“执行拓扑层”，不是整个产品本体
+- `claude / codex / command runtime` 应归到 “Provider / Runtime 层”
+- `PlanSession / RoundController / DecisionVerdict / execution gating` 应归到“决策核心层”
 
-## Real Command Integrations
+## Execution Backends
 
-MVP v3 adds a guarded command runtime for local providers. The default remains `mock`, so tests and basic runs do not require Claude Code or Codex CLI.
+The current repository includes a guarded local command runtime. The default remains `mock`, so tests and basic runs do not require Claude Code or Codex CLI.
 
 Check local provider availability:
 
 ```bash
-python -m agent_orchestrator.cli --health
+python -m agent_orchestrator.cli health
 python -m agent_orchestrator.cli "Implement multiple independent modules in parallel" --mode auto
 ```
 
@@ -64,46 +153,20 @@ python -m agent_orchestrator.cli "Review this workspace" --runtime command --pro
 python -m agent_orchestrator.cli "Implement the task" --runtime command --provider codex
 ```
 
-The command runtime records stdout, stderr, exit code, command arguments, and error details in job records. It does not do background tmux sessions, multi-turn resume, automatic install, or fallback between providers.
+The command runtime records stdout, stderr, exit code, command arguments, and error details in job records. It is intentionally not the main product value and does not aim to replace specialized background session managers, bridge plugins, or provider-native continuation systems.
 
-## Auto Routing
+## Failure Handling
 
-When `--mode auto` is used, a deterministic `PolicyRouter` profiles the request and picks one of the three real modes. High risk or high ambiguity defaults to `success_first`; clearly parallel, low-risk work may route to `speed_first`; simple low-risk work may route to `cost_first`.
-
-If signals conflict, risk wins first, then ambiguity, then urgency, then cost.
-
-## MVP v5
-
-`v5` adds whole-run failure rerouting. By default, `--reroute on` is enabled.
+Whole-run failure rerouting is enabled by default with `--reroute on`.
 
 - `cost_first` can upgrade to `speed_first`, then to `success_first`.
 - `speed_first` can upgrade to `success_first`.
 - `success_first` records failures, but does not auto-upgrade further.
 - The system upgrades at most once per request and always reruns the whole task.
-
-The run result now keeps `attempts`, `reroute_history`, and `failure_decision` so you can inspect why the mode changed and what happened before the upgrade.
-
-## MVP v6
-
-`v6` adds work-unit level partial rescue before whole-run escalation.
-
 - Failed or high-risk `work units` are retried locally before rerunning the whole task.
-- Partial rescue runs inside the current mode and reuses existing `work_units`.
-- If partial rescue succeeds, the run completes without `rerouted`.
-- If partial rescue still leaves failures or high-risk findings, the system can still use the `v5` one-step upgrade path.
+- Dependency replay can rerun affected downstream units before stronger escalation.
 
-The run result now also keeps `partial_rescue_results` and `recovered_work_unit_ids` on each attempt.
-
-## MVP v7
-
-`v7` adds dependency-aware replay before whole-run escalation.
-
-- Failed or high-risk `work units` replay their dependent downstream units.
-- Dependency replay runs inside the current mode and reuses existing `work_units`.
-- If dependency replay succeeds, the run completes without `rerouted`.
-- If dependency replay still leaves failures or high-risk findings, the system can still use the `v6` one-step upgrade path.
-
-The run result now also keeps `dependency_rescue_results`, `replayed_work_unit_ids`, and dependency metadata on each attempt.
+Run results keep `attempts`, `reroute_history`, `failure_decision`, `partial_rescue_results`, `recovered_work_unit_ids`, `dependency_rescue_results`, and `replayed_work_unit_ids` so you can inspect what the system decided and why.
 
 ## Run
 
@@ -123,6 +186,20 @@ agent-orchestrator "Build a dashboard with tests" --mode speed_first
 pytest
 ```
 
+## Hook Setup
+
+Install the repository-managed git hooks:
+
+```bash
+PYTHONPATH=src python -m agent_orchestrator.cli install-hooks
+```
+
+The installed `pre-commit` hook runs:
+
+```bash
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
+```
+
 ## Real Integrations
 
-The current workers are deterministic mock adapters. Real Claude Code and Codex Cloud integrations should implement the adapter interfaces in `agent_orchestrator.adapters`.
+The current workers are deterministic mock adapters plus a conservative local command backend. Real Claude Code, Codex, or other LLM integrations should plug into the adapter interfaces in `agent_orchestrator.adapters` rather than redefine the product layers.
