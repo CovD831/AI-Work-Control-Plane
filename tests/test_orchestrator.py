@@ -1,12 +1,15 @@
 import json
 import os
 from datetime import UTC, datetime, timedelta
+from dataclasses import replace
 
 from agent_orchestrator import ExecutionContract, OrchestrationMode, Orchestrator, PlanStore, TeamOrchestrator, get_policy
 from agent_orchestrator.adapters import RuntimeProviderAdapter, RuntimeProviderReviewRescueAdapter
 from agent_orchestrator.command import ClaudeCodeAdapter, CodexCliAdapter, CommandJobRuntime, CommandResult
+from agent_orchestrator.jobs import AgentJob, InMemoryJobRuntime, JobRequest
 from agent_orchestrator.run_store import RunStore
 from agent_orchestrator.routing import PolicyRouter
+from agent_orchestrator.tasks import WorkUnit, WorkUnitResult
 
 
 class _MixedSession:
@@ -44,6 +47,14 @@ class _MixedRunner:
     def spawn(self, command: list[str], *, cwd: str, env: dict[str, str] | None = None) -> _MixedSession:
         self.commands.append(command)
         return _MixedSession(self.result)
+
+
+class _StuckRuntime(InMemoryJobRuntime):
+    def start(self, request: JobRequest) -> AgentJob:
+        job = super().start(request)
+        stuck = replace(job, summary="still running", phase="working")
+        self.jobs[job.id] = stuck
+        return stuck
 
 
 def test_success_first_uses_full_parent_architecture() -> None:
@@ -131,6 +142,83 @@ def test_command_runtime_uses_mixed_provider_flow(tmp_path) -> None:
     assert run.accepted is True
     assert any(job.provider == "codex" and job.command[:2] == ["codex", "exec"] for job in run.jobs)
     assert any(job.provider == "claude" and job.command[:2] == ["claude", "-p"] for job in run.jobs)
+
+
+def test_runtime_provider_adapter_fails_when_job_never_reaches_terminal_state() -> None:
+    runtime = _StuckRuntime()
+    adapter = RuntimeProviderAdapter(runtime=runtime, kind="implementation", poll_attempts=1, poll_interval_seconds=0)
+
+    result = adapter.execute(
+        WorkUnit(
+            goal="Implement stuck task",
+            context="exercise timeout handling",
+            inputs=["input"],
+            outputs=["output"],
+            acceptance_criteria=["finish"],
+            risk_level="low",
+            parallelizable=False,
+            owner_type="single_worker",
+            max_depth=1,
+            failure_policy="retry",
+            provider_hint="codex",
+        ),
+        get_policy(OrchestrationMode.SUCCESS_FIRST),
+    )
+
+    assert result.status == "failed"
+    assert result.needs_rescue is True
+    assert "polling window" in result.summary
+    job = runtime.status(result.job_id)
+    assert job.status == "failed"
+    assert job.parsed_payload is not None
+    assert job.parsed_payload["timeout"]["poll_attempts"] == 1
+
+
+def test_runtime_provider_review_adapter_fails_when_review_job_never_reaches_terminal_state() -> None:
+    runtime = _StuckRuntime()
+    adapter = RuntimeProviderReviewRescueAdapter(
+        runtime=runtime,
+        poll_attempts=1,
+        poll_interval_seconds=0,
+    )
+
+    reviewed = adapter.review_or_rescue(
+        WorkUnit(
+            goal="Review stuck task",
+            context="exercise timeout handling",
+            inputs=["input"],
+            outputs=["output"],
+            acceptance_criteria=["finish"],
+            risk_level="medium",
+            parallelizable=False,
+            owner_type="claude_team",
+            max_depth=1,
+            failure_policy="rescue",
+            provider_hint="claude",
+        ),
+        WorkUnitResult(
+            work_unit_id="work-1",
+            status="succeeded",
+            summary="worker ok",
+            patch="patch",
+            tests=["validation passed"],
+            needs_rescue=False,
+            job_id="job-origin",
+            job_ids=["job-origin"],
+            job_status="completed",
+            job_phase="done",
+            job_lifecycle=[],
+        ),
+        get_policy(OrchestrationMode.SUCCESS_FIRST),
+    )
+
+    assert reviewed.status == "failed"
+    assert reviewed.needs_rescue is True
+    assert reviewed.tests[-1] == "review failed"
+    job = runtime.status(reviewed.job_id)
+    assert job.status == "failed"
+    assert job.parsed_payload is not None
+    assert job.parsed_payload["timeout"]["kind"] == "review"
 
 
 def test_speed_first_failure_upgrades_to_success_first() -> None:

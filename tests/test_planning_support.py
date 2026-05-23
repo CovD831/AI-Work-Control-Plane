@@ -111,6 +111,31 @@ def test_changed_files_header_check_blocks_only_changed_source_header_fields(tmp
     assert status["changed_files"] == ["src/agent_orchestrator/changed.py"]
 
 
+def test_changed_files_doc_sync_flags_new_module_missing_from_manifest(tmp_path) -> None:
+    _write_module(
+        tmp_path,
+        "existing.py",
+        "# DEPS: __future__\n# RESPONSIBILITY: Provide existing behavior.\n# MODULE: decision_core\n# ---",
+    )
+    _write_required_docs(tmp_path)
+    _write_module(
+        tmp_path,
+        "new_module.py",
+        "# DEPS: __future__\n# RESPONSIBILITY: Provide new behavior.\n# MODULE: decision_core\n# ---",
+    )
+
+    status = build_doc_sync_status_for_project(
+        tmp_path,
+        FileJobRuntime(root=tmp_path / "jobs"),
+        changed_files=["src/agent_orchestrator/new_module.py"],
+    )
+
+    assert sorted(status["changed_file_doc_sync_violations"]) == [
+        "changed-file doc sync violation: src/agent_orchestrator/new_module.py is missing from docs/process/module-manifest.md",
+        "changed-file doc sync violation: src/agent_orchestrator/new_module.py requires docs/process/module-manifest.md to be refreshed",
+    ]
+
+
 def test_canonical_process_docs_include_module_manifest_and_root_map_entries(tmp_path) -> None:
     _write_module(
         tmp_path,

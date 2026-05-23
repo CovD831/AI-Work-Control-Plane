@@ -896,6 +896,62 @@ class TeamOrchestrator:
             return status
         return ProviderStatus(provider="mock", available=False, detail=status.detail)
 
+    def _configured_review_provider(self, session: PlanSession) -> str | None:
+        configured = session.structured_brief.provider_recommendation.get("reviewer")
+        return configured if isinstance(configured, str) and configured else None
+
+    def _selected_retry_provider(self, session: PlanSession, runtime_status: Any) -> str:
+        configured = self._configured_review_provider(session)
+        if configured:
+            return configured
+        provider = getattr(runtime_status, "provider", None)
+        if isinstance(provider, str) and provider:
+            return provider
+        return "mock"
+
+    def _apply_retry_round_outcome(
+        self,
+        session: PlanSession,
+        *,
+        retry_round: PlanReviewRound,
+        replaced_round_types: set[str],
+        findings: list[Finding],
+    ) -> PlanSession:
+        session.review_rounds.append(retry_round)
+        session.resume.active_round_id = retry_round.id
+        session.resume.current_phase = "in_review"
+        session.resume.pending_role = "lead"
+        session.checklist[1].completed = True
+
+        historical_rounds = [round_ for round_ in session.review_rounds if round_.round_type not in replaced_round_types]
+        session.gaps = _build_plan_gaps([*historical_rounds, retry_round])
+        all_findings = [
+            finding
+            for round_ in historical_rounds
+            if round_.review_result
+            for finding in round_.review_result.findings
+        ]
+        all_findings.extend(findings)
+
+        outcome = self.round_controller.derive_post_review_outcome(all_findings)
+        session.status = outcome.status
+        session.gate_verdict = outcome.gate_verdict
+        if outcome.status == "approved_for_execution":
+            session.resume.current_phase = "approved"
+            session.resume.approved_at = "approved"
+            session.checklist[2].completed = True
+        else:
+            session.checklist[2].completed = False
+
+        session.structured_brief.risks = _summarize_plan_risks(all_findings)
+        session.structured_brief.review_disputes = _summarize_review_disputes(session.review_rounds)
+        session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
+        session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime)
+        if session.status == "approved_for_execution":
+            session.approved_plan = _build_approved_plan(session)
+        self.store.write_session(session)
+        return session
+
     def status(self, session_id: str) -> PlanSession:
         session = self.store.read_session(session_id)
         session.doc_sync = self._build_doc_sync_status()
@@ -1164,10 +1220,92 @@ class TeamOrchestrator:
         )
 
     def retry_review(self, session_id: str) -> PlanSession:
-        return _team_retry_review(self, session_id)
+        session = self.store.read_session(session_id)
+        review_round = _latest_round_support(session.review_rounds, "review")
+        if review_round is None:
+            raise ValueError("team retry-review requires an existing review round")
+        review_job_id = _extract_job_id_support(review_round.summary)
+        runtime_status = _read_delegated_job_status_support(session, review_job_id) if review_job_id else None
+        if runtime_status is None or runtime_status.status != "failed":
+            raise ValueError("team retry-review requires a failed delegated review job")
+
+        review_provider = self._selected_retry_provider(session, runtime_status)
+        review_result = _review_plan(session.requirement, session)
+        review_job = self._start_job(
+            JobRequest(
+                task_id=session.id,
+                provider=review_provider,
+                kind="review",
+                prompt=f"Retry review planning round: {session.requirement}",
+                cwd=str(Path.cwd()),
+                metadata={"stage_target": self.stage_target, "role": "review", "round_type": "review_retry"},
+            )
+        )
+        if hasattr(self.runtime, "complete"):
+            review_job = getattr(self.runtime, "complete")(
+                review_job.id,
+                summary=f"Retry review round completed for {session.id}.",
+                stdout=review_result.summary,
+                parsed_payload={"review_result": review_result.to_dict()},
+                phase="reviewing",
+            )
+
+        retry_round = PlanReviewRound(
+            round_type="review_retry",
+            role="review",
+            summary=f"{review_result.summary} via {review_job.provider} review job {review_job.id}.",
+            review_result=review_result,
+        )
+        return self._apply_retry_round_outcome(
+            session,
+            retry_round=retry_round,
+            replaced_round_types={"review", "review_retry"},
+            findings=list(review_result.findings),
+        )
 
     def retry_adversarial_review(self, session_id: str) -> PlanSession:
-        return _team_retry_adversarial_review(self, session_id)
+        session = self.store.read_session(session_id)
+        adversarial_round = _latest_round_support(session.review_rounds, "adversarial_review")
+        if adversarial_round is None:
+            raise ValueError("team retry-adversarial-review requires an existing adversarial review round")
+        job_id = _extract_job_id_support(adversarial_round.summary)
+        runtime_status = _read_delegated_job_status_support(session, job_id) if job_id else None
+        if runtime_status is None or runtime_status.status != "failed":
+            raise ValueError("team retry-adversarial-review requires a failed delegated adversarial review job")
+
+        review_provider = self._selected_retry_provider(session, runtime_status)
+        adversarial_result = _adversarial_review_plan(session.requirement, session)
+        retry_job = self._start_job(
+            JobRequest(
+                task_id=session.id,
+                provider=review_provider,
+                kind="adversarial_review",
+                prompt=f"Retry adversarial review planning round: {session.requirement}",
+                cwd=str(Path.cwd()),
+                metadata={"stage_target": self.stage_target, "role": "review", "round_type": "adversarial_review_retry"},
+            )
+        )
+        if hasattr(self.runtime, "complete"):
+            retry_job = getattr(self.runtime, "complete")(
+                retry_job.id,
+                summary=f"Retry adversarial review round completed for {session.id}.",
+                stdout=adversarial_result.summary,
+                parsed_payload={"review_result": adversarial_result.to_dict()},
+                phase="reviewing",
+            )
+
+        retry_round = PlanReviewRound(
+            round_type="adversarial_review_retry",
+            role="review",
+            summary=f"{adversarial_result.summary} via {retry_job.provider} adversarial_review job {retry_job.id}.",
+            review_result=adversarial_result,
+        )
+        return self._apply_retry_round_outcome(
+            session,
+            retry_round=retry_round,
+            replaced_round_types={"adversarial_review", "adversarial_review_retry"},
+            findings=list(adversarial_result.findings),
+        )
 
     def _start_job(self, request: JobRequest) -> Any:
         if request.provider == "mock" and not _runtime_supports_provider(self.runtime, "mock"):
@@ -1213,16 +1351,6 @@ def _find_module_docstring_end(lines: list[str]) -> int | None:
         if '"""' in line:
             return index
     return None
-
-def _select_retry_provider(session: PlanSession, runtime_status: Any) -> str:
-    configured = session.structured_brief.provider_recommendation.get("reviewer")
-    if isinstance(configured, str) and configured:
-        return configured
-    provider = getattr(runtime_status, "provider", None)
-    if isinstance(provider, str) and provider:
-        return provider
-    return "mock"
-
 
 def _runtime_supports_provider(runtime: JobRuntime, provider: str) -> bool:
     adapters = getattr(runtime, "adapters", None)
@@ -1432,7 +1560,11 @@ def _observed_failure_provider(runtime_status: Any, session: PlanSession) -> str
 
 
 def _planned_recovery_provider(session: PlanSession, runtime_status: Any) -> str | None:
-    provider = _select_retry_provider(session, runtime_status)
+    configured = session.structured_brief.provider_recommendation.get("reviewer")
+    if isinstance(configured, str) and configured:
+        provider = configured
+    else:
+        provider = getattr(runtime_status, "provider", None)
     return provider if isinstance(provider, str) and provider else None
 
 
@@ -1543,145 +1675,6 @@ def _resume_guidance_command(session_id: str, action: str) -> str:
     if action == "revise":
         return f"python -m agent_orchestrator.cli team next {session_id}"
     return f"python -m agent_orchestrator.cli team summary {session_id}"
-
-def _team_retry_review(self: TeamOrchestrator, session_id: str) -> PlanSession:
-    session = self.store.read_session(session_id)
-    review_round = _latest_round_support(session.review_rounds, "review")
-    if review_round is None:
-        raise ValueError("team retry-review requires an existing review round")
-    review_job_id = _extract_job_id_support(review_round.summary)
-    runtime_status = _read_delegated_job_status_support(session, review_job_id) if review_job_id else None
-    if runtime_status is None or runtime_status.status != "failed":
-        raise ValueError("team retry-review requires a failed delegated review job")
-
-    review_provider = _select_retry_provider(session, runtime_status)
-    review_result = _review_plan(session.requirement, session)
-    review_job = self._start_job(
-        JobRequest(
-            task_id=session.id,
-            provider=review_provider,
-            kind="review",
-            prompt=f"Retry review planning round: {session.requirement}",
-            cwd=str(Path.cwd()),
-            metadata={"stage_target": self.stage_target, "role": "review", "round_type": "review_retry"},
-        )
-    )
-    if hasattr(self.runtime, "complete"):
-        review_job = getattr(self.runtime, "complete")(
-            review_job.id,
-            summary=f"Retry review round completed for {session.id}.",
-            stdout=review_result.summary,
-            parsed_payload={"review_result": review_result.to_dict()},
-            phase="reviewing",
-        )
-
-    retry_round = PlanReviewRound(
-        round_type="review_retry",
-        role="review",
-        summary=f"{review_result.summary} via {review_job.provider} review job {review_job.id}.",
-        review_result=review_result,
-    )
-    session.review_rounds.append(retry_round)
-    session.resume.active_round_id = retry_round.id
-    session.resume.current_phase = "in_review"
-    session.resume.pending_role = "lead"
-    session.checklist[1].completed = True
-
-    all_findings = [
-        finding
-        for round_ in session.review_rounds
-        if round_.review_result and round_.round_type != "review"
-        for finding in round_.review_result.findings
-    ]
-    if review_result.findings:
-        all_findings.extend(review_result.findings)
-    session.gaps = _build_plan_gaps([round_ for round_ in session.review_rounds if round_.round_type != "review"] + [retry_round])
-
-    outcome = self.round_controller.derive_post_review_outcome(all_findings)
-    session.status = outcome.status
-    session.gate_verdict = outcome.gate_verdict
-    if outcome.status == "approved_for_execution":
-        session.resume.current_phase = "approved"
-        session.resume.approved_at = "approved"
-        session.checklist[2].completed = True
-    else:
-        session.checklist[2].completed = False
-
-    session.structured_brief.risks = _summarize_plan_risks(all_findings)
-    session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
-    self.store.write_session(session)
-    return session
-
-
-def _team_retry_adversarial_review(self: TeamOrchestrator, session_id: str) -> PlanSession:
-    session = self.store.read_session(session_id)
-    adversarial_round = _latest_round_support(session.review_rounds, "adversarial_review")
-    if adversarial_round is None:
-        raise ValueError("team retry-adversarial-review requires an existing adversarial review round")
-    job_id = _extract_job_id_support(adversarial_round.summary)
-    runtime_status = _read_delegated_job_status_support(session, job_id) if job_id else None
-    if runtime_status is None or runtime_status.status != "failed":
-        raise ValueError("team retry-adversarial-review requires a failed delegated adversarial review job")
-
-    review_provider = _select_retry_provider(session, runtime_status)
-    adversarial_result = _adversarial_review_plan(session.requirement, session)
-    retry_job = self._start_job(
-        JobRequest(
-            task_id=session.id,
-            provider=review_provider,
-            kind="adversarial_review",
-            prompt=f"Retry adversarial review planning round: {session.requirement}",
-            cwd=str(Path.cwd()),
-            metadata={"stage_target": self.stage_target, "role": "review", "round_type": "adversarial_review_retry"},
-        )
-    )
-    if hasattr(self.runtime, "complete"):
-        retry_job = getattr(self.runtime, "complete")(
-            retry_job.id,
-            summary=f"Retry adversarial review round completed for {session.id}.",
-            stdout=adversarial_result.summary,
-            parsed_payload={"review_result": adversarial_result.to_dict()},
-            phase="reviewing",
-        )
-
-    retry_round = PlanReviewRound(
-        round_type="adversarial_review_retry",
-        role="review",
-        summary=f"{adversarial_result.summary} via {retry_job.provider} adversarial_review job {retry_job.id}.",
-        review_result=adversarial_result,
-    )
-    session.review_rounds.append(retry_round)
-    session.resume.active_round_id = retry_round.id
-    session.resume.current_phase = "in_review"
-    session.resume.pending_role = "lead"
-    session.checklist[1].completed = True
-
-    all_findings = [
-        finding
-        for round_ in session.review_rounds
-        if round_.review_result and round_.round_type != "adversarial_review"
-        for finding in round_.review_result.findings
-    ]
-    if adversarial_result.findings:
-        all_findings.extend(adversarial_result.findings)
-    session.gaps = _build_plan_gaps(
-        [round_ for round_ in session.review_rounds if round_.round_type != "adversarial_review"] + [retry_round]
-    )
-
-    outcome = self.round_controller.derive_post_review_outcome(all_findings)
-    session.status = outcome.status
-    session.gate_verdict = outcome.gate_verdict
-    if outcome.status == "approved_for_execution":
-        session.resume.current_phase = "approved"
-        session.resume.approved_at = "approved"
-        session.checklist[2].completed = True
-    else:
-        session.checklist[2].completed = False
-
-    session.structured_brief.risks = _summarize_plan_risks(all_findings)
-    session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
-    self.store.write_session(session)
-    return session
 
 def _review_plan(requirement: str, session: PlanSession) -> ReviewResult:
     lowered = requirement.lower()

@@ -418,6 +418,23 @@ class RuntimeProviderAdapter:
             sleep(self.poll_interval_seconds)
             completed_job = self.runtime.status(job.id)
 
+        if completed_job.status == "running":
+            completed_job = _runtime_fail(
+                self.runtime,
+                job.id,
+                summary="Provider job timed out while still running.",
+                error=(
+                    "Provider job exceeded the polling window without reaching a terminal status."
+                ),
+                parsed_payload={
+                    "request": {"work_unit_id": work_unit.id},
+                    "timeout": {
+                        "poll_attempts": self.poll_attempts,
+                        "poll_interval_seconds": self.poll_interval_seconds,
+                    },
+                },
+            )
+
         if completed_job.status == "failed":
             return WorkUnitResult(
                 work_unit_id=work_unit.id,
@@ -505,6 +522,24 @@ class RuntimeProviderReviewRescueAdapter:
                 break
             sleep(self.poll_interval_seconds)
             completed_job = self.runtime.status(job.id)
+
+        if completed_job.status == "running":
+            completed_job = _runtime_fail(
+                self.runtime,
+                job.id,
+                summary=f"Provider {kind} job timed out while still running.",
+                error=(
+                    f"Provider {kind} job exceeded the polling window without reaching a terminal status."
+                ),
+                parsed_payload={
+                    "request": {"work_unit_id": work_unit.id},
+                    "timeout": {
+                        "poll_attempts": self.poll_attempts,
+                        "poll_interval_seconds": self.poll_interval_seconds,
+                        "kind": kind,
+                    },
+                },
+            )
 
         if completed_job.status in {"failed", "cancelled"}:
             return WorkUnitResult(

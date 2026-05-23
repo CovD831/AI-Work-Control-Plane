@@ -802,6 +802,27 @@ def test_team_check_compliance_blocks_on_module_manifest_coverage_drift(tmp_path
     )
 
 
+def test_team_check_compliance_blocks_when_changed_source_file_requires_manifest_refresh(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "beta.py").write_text(
+        '"""Beta module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Add a new module after canonical docs were generated.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+
+    compliance = team.check_compliance(changed_files=["src/agent_orchestrator/beta.py"])
+
+    assert compliance["blocking"] is True
+    assert any("changed-file doc sync violation" in reason for reason in compliance["blocking_reasons"])
+    assert any("module-manifest.md" in reason for reason in compliance["blocking_reasons"])
+    assert "sync_process_doc_contracts" in compliance["required_actions"]
+
+
 def test_team_check_compliance_returns_structured_contract_for_project_and_session(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
@@ -1333,6 +1354,7 @@ def test_team_retry_review_replaces_failed_review_job_and_restores_guidance(tmp_
     assert runtime.status(new_job_id).status == "completed"
     assert "inspect_delegated_job" not in retried_status["next_actions"]
     assert retried_status["recovery_actions"] == []
+    assert retried.review_rounds[-1].summary.startswith(retried.review_rounds[-1].review_result.summary)
 
 
 def test_team_retry_adversarial_review_replaces_failed_job_and_restores_guidance(tmp_path) -> None:
@@ -1358,6 +1380,44 @@ def test_team_retry_adversarial_review_replaces_failed_job_and_restores_guidance
     assert runtime.status(new_job_id).status == "completed"
     assert "inspect_delegated_job" not in retried_status["next_actions"]
     assert retried_status["recovery_actions"] == []
+
+
+def test_team_retry_review_uses_recommended_fallback_provider_consistently(tmp_path) -> None:
+    runtime = FileJobRuntime(root=tmp_path / "jobs")
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        runtime=runtime,
+    )
+
+    session = team.start("Build a persisted plan artifact")
+    session.structured_brief.provider_recommendation.update(
+        {
+            "reviewer": "mock",
+            "fallback_from": "claude",
+            "fallback_reason": "reviewer_unavailable",
+            "fallback_detail": "claude unavailable",
+        }
+    )
+    session.decision_verdict = session.decision_verdict.from_dict(
+        {
+            **session.decision_verdict.to_dict(),
+            "selected_provider_runtime": dict(session.structured_brief.provider_recommendation),
+        }
+    )
+    team.store.write_session(session)
+    review_round = session.review_rounds[1]
+    failed_job_id = review_round.summary.split("job ")[-1].rstrip(".")
+    runtime.fail(failed_job_id, summary="review failed", error="claude auth failed")
+
+    retried = team.retry_review(session.id)
+    retry_round = retried.review_rounds[-1]
+    retry_job_id = retry_round.summary.split("job ")[-1].rstrip(".")
+    retry_job = runtime.status(retry_job_id)
+
+    assert retried.structured_brief.provider_recommendation["reviewer"] == "mock"
+    assert retried.decision_verdict["selected_provider_runtime"]["reviewer"] == "mock"
+    assert retry_job.provider == "mock"
 
 
 def test_team_status_reports_execute_readiness_for_approved_session(tmp_path) -> None:

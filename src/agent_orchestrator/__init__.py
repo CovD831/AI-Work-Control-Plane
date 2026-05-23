@@ -27,6 +27,7 @@ from agent_orchestrator.command import (
     PromptRenderer,
     SubprocessCommandRunner,
 )
+from agent_orchestrator.evidence import capture_workflow_evidence
 from agent_orchestrator.topology import ExecutionTopology, build_execution_topology
 from agent_orchestrator.adapters import RuntimeProviderAdapter, RuntimeProviderReviewRescueAdapter
 from agent_orchestrator.planning import (
@@ -51,6 +52,7 @@ __all__ = [
     "CommandJobRuntime",
     "CommandResult",
     "CommandSpec",
+    "capture_workflow_evidence",
     "DecisionArtifact",
     "ExecutionContract",
     "DecisionSignals",

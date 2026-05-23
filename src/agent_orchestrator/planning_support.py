@@ -205,6 +205,12 @@ def build_doc_sync_status_for_project(
             "actual": actual_spec.to_dict(),
         }
 
+    changed_file_doc_sync_violations = _changed_file_doc_sync_violations(
+        project_root,
+        changed_files=changed_files,
+        document_statuses=document_statuses,
+    )
+
     payload: dict[str, object] = {
         "project_root": str(project_root),
         "jobs_root": jobs_root,
@@ -213,6 +219,7 @@ def build_doc_sync_status_for_project(
         "stale_docs": stale_docs,
         "header_contract_violations": header_contract_violations,
         "header_contract_warnings": _scan_unrelated_header_warnings(project_root, changed_files=changed_files),
+        "changed_file_doc_sync_violations": changed_file_doc_sync_violations,
         "documents": document_statuses,
     }
     if refresh_results is not None:
@@ -303,6 +310,61 @@ def _scan_unrelated_header_warnings(project_root: Path, *, changed_files: list[s
     return warnings
 
 
+def _changed_file_doc_sync_violations(
+    project_root: Path,
+    *,
+    changed_files: list[str] | None,
+    document_statuses: dict[str, dict[str, object]],
+) -> list[str]:
+    if not changed_files:
+        return []
+
+    changed_source_files = [
+        item
+        for item in changed_files
+        if item.startswith("src/agent_orchestrator/")
+        and item.endswith(".py")
+        and Path(item).name != "__init__.py"
+    ]
+    if not changed_source_files:
+        return []
+
+    violations: list[str] = []
+    module_manifest_status = document_statuses.get("module_manifest", {})
+    if module_manifest_status.get("status") != "passed":
+        for path in changed_source_files:
+            violations.append(
+                f"changed-file doc sync violation: {path} requires docs/process/module-manifest.md to be refreshed"
+            )
+
+    root_map_status = document_statuses.get("root_map", {})
+    if root_map_status.get("status") != "passed":
+        for path in changed_source_files:
+            violations.append(
+                f"changed-file doc sync violation: {path} requires docs/process/root-map.md to be refreshed"
+            )
+
+    manifest_path = project_root / "docs" / "process" / "module-manifest.md"
+    if not manifest_path.exists():
+        return sorted(dict.fromkeys(violations))
+    try:
+        manifest_spec = ProcessDocumentSpec.from_markdown(
+            "docs/process/module-manifest.md",
+            manifest_path.read_text(encoding="utf-8"),
+        )
+    except ValueError:
+        return sorted(dict.fromkeys(violations))
+
+    documented_modules = _manifest_entry_paths(manifest_spec)
+    for relative_path in changed_source_files:
+        filename = Path(relative_path).name
+        if filename not in documented_modules:
+            violations.append(
+                f"changed-file doc sync violation: {relative_path} is missing from docs/process/module-manifest.md"
+            )
+    return sorted(dict.fromkeys(violations))
+
+
 def _header_contract_field_violations(path: Path, lines: list[str], docstring_end_index: int) -> list[str]:
     fields = _extract_header_fields(lines, docstring_end_index)
     violations: list[str] = []
@@ -373,6 +435,11 @@ def build_compliance_status_for_session(
         if isinstance(doc_sync, dict)
         else []
     )
+    changed_file_doc_sync_violations = (
+        list(doc_sync.get("changed_file_doc_sync_violations", []))
+        if isinstance(doc_sync, dict)
+        else []
+    )
     header_contract_warnings = (
         list(doc_sync.get("header_contract_warnings", []))
         if isinstance(doc_sync, dict)
@@ -387,6 +454,8 @@ def build_compliance_status_for_session(
         blocking_reasons.append("stale document structure: " + ", ".join(stale_names))
     if header_contract_violations:
         blocking_reasons.extend(str(item) for item in header_contract_violations)
+    if changed_file_doc_sync_violations:
+        blocking_reasons.extend(str(item) for item in changed_file_doc_sync_violations)
 
     if not missing_docs and not stale_docs:
         readme_path = project_root / "README.md"
@@ -536,6 +605,11 @@ def build_compliance_status_for_session(
                 "status": "failed" if header_contract_violations else "passed",
                 "details": "python source files expose the required module header contract",
             },
+            {
+                "name": "changed_files_keep_process_docs_in_sync",
+                "status": "failed" if changed_file_doc_sync_violations else "passed",
+                "details": "changed source files do not leave module manifest or root map behind",
+            },
         ],
         "blocking_reasons": blocking_reasons,
         "warnings": warnings,
@@ -567,6 +641,7 @@ def _collect_checked_files(
         warning_paths = _paths_from_messages(doc_sync.get("header_contract_warnings", []))
         checked.extend(header_paths)
         checked.extend(warning_paths)
+        checked.extend(_paths_from_messages(doc_sync.get("changed_file_doc_sync_violations", [])))
     if session is not None and plans_root is not None:
         session_dir = Path(plans_root) / session.id
         checked.extend(
@@ -587,7 +662,7 @@ def _paths_from_messages(messages: list[object]) -> list[str]:
             continue
         tail = text.split(marker, 1)[1]
         path = tail.split(" ", 1)[0]
-        if "/" in path and path.endswith(".py"):
+        if "/" in path and (path.endswith(".py") or path.endswith(".md")):
             paths.append(path)
     return paths
 
@@ -596,6 +671,20 @@ def _compliance_required_actions(blocking_reasons: list[str], warnings: list[str
     actions: list[str] = []
     if any("missing required docs" in reason or "stale document structure" in reason for reason in blocking_reasons):
         actions.append("restore_process_docs")
+    if any(
+        signal in reason
+        for reason in blocking_reasons
+        for signal in [
+            "changed-file doc sync violation",
+            "module manifest coverage mismatch",
+            "root map missing module manifest linkage",
+            "module manifest missing file-header contract linkage",
+            "file-header contract missing required header fields",
+            "operator runbook missing topology/fallback signals",
+            "operator runbook missing canonical guidance commands",
+        ]
+    ):
+        actions.append("sync_process_doc_contracts")
     if any("header contract violation" in reason for reason in blocking_reasons):
         actions.append("fix_changed_file_headers")
     if any("run provenance mismatch" in reason for reason in blocking_reasons):
@@ -612,6 +701,7 @@ def _compliance_recommended_commands(session: PlanSession | None) -> list[str]:
         return ["python -m agent_orchestrator.cli team check-compliance"]
     return [
         f"python -m agent_orchestrator.cli team check-compliance {session.id}",
+        "python -m agent_orchestrator.cli team status",
         f"python -m agent_orchestrator.cli team summary {session.id}",
     ]
 
