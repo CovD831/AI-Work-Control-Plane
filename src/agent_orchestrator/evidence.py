@@ -22,10 +22,11 @@ from agent_orchestrator.run_store import RunStore
 class WorkflowEvidenceCase:
     requirement: str
     mode: OrchestrationMode = OrchestrationMode.SUCCESS_FIRST
+    label: str | None = None
 
 
 def capture_workflow_evidence(
-    requirements: list[str],
+    requirements: list[str] | list[WorkflowEvidenceCase],
     *,
     project_root: Path | str,
     output_path: Path | str | None = None,
@@ -36,10 +37,11 @@ def capture_workflow_evidence(
     team_runs_root = evidence_root / "team-runs"
     direct_runs_root = evidence_root / "direct-runs"
 
+    normalized_cases = _normalize_cases(requirements)
     cases: list[dict[str, object]] = []
-    for requirement in requirements:
+    for case in normalized_cases:
         case = _capture_case(
-            WorkflowEvidenceCase(requirement=requirement),
+            case,
             project_root=root,
             plans_root=plans_root,
             team_runs_root=team_runs_root,
@@ -50,6 +52,7 @@ def capture_workflow_evidence(
     payload = {
         "project_root": str(root),
         "cases": cases,
+        "report": _build_report(cases),
         "summary": _build_summary(cases),
     }
     if output_path is not None:
@@ -106,8 +109,11 @@ def _capture_case(
 
     team_advantages = _team_advantages(team_session, team_summary, approved_plan, provenance)
     direct_limitations = _direct_limitations(direct_payload)
+    benefit_score = len(team_advantages) + len(direct_limitations)
     return {
+        "label": case.label or case.requirement,
         "requirement": case.requirement,
+        "mode": case.mode.value,
         "direct_run": {
             "run_id": direct_run.run_id,
             "accepted": direct_run.accepted,
@@ -137,8 +143,20 @@ def _capture_case(
         "comparison": {
             "team_advantages": team_advantages,
             "direct_limitations": direct_limitations,
+            "benefit_score": benefit_score,
+            "team_outcome_better_documented": bool(team_advantages or direct_limitations),
         },
     }
+
+
+def _normalize_cases(requirements: list[str] | list[WorkflowEvidenceCase]) -> list[WorkflowEvidenceCase]:
+    normalized: list[WorkflowEvidenceCase] = []
+    for item in requirements:
+        if isinstance(item, WorkflowEvidenceCase):
+            normalized.append(item)
+        else:
+            normalized.append(WorkflowEvidenceCase(requirement=str(item)))
+    return normalized
 
 
 def _team_advantages(
@@ -175,6 +193,7 @@ def _direct_limitations(payload: dict[str, object]) -> list[str]:
 def _build_summary(cases: list[dict[str, object]]) -> dict[str, object]:
     workflow_cases = [case.get("team_workflow", {}) for case in cases if isinstance(case, dict)]
     comparisons = [case.get("comparison", {}) for case in cases if isinstance(case, dict)]
+    direct_runs = [case.get("direct_run", {}) for case in cases if isinstance(case, dict)]
     return {
         "case_count": len(cases),
         "team_cases_with_execution_run": sum(
@@ -190,4 +209,47 @@ def _build_summary(cases: list[dict[str, object]]) -> dict[str, object]:
             for item in comparisons
             if isinstance(item, dict) and "approved_plan_artifact" in list(item.get("team_advantages", []))
         ),
+        "direct_runs_without_plan_metadata": sum(
+            1 for item in direct_runs if isinstance(item, dict) and not item.get("has_approved_plan_metadata")
+        ),
+        "average_benefit_score": (
+            sum(int(item.get("benefit_score", 0)) for item in comparisons if isinstance(item, dict)) / len(comparisons)
+            if comparisons
+            else 0.0
+        ),
     }
+
+
+def _build_report(cases: list[dict[str, object]]) -> dict[str, object]:
+    direct_runs = [case.get("direct_run", {}) for case in cases if isinstance(case, dict)]
+    team_runs = [case.get("team_workflow", {}) for case in cases if isinstance(case, dict)]
+    comparisons = [case.get("comparison", {}) for case in cases if isinstance(case, dict)]
+    return {
+        "team_status_counts": _status_counts(team_runs, "status"),
+        "direct_final_state_counts": _status_counts(direct_runs, "final_state"),
+        "benefit_score_by_case": {
+            str(case.get("label") or case.get("requirement")): int(case.get("comparison", {}).get("benefit_score", 0))
+            for case in cases
+            if isinstance(case, dict)
+        },
+        "max_benefit_score": max(
+            (int(item.get("benefit_score", 0)) for item in comparisons if isinstance(item, dict)),
+            default=0,
+        ),
+        "cases_with_recovery_guidance": sum(
+            1
+            for item in comparisons
+            if isinstance(item, dict) and "recovery_guidance" in list(item.get("team_advantages", []))
+        ),
+    }
+
+
+def _status_counts(items: list[dict[str, object]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        value = item.get(key)
+        name = str(value or "unknown")
+        counts[name] = counts.get(name, 0) + 1
+    return counts
