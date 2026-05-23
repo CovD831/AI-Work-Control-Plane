@@ -94,6 +94,8 @@ python -m agent_orchestrator.cli team runbook <session_id>
 - `team retry-review`
 - `team retry-adversarial-review`
 - `team resume`
+- `team inspect-blockers`
+- `team check-compliance`
 
 推荐顺序：
 

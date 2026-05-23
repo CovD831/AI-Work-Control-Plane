@@ -1,3 +1,8 @@
+# DEPS: agent_orchestrator, datetime, json, os, pathlib, pytest
+# RESPONSIBILITY: 待补充
+# MODULE: 待确定
+# ---
+
 import json
 import os
 from pathlib import Path
@@ -532,7 +537,7 @@ def test_team_summary_command_prioritizes_failed_claude_job(tmp_path, capsys) ->
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "next: inspect_delegated_job" in out
+        assert "next: retry_review" in out
         assert f"failed_job: claude {review_job_id}" in out
         assert "inspect the failed Claude job" in out
     finally:
@@ -1262,7 +1267,7 @@ def test_team_runbook_command_reports_revision_workflow(tmp_path, capsys) -> Non
         assert "selected_topology:" in out
         assert "topology_reason:" in out
         assert "decision_rationale:" in out
-        assert "1. Close every required gap with `team revise`." in out
+        assert "1. Close every required gap with `python -m agent_orchestrator.cli team revise" in out
         assert "2. Re-run `team summary` or `team next` to confirm approval is now allowed." in out
         assert "3. Use `team approve` only after required gaps are closed." in out
     finally:
@@ -1421,7 +1426,7 @@ def test_team_runbook_command_reports_execution_followup_after_completion(tmp_pa
         cli.main()
         out = capsys.readouterr().out
         assert "operator_runbook:" in out
-        assert "Inspect the linked execution run with `team inspect-execution`" in out
+        assert "Inspect the linked execution run with `python -m agent_orchestrator.cli team inspect-execution" in out
         assert "follow-up" in out or "followup" in out
     finally:
         cli._build_team_orchestrator = original_build_team
@@ -1570,7 +1575,7 @@ def test_team_runbook_command_reports_failed_delegation_recovery(tmp_path, capsy
         out = capsys.readouterr().out
         assert "operator_runbook:" in out
         assert "1. Inspect the failed delegated Claude review job." in out
-        assert "2. Retry the delegated review with `team retry-review` if the failure was transient." in out
+        assert "2. Retry the delegated review with `python -m agent_orchestrator.cli team retry-review" in out
         assert "3. Switch to `team revise` if the failure uncovered a real planning gap." in out
     finally:
         cli._build_team_orchestrator = original_build_team

@@ -1,6 +1,11 @@
 """Planning governance models and team orchestration helpers."""
-
 from __future__ import annotations
+
+# DEPS: __future__, agent_orchestrator, dataclasses, json, pathlib, tempfile, typing, uuid
+# RESPONSIBILITY: 待补充
+# MODULE: 待确定
+# ---
+
 
 import json
 from dataclasses import dataclass, field
@@ -1374,6 +1379,19 @@ def _build_compliance_status_for_session(
         required_runbook_signals = ["topology_reason", "fallback_reason", "fallback_detail"]
         if any(signal not in runbook_text for signal in required_runbook_signals):
             blocking_reasons.append("operator runbook missing topology/fallback signals")
+        required_guidance_commands = [
+            "team summary",
+            "team next",
+            "team runbook",
+            "team resume",
+            "team inspect-blockers",
+            "team inspect-execution",
+            "team retry-review",
+            "team retry-adversarial-review",
+            "team check-compliance",
+        ]
+        if any(command not in runbook_text for command in required_guidance_commands):
+            blocking_reasons.append("operator runbook missing canonical guidance commands")
 
         root_map_path = project_root / "docs" / "process" / "root-map.md"
         root_map_text = root_map_path.read_text(encoding="utf-8") if root_map_path.exists() else ""
@@ -1459,6 +1477,13 @@ def _build_compliance_status_for_session(
                 if "operator runbook missing topology/fallback signals" in blocking_reasons
                 else "passed",
                 "details": "operator runbook documents topology and provider fallback signals",
+            },
+            {
+                "name": "operator_runbook_guidance_current",
+                "status": "failed"
+                if "operator runbook missing canonical guidance commands" in blocking_reasons
+                else "passed",
+                "details": "operator runbook documents canonical session guidance commands",
             },
             {
                 "name": "execution_provenance_matches_session",
@@ -1560,7 +1585,220 @@ def _execution_block_detail(session: PlanSession) -> str | None:
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class SessionGuidance:
+    session_id: str
+    primary_action: str
+    primary_reason: str
+    resume_action: str
+    resume_reason: str
+    block_source: str | None
+    block_detail: str | None
+    recommended_commands: list[str]
+    recovery_actions: list[str]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "session_id": self.session_id,
+            "primary_action": self.primary_action,
+            "primary_reason": self.primary_reason,
+            "resume_action": self.resume_action,
+            "resume_reason": self.resume_reason,
+            "block_source": self.block_source,
+            "block_detail": self.block_detail,
+            "recommended_commands": list(self.recommended_commands),
+            "recovery_actions": list(self.recovery_actions),
+        }
+
+
+BLOCK_SOURCES = {"compliance", "delegated_job", "execution_run", "review", "awaiting_human"}
+
+
+def build_session_guidance(session: PlanSession) -> SessionGuidance:
+    required_open = [gap for gap in session.gaps if gap.required and gap.status != "closed"]
+    optional_open = [gap for gap in session.gaps if not gap.required and gap.status != "closed"]
+    compliance_blocking_reasons = _compliance_blocking_reasons(session)
+    delegated_jobs, delegated_job_failed, delegated_job_provider = _collect_delegated_jobs(session)
+
+    primary_action = "inspect_session"
+    primary_reason = "inspect the current session state before continuing"
+    resume_action = "inspect_session"
+    resume_reason = "manual_inspection_required"
+    block_source: str | None = None
+    block_detail: str | None = None
+    recovery_actions: list[str] = []
+
+    if compliance_blocking_reasons:
+        block_source = "compliance"
+        primary_action = "inspect_compliance"
+        primary_reason = "compliance is blocking the workflow; restore required docs before approval or execution"
+        resume_action = "inspect_compliance"
+        resume_reason = "compliance_blocking"
+        recovery_actions = ["inspect_compliance"]
+    elif delegated_job_failed and delegated_job_provider == "claude":
+        block_source = "delegated_job"
+        if _has_failed_delegated_family(delegated_jobs, {"adversarial_review", "adversarial_review_retry"}):
+            block_detail = "failed_adversarial_review_job"
+            primary_action = "retry_adversarial_review"
+            resume_action = "retry_adversarial_review"
+            resume_reason = "failed_adversarial_review_job"
+            recovery_actions = ["inspect_delegated_job", "retry_adversarial_review", "revise_plan"]
+        else:
+            block_detail = "failed_review_job"
+            primary_action = "retry_review"
+            resume_action = "retry_review"
+            resume_reason = "failed_review_job"
+            recovery_actions = ["inspect_delegated_job", "retry_review", "revise_plan"]
+        primary_reason = "delegated job failed; inspect the failed Claude job before deciding whether to revise or retry"
+    elif delegated_job_failed:
+        block_source = "delegated_job"
+        block_detail = "failed_delegated_job"
+        primary_action = "inspect_delegated_job"
+        primary_reason = "delegated job failed; inspect the failed job before continuing"
+        resume_action = "inspect_delegated_job"
+        resume_reason = "failed_delegated_job"
+        recovery_actions = ["inspect_delegated_job", "revise_plan"]
+    elif session.status == "needs_revision" and required_open:
+        block_source = "review"
+        primary_action = "revise"
+        primary_reason = f"{len(required_open)} required gaps are still open; revise the plan before approval"
+        resume_action = "revise"
+        resume_reason = "required_gaps_open"
+    elif session.status == "needs_revision":
+        primary_action = "approve"
+        primary_reason = "all required gaps are closed; approval is now allowed"
+        resume_action = "approve"
+        resume_reason = "required_gaps_closed"
+    elif session.status == "approved_for_execution":
+        primary_action = "execute"
+        primary_reason = "plan is approved; execution is the next valid action"
+        resume_action = "execute"
+        resume_reason = "approved_plan_ready"
+    elif session.status == "executing":
+        primary_action = "wait_for_execution"
+        primary_reason = "execution is in progress; wait for completion or inspect the linked run"
+        resume_action = "wait_for_execution"
+        resume_reason = "execution_in_progress"
+    elif session.status in {"accepted", "needs_followup"}:
+        primary_action = "inspect_execution"
+        primary_reason = "execution completed; inspect the linked run and any follow-up guidance"
+        resume_action = "inspect_execution"
+        resume_reason = "execution_completed"
+    elif session.status == "awaiting_human":
+        block_source = "awaiting_human"
+        primary_action = "human_decision"
+        primary_reason = "human confirmation is required before the workflow can continue"
+        resume_action = "human_decision"
+        resume_reason = "human_confirmation_required"
+        recovery_actions = ["human_decision"]
+    elif session.status == "blocked":
+        primary_action = "inspect_blockers"
+        resume_action = "inspect_blockers"
+        resume_reason = "review_blocked"
+        recovery_actions = ["inspect_blockers"]
+        if session.resume.linked_execution_run_id and not required_open:
+            block_source = "execution_run"
+            block_detail = _execution_block_detail(session) or "run_blocked"
+            primary_reason = "execution ended in a blocked state; inspect the linked run before changing the plan"
+            recovery_actions = ["inspect_blockers", "inspect_execution"]
+            if block_detail == "provenance_mismatch":
+                recovery_actions.append("inspect_compliance")
+        else:
+            block_source = "review"
+            primary_reason = "the workflow is blocked; inspect blocking review findings"
+
+    commands = _guidance_commands(session.id, primary_action, resume_action, recovery_actions)
+    return SessionGuidance(
+        session_id=session.id,
+        primary_action=primary_action,
+        primary_reason=primary_reason,
+        resume_action=resume_action,
+        resume_reason=resume_reason,
+        block_source=block_source,
+        block_detail=block_detail,
+        recommended_commands=commands,
+        recovery_actions=recovery_actions,
+    )
+
+
+def _guidance_commands(
+    session_id: str,
+    primary_action: str,
+    resume_action: str,
+    recovery_actions: list[str],
+) -> list[str]:
+    actions = [primary_action]
+    if resume_action not in actions:
+        actions.append(resume_action)
+    for action in recovery_actions:
+        if action not in actions:
+            actions.append(action)
+    commands: list[str] = []
+    for action in actions:
+        command = _resume_guidance_command(session_id, action)
+        if command not in commands:
+            commands.append(command)
+    return commands
+
+
+def _compliance_blocking_reasons(session: PlanSession) -> list[str]:
+    if not isinstance(session.compliance, dict):
+        return []
+    return [str(item) for item in session.compliance.get("blocking_reasons", [])]
+
+
+def _collect_delegated_jobs(session: PlanSession) -> tuple[list[dict[str, object]], bool, str | None]:
+    delegated_jobs: list[dict[str, object]] = []
+    delegated_job_failed = False
+    delegated_job_provider = None
+    latest_round_by_family: dict[str, PlanReviewRound] = {}
+    for round_ in session.review_rounds:
+        family = _delegated_round_family(round_.round_type)
+        if family:
+            latest_round_by_family[family] = round_
+
+    for round_ in session.review_rounds:
+        summary = round_.summary
+        if " job " not in summary:
+            continue
+        job_status = "completed"
+        job_summary = summary
+        job_error = None
+        job_id = summary.split("job ")[-1].rstrip(".")
+        runtime_status = _read_delegated_job_status(session, job_id)
+        if runtime_status:
+            job_status = runtime_status.status
+            job_summary = runtime_status.summary or summary
+            job_error = runtime_status.error
+            provider = runtime_status.provider
+            if runtime_status.status == "failed" and latest_round_by_family.get(_delegated_round_family(round_.round_type) or "") is round_:
+                delegated_job_failed = True
+        else:
+            provider = "claude" if "claude" in summary else "mock"
+        if job_status == "failed" and latest_round_by_family.get(_delegated_round_family(round_.round_type) or "") is round_ and delegated_job_provider is None:
+            delegated_job_provider = provider
+        delegated_jobs.append(
+            {
+                "round_type": round_.round_type,
+                "provider": provider,
+                "job_id": job_id,
+                "status": job_status,
+                "summary": job_summary,
+                "error": job_error,
+            }
+        )
+    return delegated_jobs, delegated_job_failed, delegated_job_provider
+
+
+def _has_failed_delegated_family(delegated_jobs: list[dict[str, object]], round_types: set[str]) -> bool:
+    return any(
+        str(job.get("round_type")) in round_types and str(job.get("status")) == "failed"
+        for job in delegated_jobs
+    )
+
+
 def _build_execution_session_summary(session: PlanSession, payload: dict[str, object]) -> dict[str, object]:
+    guidance = build_session_guidance(session)
     metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
     provenance = metadata.get("provenance", {}) if isinstance(metadata.get("provenance"), dict) else {}
     approved_plan_summary = (
@@ -1588,18 +1826,17 @@ def _build_execution_session_summary(session: PlanSession, payload: dict[str, ob
         "selected_topology": approved_plan_summary.get("selected_topology") or provenance.get("selected_topology"),
         "selected_provider_runtime": approved_plan_summary.get("selected_provider_runtime") or provenance.get("selected_provider_runtime"),
         "blocking_reasons": blocking_reasons,
+        "primary_action": guidance.primary_action,
+        "primary_reason": guidance.primary_reason,
+        "resume_action": guidance.resume_action,
+        "resume_reason": guidance.resume_reason,
+        "recommended_commands": guidance.recommended_commands,
     }
 
 
 def _build_blocker_session_summary(session: PlanSession) -> dict[str, object]:
     status_summary = _build_status_summary(session)
-    block_source = str(status_summary.get("block_source", "review"))
-    primary_action = str(status_summary.get("primary_action", "inspect_session"))
-    resume_action = str(status_summary.get("resume_action", "inspect_session"))
-    recommended_commands = [_resume_guidance_command(session.id, primary_action)]
-    resume_command = _resume_guidance_command(session.id, resume_action)
-    if resume_command not in recommended_commands:
-        recommended_commands.append(resume_command)
+    guidance = build_session_guidance(session)
 
     evidence: dict[str, object] = {
         "required_open_gaps": int(status_summary.get("open_required_gaps", 0)),
@@ -1627,14 +1864,15 @@ def _build_blocker_session_summary(session: PlanSession) -> dict[str, object]:
     return {
         "session_id": session.id,
         "session_status": session.status,
-        "block_source": block_source,
-        "block_detail": status_summary.get("block_detail"),
-        "primary_action": primary_action,
-        "primary_reason": status_summary.get("next_action_message"),
-        "resume_action": resume_action,
-        "resume_reason": status_summary.get("resume_reason"),
+        "block_source": guidance.block_source,
+        "block_detail": guidance.block_detail,
+        "primary_action": guidance.primary_action,
+        "primary_reason": guidance.primary_reason,
+        "resume_action": guidance.resume_action,
+        "resume_reason": guidance.resume_reason,
         "blocking_reasons": [str(item) for item in status_summary.get("blocking_reasons", [])],
-        "recommended_commands": recommended_commands,
+        "recommended_commands": guidance.recommended_commands,
+        "recovery_actions": guidance.recovery_actions,
         "evidence": evidence,
     }
 
@@ -1701,8 +1939,8 @@ def _recovery_policy_for_session(
 
 
 def _resume_apply_action(team: TeamOrchestrator, session: PlanSession) -> PlanSession:
-    status_summary = _build_status_summary(session)
-    action = str(status_summary.get("resume_action", "inspect_session"))
+    guidance = build_session_guidance(session)
+    action = guidance.resume_action
     inspect_only_actions = {
         "inspect_execution",
         "inspect_compliance",
@@ -1715,7 +1953,7 @@ def _resume_apply_action(team: TeamOrchestrator, session: PlanSession) -> PlanSe
     }
     if action in inspect_only_actions:
         next_command = _resume_guidance_command(session.id, action)
-        reason = str(status_summary.get("resume_reason", "manual_inspection_required"))
+        reason = guidance.resume_reason
         raise ValueError(
             f"team resume --apply cannot auto-apply resume action '{action}' "
             f"(reason: {reason}); next command: {next_command}"
@@ -1736,6 +1974,16 @@ def _resume_apply_action(team: TeamOrchestrator, session: PlanSession) -> PlanSe
 
 
 def _resume_guidance_command(session_id: str, action: str) -> str:
+    if action == "retry_review":
+        return f"python -m agent_orchestrator.cli team retry-review {session_id}"
+    if action == "retry_adversarial_review":
+        return f"python -m agent_orchestrator.cli team retry-adversarial-review {session_id}"
+    if action in {"revise", "revise_plan"}:
+        return f"python -m agent_orchestrator.cli team revise {session_id} --summary \"close required gaps\""
+    if action == "approve":
+        return f"python -m agent_orchestrator.cli team approve {session_id}"
+    if action == "execute":
+        return f"python -m agent_orchestrator.cli team execute {session_id} --mode success_first"
     if action == "inspect_execution":
         return f"python -m agent_orchestrator.cli team inspect-execution {session_id}"
     if action == "inspect_blockers":
@@ -2170,37 +2418,34 @@ def _build_decision_verdict(
 
 def build_operator_runbook(session: PlanSession) -> list[str]:
     status_summary = _build_status_summary(session)
+    guidance = build_session_guidance(session)
     required_open = int(status_summary.get("open_required_gaps", 0))
     optional_open = int(status_summary.get("open_optional_followups", 0))
-    block_source = str(status_summary.get("block_source", ""))
     delegated_jobs = status_summary.get("delegated_jobs", [])
     failed_jobs = [job for job in delegated_jobs if job.get("status") == "failed"]
-    compliance_blocking_reasons = []
-    if isinstance(session.compliance, dict):
-        compliance_blocking_reasons = [str(item) for item in session.compliance.get("blocking_reasons", [])]
+    compliance_blocking_reasons = _compliance_blocking_reasons(session)
 
-    if compliance_blocking_reasons:
+    if guidance.block_source == "compliance":
         detail = compliance_blocking_reasons[0]
         return [
             f"Inspect the compliance blocker: {detail}.",
-            "Restore the required docs before trying to approve or execute again.",
-            "Re-run `team summary` or `team runbook` after the docs are fixed to confirm the workflow is unblocked.",
+            f"Run `{guidance.recommended_commands[0]}` after restoring the required workflow docs.",
+            "Re-run `team summary` or `team runbook` to confirm the canonical guidance is unblocked.",
         ]
 
-    if failed_jobs:
+    if guidance.block_source == "delegated_job" and failed_jobs:
         failed_job = failed_jobs[0]
         is_claude = str(failed_job.get("provider")) == "claude"
-        is_adversarial = str(failed_job.get("round_type")) in {"adversarial_review", "adversarial_review_retry"}
-        if is_claude and is_adversarial:
+        if is_claude and guidance.block_detail == "failed_adversarial_review_job":
             return [
                 "Inspect the failed delegated Claude adversarial review job.",
-                "Retry the delegated adversarial review with `team retry-adversarial-review` if the failure was transient.",
+                f"Retry the delegated adversarial review with `{guidance.recommended_commands[0]}` if the failure was transient.",
                 "Switch to `team revise` if the failure uncovered a real planning gap.",
             ]
         if is_claude:
             return [
                 "Inspect the failed delegated Claude review job.",
-                "Retry the delegated review with `team retry-review` if the failure was transient.",
+                f"Retry the delegated review with `{guidance.recommended_commands[0]}` if the failure was transient.",
                 "Switch to `team revise` if the failure uncovered a real planning gap.",
             ]
         return [
@@ -2211,7 +2456,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
 
     if session.status == "needs_revision":
         steps = [
-            "Close every required gap with `team revise`.",
+            f"Close every required gap with `{guidance.recommended_commands[0]}`.",
             "Re-run `team summary` or `team next` to confirm approval is now allowed.",
             "Use `team approve` only after required gaps are closed.",
         ]
@@ -2221,7 +2466,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
 
     if session.status == "approved_for_execution":
         return [
-            "Run `team execute` to start execution from the approved plan.",
+            f"Run `{guidance.recommended_commands[0]}` to start execution from the approved plan.",
             "Use `team status` or `team summary` if you need to confirm the session is still in the approved phase.",
             "Inspect the linked execution run after execution starts if you need deeper provenance or result details.",
         ]
@@ -2235,7 +2480,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
 
     if session.status in {"accepted", "needs_followup"}:
         steps = [
-            "Inspect the linked execution run with `team inspect-execution` to confirm provenance, outputs, and final acceptance state.",
+            f"Inspect the linked execution run with `{guidance.recommended_commands[0]}` to confirm provenance, outputs, and final acceptance state.",
             "Use `team summary` to review the final planning status alongside the execution result.",
             "Avoid restarting planning from the raw requirement unless a new requirement is opened.",
         ]
@@ -2251,17 +2496,16 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
         ]
 
     if session.status == "blocked":
-        execution_block_detail = _execution_block_detail(session)
-        if block_source == "execution_run":
-            if execution_block_detail == "provenance_mismatch":
+        if guidance.block_source == "execution_run":
+            if guidance.block_detail == "provenance_mismatch":
                 return [
                     "Inspect the linked execution provenance before trusting the blocked session state.",
-                    "Use `team check-compliance` and `team inspect-execution` together to resolve the run/session mismatch.",
+                    f"Use `{guidance.recommended_commands[0]}` and `team inspect-execution` together to resolve the run/session mismatch.",
                     "Do not resume planning or execution until the provenance mismatch is corrected.",
                 ]
             return [
                 "Inspect the linked execution run to identify why execution ended in a blocked state.",
-                "Use `team inspect-execution` and `team summary` together before deciding whether the plan or execution path should change.",
+                f"Use `{guidance.recommended_commands[0]}` and `team summary` together before deciding whether the plan or execution path should change.",
                 "Resume planning only after the execution-side blocker is understood and reflected in the session direction.",
             ]
         step = "Close required review blockers before trying to approve or execute again."
@@ -2283,166 +2527,27 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
 def _build_status_summary(session: PlanSession) -> dict[str, object]:
     required_open = [gap for gap in session.gaps if gap.required and gap.status != "closed"]
     optional_open = [gap for gap in session.gaps if not gap.required and gap.status != "closed"]
-    next_actions: list[str] = []
     blocking_reasons: list[str] = []
-    block_source = "review"
-    block_detail = None
-    delegated_job_provider = None
-    compliance_blocking_reasons = []
-    if isinstance(session.compliance, dict):
-        compliance_blocking_reasons = [str(item) for item in session.compliance.get("blocking_reasons", [])]
+    compliance_blocking_reasons = _compliance_blocking_reasons(session)
+    delegated_jobs, delegated_job_failed, delegated_job_provider = _collect_delegated_jobs(session)
+    guidance = build_session_guidance(session)
+    next_actions = [guidance.primary_action]
+    if guidance.resume_action not in next_actions:
+        next_actions.append(guidance.resume_action)
 
     if compliance_blocking_reasons:
-        next_actions.append("inspect_compliance")
         blocking_reasons.extend(compliance_blocking_reasons)
-        block_source = "compliance"
-
-    if compliance_blocking_reasons:
-        pass
-    elif session.status == "needs_revision":
-        if required_open:
-            next_actions.append("revise")
-            blocking_reasons.append(f"{len(required_open)} required gaps remain open")
-        if not required_open:
-            next_actions.append("approve")
-    elif session.status == "approved_for_execution":
-        next_actions.append("execute")
-    elif session.status in {"accepted", "needs_followup"}:
-        next_actions.append("inspect_execution")
-    elif session.status == "awaiting_human":
-        next_actions.append("human_decision")
-    elif session.status == "blocked":
-        next_actions.append("inspect_blockers")
-    elif session.status == "executing":
-        next_actions.append("wait_for_execution")
-
-    delegated_jobs = []
-    delegated_job_failed = False
-    recovery_actions: list[str] = []
-    resume_action = "inspect_session"
-    resume_reason = "manual_inspection_required"
-    latest_round_by_family: dict[str, PlanReviewRound] = {}
-    for round_ in session.review_rounds:
-        family = _delegated_round_family(round_.round_type)
-        if family:
-            latest_round_by_family[family] = round_
-
-    for round_ in session.review_rounds:
-        summary = round_.summary
-        if " job " not in summary:
-            continue
-        job_status = "completed"
-        job_summary = summary
-        job_error = None
-        job_id = summary.split("job ")[-1].rstrip(".")
-        runtime_status = _read_delegated_job_status(session, job_id)
-        if runtime_status:
-            job_status = runtime_status.status
-            job_summary = runtime_status.summary or summary
-            job_error = runtime_status.error
-            provider = runtime_status.provider
-            if runtime_status.status == "failed" and latest_round_by_family.get(_delegated_round_family(round_.round_type) or "") is round_:
-                delegated_job_failed = True
-        else:
-            provider = "claude" if "claude" in summary else "mock"
-        if job_status == "failed" and latest_round_by_family.get(_delegated_round_family(round_.round_type) or "") is round_ and delegated_job_provider is None:
-            delegated_job_provider = provider
-        delegated_jobs.append(
-            {
-                "round_type": round_.round_type,
-                "provider": provider,
-                "job_id": job_id,
-                "status": job_status,
-                "summary": job_summary,
-                "error": job_error,
-            }
-        )
-
-    if delegated_job_failed and "inspect_delegated_job" not in next_actions:
-        next_actions.insert(0, "inspect_delegated_job")
-        blocking_reasons.append("at least one delegated job failed")
-        block_source = "delegated_job"
-
-    primary_action = next_actions[0] if next_actions else "inspect_session"
-
-    if compliance_blocking_reasons:
-        recovery_actions = ["inspect_compliance"]
-        next_action_message = "compliance is blocking the workflow; restore required docs before approval or execution"
-        resume_action = "inspect_compliance"
-        resume_reason = "compliance_blocking"
-    elif delegated_job_failed and delegated_job_provider == "claude":
-        if latest_round_by_family.get("adversarial_review") and any(
-            job["round_type"] in {"adversarial_review", "adversarial_review_retry"} and job["status"] == "failed"
-            for job in delegated_jobs
-        ):
-            recovery_actions = [
-                "inspect_delegated_job",
-                "retry_adversarial_review",
-                "revise_plan",
-            ]
-            resume_action = "retry_adversarial_review"
-            resume_reason = "failed_adversarial_review_job"
-        else:
-            recovery_actions = [
-                "inspect_delegated_job",
-                "retry_review",
-                "revise_plan",
-            ]
-            resume_action = "retry_review"
-            resume_reason = "failed_review_job"
-        next_action_message = (
-            "delegated job failed; inspect the failed Claude job before deciding whether to revise or retry"
-        )
     elif delegated_job_failed:
-        recovery_actions = [
-            "inspect_delegated_job",
-            "revise_plan",
-        ]
-        next_action_message = "delegated job failed; inspect the failed job before continuing"
-        resume_action = "inspect_delegated_job"
-        resume_reason = "failed_delegated_job"
+        blocking_reasons.append("at least one delegated job failed")
     elif session.status == "needs_revision" and required_open:
-        next_action_message = f"{len(required_open)} required gaps are still open; revise the plan before approval"
-        resume_action = "revise"
-        resume_reason = "required_gaps_open"
-    elif session.status == "needs_revision":
-        next_action_message = "all required gaps are closed; approval is now allowed"
-        resume_action = "approve"
-        resume_reason = "required_gaps_closed"
-    elif session.status == "approved_for_execution":
-        next_action_message = "plan is approved; execution is the next valid action"
-        resume_action = "execute"
-        resume_reason = "approved_plan_ready"
-    elif session.status == "executing":
-        next_action_message = "execution is in progress; wait for completion or inspect the linked run"
-        resume_action = "wait_for_execution"
-        resume_reason = "execution_in_progress"
-    elif session.status in {"accepted", "needs_followup"}:
-        next_action_message = "execution completed; inspect the linked run and any follow-up guidance"
-        resume_action = "inspect_execution"
-        resume_reason = "execution_completed"
-    elif session.status == "awaiting_human":
-        next_action_message = "human confirmation is required before the workflow can continue"
-        resume_action = "human_decision"
-        resume_reason = "human_confirmation_required"
-    elif session.status == "blocked":
-        if session.resume.linked_execution_run_id and not required_open:
-            block_source = "execution_run"
-            block_detail = _execution_block_detail(session) or "run_blocked"
-            next_action_message = "execution ended in a blocked state; inspect the linked run before changing the plan"
-        else:
-            next_action_message = "the workflow is blocked; inspect blocking review findings"
-        resume_action = "inspect_blockers"
-        resume_reason = "review_blocked"
-    else:
-        next_action_message = "inspect the current session state before continuing"
+        blocking_reasons.append(f"{len(required_open)} required gaps remain open")
 
     preferred_recovery_round_type = None
     recovery_provider_mode = "observed"
-    if resume_action == "retry_review":
+    if guidance.resume_action == "retry_review":
         preferred_recovery_round_type = "review"
         recovery_provider_mode = "planned"
-    elif resume_action == "retry_adversarial_review":
+    elif guidance.resume_action == "retry_adversarial_review":
         preferred_recovery_round_type = "adversarial_review"
         recovery_provider_mode = "planned"
     recovery_policy = _recovery_policy_for_session(
@@ -2457,19 +2562,21 @@ def _build_status_summary(session: PlanSession) -> dict[str, object]:
         "open_required_gaps": len(required_open),
         "open_optional_followups": len(optional_open),
         "next_actions": next_actions,
-        "next_action_message": next_action_message,
-        "primary_action": primary_action,
-        "recovery_actions": recovery_actions,
+        "next_action_message": guidance.primary_reason,
+        "primary_action": guidance.primary_action,
+        "primary_reason": guidance.primary_reason,
+        "recommended_commands": guidance.recommended_commands,
+        "recovery_actions": guidance.recovery_actions,
         "recovery_round_type": recovery_policy.get("round_type"),
         "recovery_provider": recovery_policy.get("provider"),
         "recovery_provider_fallback_from": recovery_policy.get("fallback_from"),
         "recovery_provider_fallback_reason": recovery_policy.get("fallback_reason"),
         "recovery_provider_fallback_detail": recovery_policy.get("fallback_detail"),
         "blocking_reasons": blocking_reasons,
-        "block_source": block_source,
-        "block_detail": block_detail,
-        "resume_action": resume_action,
-        "resume_reason": resume_reason,
+        "block_source": guidance.block_source,
+        "block_detail": guidance.block_detail,
+        "resume_action": guidance.resume_action,
+        "resume_reason": guidance.resume_reason,
         "delegated_jobs": delegated_jobs,
         "selected_topology": session.decision_verdict.selected_topology if session.decision_verdict else None,
         "topology_reason": session.structured_brief.topology_recommendation.get("selection_reason"),

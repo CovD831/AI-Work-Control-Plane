@@ -1,3 +1,8 @@
+# DEPS: agent_orchestrator, json, pathlib, pytest
+# RESPONSIBILITY: 待补充
+# MODULE: 待确定
+# ---
+
 import json
 from pathlib import Path
 
@@ -16,6 +21,7 @@ from agent_orchestrator.planning import (
     RoundController,
     StructuredPlanBrief,
     TeamOrchestrator,
+    build_session_guidance,
 )
 from agent_orchestrator.review import Finding
 
@@ -79,10 +85,12 @@ def test_team_resume_normalizes_review_retry_guidance(tmp_path) -> None:
 
     resumed = team.resume(session.id).to_dict()["status_summary"]
 
-    assert resumed["next_actions"][0] == "inspect_delegated_job"
+    assert resumed["next_actions"][0] == "retry_review"
     assert "retry_review" in resumed["recovery_actions"]
+    assert "inspect_delegated_job" in resumed["recovery_actions"]
     assert resumed["resume_action"] == "retry_review"
     assert resumed["resume_reason"] == "failed_review_job"
+    assert resumed["recommended_commands"][0].endswith(f"team retry-review {session.id}")
 
 
 def test_team_resume_normalizes_adversarial_retry_guidance(tmp_path) -> None:
@@ -99,8 +107,9 @@ def test_team_resume_normalizes_adversarial_retry_guidance(tmp_path) -> None:
 
     resumed = team.resume(session.id).to_dict()["status_summary"]
 
-    assert resumed["next_actions"][0] == "inspect_delegated_job"
+    assert resumed["next_actions"][0] == "retry_adversarial_review"
     assert "retry_adversarial_review" in resumed["recovery_actions"]
+    assert "inspect_delegated_job" in resumed["recovery_actions"]
     assert resumed["resume_action"] == "retry_adversarial_review"
     assert resumed["resume_reason"] == "failed_adversarial_review_job"
 
@@ -1082,7 +1091,8 @@ def test_team_status_reports_failed_delegated_job_and_next_step(tmp_path) -> Non
 
     status = team.status(session.id).to_dict()["status_summary"]
 
-    assert "inspect_delegated_job" in status["next_actions"]
+    assert status["next_actions"][0] == "retry_review"
+    assert "inspect_delegated_job" in status["recovery_actions"]
     assert any(job["status"] == "failed" for job in status["delegated_jobs"])
     assert "delegated job failed" in status["next_action_message"]
 
