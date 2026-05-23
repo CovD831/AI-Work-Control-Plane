@@ -100,14 +100,18 @@ The first product-quality version should be able to:
 
 - Clarifies fuzzy requirements into a task contract.
 - Runs a fixed dual-model planning loop: author draft, adversarial review, decision verdict.
+- Persists plan sessions, review rounds, checklist state, and resume metadata for the `team` workflow.
+- Exposes session-centric operator guidance through `team summary`, `team next`, and `team runbook`.
 - Decomposes the approved plan into execution-ready work units.
+- Executes approved team plans from approved-plan artifacts rather than re-deriving from the raw requirement.
 - Routes execution through a policy profile.
 - Sends failed, uncertain, or high-risk work to review/rescue paths.
 - Tracks task state transitions and observability events.
 - Tracks agent jobs through a separate `JobRuntime` lifecycle.
 - Models structured review findings for pluggable review adapters.
 - Supports work-unit partial rescue and dependency-aware replay before whole-run reroute.
-- Persists basic product roadmap and process supervision documents in-project.
+- Enforces a narrow compliance gate around required workflow docs, operator-runbook signals, and plan artifact persistence.
+- Persists product roadmap and process supervision documents in-project.
 
 ## Product Layers And Plugins
 

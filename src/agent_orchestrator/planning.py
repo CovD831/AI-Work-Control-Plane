@@ -388,6 +388,14 @@ class RoundController:
             raise ValueError("team execute requires the Execution approved checklist item")
 
     def normalize_resume(self, session: "PlanSession") -> "PlanSession":
+        if (
+            session.status == "executing"
+            and session.resume.linked_execution_run_id
+            and session.gate_verdict == "approved"
+        ):
+            session.resume.current_phase = "executing"
+            session.resume.pending_role = "build"
+            return session
         if session.status == "needs_revision":
             active_round_id = session.review_rounds[-1].id if session.review_rounds else None
             session.resume.current_phase = "in_review"
@@ -397,7 +405,7 @@ class RoundController:
         if session.status == "approved_for_execution":
             if session.gate_verdict != "approved":
                 raise ValueError("inconsistent approved session: verdict must be approved")
-            if session.resume.current_phase not in {"approved", "drafting"}:
+            if session.resume.current_phase not in {"approved", "drafting", "executing", "in_review"}:
                 raise ValueError("inconsistent approved session: unexpected resume phase")
             session.resume.current_phase = "approved"
             session.resume.pending_role = "lead"
@@ -408,9 +416,12 @@ class RoundController:
             session.resume.current_phase = "executing"
             session.resume.pending_role = "build"
             return session
+        if session.status in {"accepted", "needs_followup"}:
+            session.resume.current_phase = session.status
+            session.resume.pending_role = "lead"
+            return session
         if session.status in {"blocked", "awaiting_human"}:
-            if session.resume.pending_role != "lead":
-                raise ValueError("inconsistent blocked session: pending role must remain lead")
+            session.resume.pending_role = "lead"
             return session
         return session
 
@@ -844,6 +855,7 @@ class TeamOrchestrator:
             run_store=self.orchestrator.run_store,
             plans_root=self.store.root,
         )
+        session = _reconcile_linked_execution_state(session, self.orchestrator.run_store)
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         return session
 
@@ -857,6 +869,7 @@ class TeamOrchestrator:
             run_store=self.orchestrator.run_store,
             plans_root=self.store.root,
         )
+        session = _reconcile_linked_execution_state(session, self.orchestrator.run_store)
         normalized = self.round_controller.normalize_resume(session)
         normalized.structured_brief.checklist_summary = _build_checklist_summary(normalized.checklist)
         if apply:
@@ -955,17 +968,31 @@ class TeamOrchestrator:
         execution_requirement = session.approved_plan["goal"] if session.approved_plan else session.requirement
         run = self.orchestrator.run(execution_requirement, mode)
         payload = run.to_dict()
-        payload["metadata"] = {
-            "approved_plan": session.approved_plan,
-            "plan_session_id": session.id,
-            "provenance": {
+        metadata = dict(payload.get("metadata", {}))
+        provenance = dict(metadata.get("provenance", {}))
+        provenance.update(
+            {
                 "plan_session_id": session.id,
                 "approved_plan_goal": execution_requirement,
                 "selected_topology": session.decision_verdict.selected_topology if session.decision_verdict else None,
                 "selected_provider_runtime": session.decision_verdict.selected_provider_runtime if session.decision_verdict else {},
                 "decision_rationale": session.decision_verdict.rationale if session.decision_verdict else [],
-            },
-        }
+            }
+        )
+        metadata.update(
+            {
+                "approved_plan": session.approved_plan,
+                "plan_session_id": session.id,
+                "approved_plan_summary": {
+                    "session_id": session.id,
+                    "goal": session.approved_plan.get("goal") if session.approved_plan else execution_requirement,
+                    "selected_topology": session.decision_verdict.selected_topology if session.decision_verdict else None,
+                    "selected_provider_runtime": session.decision_verdict.selected_provider_runtime if session.decision_verdict else {},
+                },
+                "provenance": provenance,
+            }
+        )
+        payload["metadata"] = metadata
         self.orchestrator.run_store.write(run.run_id, payload)
         session.resume.linked_execution_run_id = run.run_id
         lead_verdict = _finalize_execution(session, run)
@@ -986,6 +1013,47 @@ class TeamOrchestrator:
         )
         self.store.write_session(session)
         return session
+
+    def inspect_execution(self, session_id: str) -> dict[str, object]:
+        session = self.store.read_session(session_id)
+        run_id = session.resume.linked_execution_run_id
+        if not run_id:
+            raise ValueError("team inspect-execution requires a session with a linked execution run")
+        if not self.orchestrator.run_store.exists(run_id):
+            raise ValueError("team inspect-execution could not find the linked execution run artifact")
+        session.doc_sync = self._build_doc_sync_status()
+        session.compliance = _build_compliance_status_for_session(
+            project_root=self.project_root,
+            doc_sync=session.doc_sync,
+            session=session,
+            run_store=self.orchestrator.run_store,
+            plans_root=self.store.root,
+        )
+        session = _reconcile_linked_execution_state(session, self.orchestrator.run_store)
+        payload = self.orchestrator.run_store.read(run_id)
+        if isinstance(payload, dict):
+            payload["session_summary"] = _build_execution_session_summary(session, payload)
+        return payload
+
+    def inspect_blockers(self, session_id: str) -> dict[str, object]:
+        session = self.store.read_session(session_id)
+        session.doc_sync = self._build_doc_sync_status()
+        session.compliance = _build_compliance_status_for_session(
+            project_root=self.project_root,
+            doc_sync=session.doc_sync,
+            session=session,
+            run_store=self.orchestrator.run_store,
+            plans_root=self.store.root,
+        )
+        session = _reconcile_linked_execution_state(session, self.orchestrator.run_store)
+        payload = session.to_dict()
+        payload["blocker_summary"] = _build_blocker_session_summary(session)
+        if session.resume.linked_execution_run_id and self.orchestrator.run_store.exists(session.resume.linked_execution_run_id):
+            payload["linked_execution_run"] = {
+                "run_id": session.resume.linked_execution_run_id,
+                "exists": True,
+            }
+        return payload
 
     def _build_doc_sync_status(self) -> dict[str, object]:
         return _build_doc_sync_status_for_project(self.project_root, self.runtime)
@@ -1418,6 +1486,159 @@ def _select_retry_provider(session: PlanSession, runtime_status: Any) -> str:
     return "mock"
 
 
+def _reconcile_linked_execution_state(session: PlanSession, run_store: Any | None) -> PlanSession:
+    if session.status != "executing" or not session.resume.linked_execution_run_id or run_store is None:
+        return session
+    try:
+        payload = run_store.read(session.resume.linked_execution_run_id)
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict) or not payload:
+        return session
+    run_status = str(payload.get("status", ""))
+    if run_status not in {"completed", "blocked", "failed", "cancelled"}:
+        return session
+    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+    approved_plan = metadata.get("approved_plan", {}) if isinstance(metadata.get("approved_plan"), dict) else {}
+    if approved_plan and approved_plan.get("session_id") not in {None, session.id}:
+        return session
+
+    if run_status == "completed":
+        session.status = _finalize_execution_from_payload(session, payload)
+        session.gate_verdict = session.status
+        session.resume.current_phase = session.status
+        session.resume.pending_role = "lead"
+        if session.decision_verdict is not None:
+            session.decision_verdict = DecisionVerdict(
+                approval_status=session.status,
+                required_gaps=[gap.to_dict() for gap in session.gaps if gap.required and gap.status != "closed"],
+                followup_gaps=[gap.to_dict() for gap in session.gaps if not gap.required and gap.status != "closed"],
+                selected_topology=session.decision_verdict.selected_topology,
+                selected_provider_runtime=session.decision_verdict.selected_provider_runtime,
+                rationale=session.decision_verdict.rationale,
+            )
+        return session
+
+    session.status = "blocked"
+    session.gate_verdict = "blocked"
+    session.resume.current_phase = "blocked"
+    session.resume.pending_role = "lead"
+    if session.decision_verdict is not None:
+        session.decision_verdict = DecisionVerdict(
+            approval_status="blocked",
+            required_gaps=[gap.to_dict() for gap in session.gaps if gap.required and gap.status != "closed"],
+            followup_gaps=[gap.to_dict() for gap in session.gaps if not gap.required and gap.status != "closed"],
+            selected_topology=session.decision_verdict.selected_topology,
+            selected_provider_runtime=session.decision_verdict.selected_provider_runtime,
+            rationale=session.decision_verdict.rationale,
+        )
+    return session
+
+
+def _finalize_execution_from_payload(session: PlanSession, payload: dict[str, object]) -> Literal["accepted", "needs_followup", "blocked"]:
+    findings = [
+        finding
+        for round_ in session.review_rounds
+        if round_.review_result
+        for finding in round_.review_result.findings
+    ]
+    if any(finding.severity in {"high", "critical"} for finding in findings):
+        return "blocked"
+    if any(finding.severity in {"low", "medium"} for finding in findings):
+        return "needs_followup"
+    return "accepted" if bool(payload.get("accepted", False)) else "blocked"
+
+
+def _execution_block_detail(session: PlanSession) -> str | None:
+    if not session.compliance or not isinstance(session.compliance, dict):
+        return None
+    reasons = [str(item) for item in session.compliance.get("blocking_reasons", [])]
+    if any("run provenance mismatch" in reason for reason in reasons):
+        return "provenance_mismatch"
+    if session.resume.linked_execution_run_id and session.status == "blocked":
+        return "run_blocked"
+    return None
+
+
+def _build_execution_session_summary(session: PlanSession, payload: dict[str, object]) -> dict[str, object]:
+    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+    provenance = metadata.get("provenance", {}) if isinstance(metadata.get("provenance"), dict) else {}
+    approved_plan_summary = (
+        metadata.get("approved_plan_summary", {})
+        if isinstance(metadata.get("approved_plan_summary"), dict)
+        else {}
+    )
+    compliance = session.compliance if isinstance(session.compliance, dict) else {}
+    blocking_reasons = [str(item) for item in compliance.get("blocking_reasons", [])]
+    outcome = "accepted" if bool(payload.get("accepted", False)) else str(payload.get("status", "unknown"))
+    if session.status == "needs_followup":
+        outcome = "needs_followup"
+    if session.status == "blocked":
+        detail = _execution_block_detail(session)
+        if detail == "provenance_mismatch":
+            outcome = "blocked_provenance_mismatch"
+        elif detail == "run_blocked":
+            outcome = "blocked_execution_run"
+    return {
+        "session_id": session.id,
+        "run_id": session.resume.linked_execution_run_id,
+        "session_status": session.status,
+        "outcome": outcome,
+        "goal": approved_plan_summary.get("goal") or provenance.get("approved_plan_goal") or session.requirement,
+        "selected_topology": approved_plan_summary.get("selected_topology") or provenance.get("selected_topology"),
+        "selected_provider_runtime": approved_plan_summary.get("selected_provider_runtime") or provenance.get("selected_provider_runtime"),
+        "blocking_reasons": blocking_reasons,
+    }
+
+
+def _build_blocker_session_summary(session: PlanSession) -> dict[str, object]:
+    status_summary = _build_status_summary(session)
+    block_source = str(status_summary.get("block_source", "review"))
+    primary_action = str(status_summary.get("primary_action", "inspect_session"))
+    resume_action = str(status_summary.get("resume_action", "inspect_session"))
+    recommended_commands = [_resume_guidance_command(session.id, primary_action)]
+    resume_command = _resume_guidance_command(session.id, resume_action)
+    if resume_command not in recommended_commands:
+        recommended_commands.append(resume_command)
+
+    evidence: dict[str, object] = {
+        "required_open_gaps": int(status_summary.get("open_required_gaps", 0)),
+        "optional_open_followups": int(status_summary.get("open_optional_followups", 0)),
+    }
+    delegated_jobs = status_summary.get("delegated_jobs", [])
+    failed_jobs = [
+        job for job in delegated_jobs if isinstance(job, dict) and str(job.get("status")) == "failed"
+    ]
+    if failed_jobs:
+        failed_job = failed_jobs[0]
+        evidence["failed_job"] = {
+            "job_id": failed_job.get("job_id"),
+            "provider": failed_job.get("provider"),
+            "round_type": failed_job.get("round_type"),
+            "error": failed_job.get("error"),
+        }
+    if session.resume.linked_execution_run_id:
+        evidence["linked_execution_run_id"] = session.resume.linked_execution_run_id
+    if isinstance(session.compliance, dict):
+        compliance_blocking_reasons = [str(item) for item in session.compliance.get("blocking_reasons", [])]
+        if compliance_blocking_reasons:
+            evidence["compliance_blocking_reasons"] = compliance_blocking_reasons
+
+    return {
+        "session_id": session.id,
+        "session_status": session.status,
+        "block_source": block_source,
+        "block_detail": status_summary.get("block_detail"),
+        "primary_action": primary_action,
+        "primary_reason": status_summary.get("next_action_message"),
+        "resume_action": resume_action,
+        "resume_reason": status_summary.get("resume_reason"),
+        "blocking_reasons": [str(item) for item in status_summary.get("blocking_reasons", [])],
+        "recommended_commands": recommended_commands,
+        "evidence": evidence,
+    }
+
+
 def _observed_failure_provider(runtime_status: Any, session: PlanSession) -> str | None:
     provider = getattr(runtime_status, "provider", None)
     if isinstance(provider, str) and provider:
@@ -1482,6 +1703,23 @@ def _recovery_policy_for_session(
 def _resume_apply_action(team: TeamOrchestrator, session: PlanSession) -> PlanSession:
     status_summary = _build_status_summary(session)
     action = str(status_summary.get("resume_action", "inspect_session"))
+    inspect_only_actions = {
+        "inspect_execution",
+        "inspect_compliance",
+        "human_decision",
+        "wait_for_execution",
+        "inspect_blockers",
+        "inspect_delegated_job",
+        "inspect_session",
+        "revise",
+    }
+    if action in inspect_only_actions:
+        next_command = _resume_guidance_command(session.id, action)
+        reason = str(status_summary.get("resume_reason", "manual_inspection_required"))
+        raise ValueError(
+            f"team resume --apply cannot auto-apply resume action '{action}' "
+            f"(reason: {reason}); next command: {next_command}"
+        )
     if action == "approve":
         resumed = team.approve(session.id)
         resumed.structured_brief.checklist_summary = _build_checklist_summary(resumed.checklist)
@@ -1495,6 +1733,24 @@ def _resume_apply_action(team: TeamOrchestrator, session: PlanSession) -> PlanSe
     if action == "retry_adversarial_review":
         return team.retry_adversarial_review(session.id)
     return session
+
+
+def _resume_guidance_command(session_id: str, action: str) -> str:
+    if action == "inspect_execution":
+        return f"python -m agent_orchestrator.cli team inspect-execution {session_id}"
+    if action == "inspect_blockers":
+        return f"python -m agent_orchestrator.cli team inspect-blockers {session_id}"
+    if action == "inspect_compliance":
+        return f"python -m agent_orchestrator.cli team check-compliance {session_id}"
+    if action == "human_decision":
+        return f"python -m agent_orchestrator.cli team summary {session_id}"
+    if action == "wait_for_execution":
+        return f"python -m agent_orchestrator.cli team status {session_id}"
+    if action == "inspect_delegated_job":
+        return f"python -m agent_orchestrator.cli team inspect-blockers {session_id}"
+    if action == "revise":
+        return f"python -m agent_orchestrator.cli team next {session_id}"
+    return f"python -m agent_orchestrator.cli team summary {session_id}"
 
 def _team_retry_review(self: TeamOrchestrator, session_id: str) -> PlanSession:
     session = self.store.read_session(session_id)
@@ -1916,6 +2172,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
     status_summary = _build_status_summary(session)
     required_open = int(status_summary.get("open_required_gaps", 0))
     optional_open = int(status_summary.get("open_optional_followups", 0))
+    block_source = str(status_summary.get("block_source", ""))
     delegated_jobs = status_summary.get("delegated_jobs", [])
     failed_jobs = [job for job in delegated_jobs if job.get("status") == "failed"]
     compliance_blocking_reasons = []
@@ -1978,7 +2235,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
 
     if session.status in {"accepted", "needs_followup"}:
         steps = [
-            "Inspect the linked execution run to confirm provenance, outputs, and final acceptance state.",
+            "Inspect the linked execution run with `team inspect-execution` to confirm provenance, outputs, and final acceptance state.",
             "Use `team summary` to review the final planning status alongside the execution result.",
             "Avoid restarting planning from the raw requirement unless a new requirement is opened.",
         ]
@@ -1994,6 +2251,19 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
         ]
 
     if session.status == "blocked":
+        execution_block_detail = _execution_block_detail(session)
+        if block_source == "execution_run":
+            if execution_block_detail == "provenance_mismatch":
+                return [
+                    "Inspect the linked execution provenance before trusting the blocked session state.",
+                    "Use `team check-compliance` and `team inspect-execution` together to resolve the run/session mismatch.",
+                    "Do not resume planning or execution until the provenance mismatch is corrected.",
+                ]
+            return [
+                "Inspect the linked execution run to identify why execution ended in a blocked state.",
+                "Use `team inspect-execution` and `team summary` together before deciding whether the plan or execution path should change.",
+                "Resume planning only after the execution-side blocker is understood and reflected in the session direction.",
+            ]
         step = "Close required review blockers before trying to approve or execute again."
         if required_open:
             step = f"Close the {required_open} required gap(s) before trying to approve or execute again."
@@ -2015,6 +2285,8 @@ def _build_status_summary(session: PlanSession) -> dict[str, object]:
     optional_open = [gap for gap in session.gaps if not gap.required and gap.status != "closed"]
     next_actions: list[str] = []
     blocking_reasons: list[str] = []
+    block_source = "review"
+    block_detail = None
     delegated_job_provider = None
     compliance_blocking_reasons = []
     if isinstance(session.compliance, dict):
@@ -2023,6 +2295,7 @@ def _build_status_summary(session: PlanSession) -> dict[str, object]:
     if compliance_blocking_reasons:
         next_actions.append("inspect_compliance")
         blocking_reasons.extend(compliance_blocking_reasons)
+        block_source = "compliance"
 
     if compliance_blocking_reasons:
         pass
@@ -2088,6 +2361,7 @@ def _build_status_summary(session: PlanSession) -> dict[str, object]:
     if delegated_job_failed and "inspect_delegated_job" not in next_actions:
         next_actions.insert(0, "inspect_delegated_job")
         blocking_reasons.append("at least one delegated job failed")
+        block_source = "delegated_job"
 
     primary_action = next_actions[0] if next_actions else "inspect_session"
 
@@ -2152,7 +2426,12 @@ def _build_status_summary(session: PlanSession) -> dict[str, object]:
         resume_action = "human_decision"
         resume_reason = "human_confirmation_required"
     elif session.status == "blocked":
-        next_action_message = "the workflow is blocked; inspect blocking review findings"
+        if session.resume.linked_execution_run_id and not required_open:
+            block_source = "execution_run"
+            block_detail = _execution_block_detail(session) or "run_blocked"
+            next_action_message = "execution ended in a blocked state; inspect the linked run before changing the plan"
+        else:
+            next_action_message = "the workflow is blocked; inspect blocking review findings"
         resume_action = "inspect_blockers"
         resume_reason = "review_blocked"
     else:
@@ -2187,6 +2466,8 @@ def _build_status_summary(session: PlanSession) -> dict[str, object]:
         "recovery_provider_fallback_reason": recovery_policy.get("fallback_reason"),
         "recovery_provider_fallback_detail": recovery_policy.get("fallback_detail"),
         "blocking_reasons": blocking_reasons,
+        "block_source": block_source,
+        "block_detail": block_detail,
         "resume_action": resume_action,
         "resume_reason": resume_reason,
         "delegated_jobs": delegated_jobs,

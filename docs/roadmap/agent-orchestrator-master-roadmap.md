@@ -50,7 +50,8 @@ The product is explicitly **not** trying to become:
 - The project already has a strategy-oriented control plane built around `mode + agent_enabled + depth + provider_flow`.
 - Failure handling already includes depth-first escalation, partial rescue, and dependency-aware replay behavior.
 - Early decision contract work exists for execution artifacts.
-- The repository does not yet have a real planning governance loop, persisted plan sessions, fractal documentation enforcement, or hook-based compliance checks.
+- The repository now has a basic planning governance loop with persisted plan sessions, dual-model review rounds, gap closure, approval gating, and approved-plan-linked execution handoff.
+- Narrow documentation synchronization and hook-based compliance checks now exist for the internal-default workflow, but broader coverage and harder enforcement are still incomplete.
 - The old roadmap view overfit the execution strategy line and understated planning governance as a product layer.
 
 ## Product Architecture

@@ -2,10 +2,10 @@
 
 ## Header
 - Current Dual-Layer Stage: `Stage 2 - Planning Governance Skeleton`
-- Planning Governance Progress: `decision-core-first iteration in progress`
+- Planning Governance Progress: `decision-core-first happy path established; recovery and handoff hardening in progress`
 - Execution Strategy Progress: `iteration 4 in progress`
 - Total Product Progress: `decision-core-first happy path established with planning skeleton advancing`
-- Current Product Gap: the repository now has persisted plan briefs, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, and operator-runbook signal compliance, but still lacks multi-provider fallback breadth, richer topology policy breadth, broader documentation coverage, and fully hardened hook enforcement
+- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, and operator-runbook signal compliance, but still lacks fully hardened recovery semantics, richer topology policy breadth, broader documentation coverage, and stronger narrow-scope hook enforcement for the internal-default workflow
 
 ## Purpose Of This Document
 
@@ -166,20 +166,20 @@ The product is not:
 - Goal:
   define and present the execution strategy decision contract
 - Status:
-  `in_progress`
+  `verified with approved-plan handoff convergence still being hardened`
 - Evidence:
-  decision signals and decision artifacts now exist on runs and attempts; CLI summaries surface decision output; tests cover contract round-trip and auto-mode signal carryover
+  decision signals and decision artifacts now exist on runs and attempts; CLI summaries surface decision output; tests cover contract round-trip, approved-plan-linked provenance, and auto-mode signal carryover
 - Risks / Drift:
-  contract work is progressing before planning governance is in place, so execution may still be overly requirement-first
+  direct `run` still coexists with the `team` path, so the main remaining risk is allowing execution ergonomics to outgrow approved-plan-first governance
 - Open Questions:
-  how execution should consume approved plan artifacts once the planning layer exists
+  how much further direct-run and team-run artifact convergence is needed before the internal-default loop feels complete
 
 ## Planning Governance Gap List
 
 - No configurable multi-role review policy exists beyond the fixed dual-model template.
 - Decision verdicts now record reviewer fallback source, reason, detail, and preferred reviewer; broader multi-provider fallback policy is still incomplete.
 - Checklist ownership is now explicit on persisted plan items, but richer per-round transition policy is still incomplete.
-- No interruption-aware round resumption behavior exists beyond reading the last saved session snapshot.
+- Recovery semantics are now session-visible through `team summary` / `team next` / `team runbook`, but deeper interruption-aware round recovery is still incomplete.
 
 ## Documentation Sync Gap List
 
@@ -188,7 +188,7 @@ The product is not:
 - Basic hook-based compliance checks can detect process-document drift through `team check-compliance`.
 - Operator runbook drift for topology and provider fallback signals is now blocked by compliance.
 - Richer code/header comparison coverage is still missing.
-- Automatic global map refresh at task completion is still incomplete.
+- Automatic global map refresh is now tied to key team workflow transitions, but broader task-completion refresh semantics are still incomplete.
 
 ## Hook Enforcement Gap List
 
@@ -211,6 +211,7 @@ The product is not:
 - Direct `run` entrypoints still coexist with the decision-core-first `team` happy path, but they now persist an approved-plan-style execution contract for convergence.
 - Product docs have now been upgraded to dual-layer language; topology/provider policy is still partly heuristic.
 - Decision artifacts exist, and team/direct-run execution contracts now share a core schema, but broader interoperability cleanup is still needed.
+- Roadmap/process/README alignment must continue to describe the current state as hardening and scope control, not as missing foundational planning-governance primitives.
 
 ## Keep / Adjust Signals
 

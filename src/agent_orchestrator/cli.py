@@ -208,6 +208,26 @@ def main() -> None:
     team_execute.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_execute.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_execute.add_argument("--provider", choices=["codex", "claude"])
+
+    team_inspect_execution = team_subparsers.add_parser(
+        "inspect-execution",
+        help="Show the linked execution run for a completed or in-progress plan session.",
+    )
+    team_inspect_execution.add_argument("session_id")
+    team_inspect_execution.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_inspect_execution.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_inspect_execution.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_inspect_execution.add_argument("--provider", choices=["codex", "claude"])
+
+    team_inspect_blockers = team_subparsers.add_parser(
+        "inspect-blockers",
+        help="Show a structured blocker summary for a blocked or recovery-oriented plan session.",
+    )
+    team_inspect_blockers.add_argument("session_id")
+    team_inspect_blockers.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_inspect_blockers.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_inspect_blockers.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_inspect_blockers.add_argument("--provider", choices=["codex", "claude"])
     args = parser.parse_args()
 
     if args.command == "health":
@@ -282,6 +302,16 @@ def main() -> None:
         if args.team_command == "execute":
             mode = None if args.mode == "auto" else OrchestrationMode(args.mode)
             print(json.dumps(team.execute(args.session_id, mode).to_dict(), ensure_ascii=False, indent=2))
+            return
+        if args.team_command == "inspect-execution":
+            payload = team.inspect_execution(args.session_id)
+            _print_execution_session_summary(payload)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return
+        if args.team_command == "inspect-blockers":
+            payload = team.inspect_blockers(args.session_id)
+            _print_blocker_session_summary(payload)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
             return
         parser.error("a team subcommand is required")
 
@@ -595,6 +625,45 @@ def _print_team_runbook(session: object) -> None:
         print(f"{index}. {step}")
 
 
+def _print_execution_session_summary(payload: dict[str, object]) -> None:
+    summary = payload.get("session_summary", {}) if isinstance(payload.get("session_summary"), dict) else {}
+    if not summary:
+        return
+    print(f"session: {summary.get('session_id')}")
+    print(f"run: {summary.get('run_id')}")
+    print(f"execution_outcome: {summary.get('outcome')}")
+    if summary.get("goal"):
+        print(f"goal: {summary.get('goal')}")
+    if summary.get("selected_topology"):
+        print(f"selected_topology: {summary.get('selected_topology')}")
+    if summary.get("selected_provider_runtime"):
+        print(f"selected_provider_runtime: {json.dumps(summary.get('selected_provider_runtime'), ensure_ascii=False)}")
+    blocking_reasons = summary.get("blocking_reasons", [])
+    if blocking_reasons:
+        print(f"blocking: {'; '.join(str(reason) for reason in blocking_reasons)}")
+
+
+def _print_blocker_session_summary(payload: dict[str, object]) -> None:
+    summary = payload.get("blocker_summary", {}) if isinstance(payload.get("blocker_summary"), dict) else {}
+    if not summary:
+        return
+    print(f"session: {summary.get('session_id')}")
+    print(f"session_status: {summary.get('session_status')}")
+    print(f"block_source: {summary.get('block_source')}")
+    if summary.get("block_detail"):
+        print(f"block_detail: {summary.get('block_detail')}")
+    print(f"resume_action: {summary.get('resume_action')}")
+    print(f"resume_reason: {summary.get('resume_reason')}")
+    if summary.get("primary_reason"):
+        print(f"message: {summary.get('primary_reason')}")
+    blocking_reasons = summary.get("blocking_reasons", [])
+    if blocking_reasons:
+        print(f"blocking: {'; '.join(str(reason) for reason in blocking_reasons)}")
+    recommended_commands = summary.get("recommended_commands", [])
+    if recommended_commands:
+        print(f"recommended_commands: {' | '.join(str(command) for command in recommended_commands)}")
+
+
 def _build_team_next_command(
     payload: dict[str, object],
     primary_action: str,
@@ -657,7 +726,7 @@ def _build_team_next_command(
         )
     if primary_action == "inspect_execution":
         return (
-            "python -m agent_orchestrator.cli team summary "
+            "python -m agent_orchestrator.cli team inspect-execution "
             f"{session_id} --plans-root {plans_root} --runs-root {runs_root}"
         )
     return (

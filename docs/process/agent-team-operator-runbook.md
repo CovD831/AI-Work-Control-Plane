@@ -25,6 +25,7 @@
 4. `team revise`
 5. `team approve`
 6. `team execute`
+7. `team inspect-execution`
 
 推荐用法：
 
@@ -68,6 +69,7 @@ python -m agent_orchestrator.cli team runbook <session_id>
 1. 用 `team execute` 启动执行。
 2. 如需确认状态，先看 `team status` 或 `team summary`。
 3. 如需 deeper provenance，再去看 linked execution run。
+4. 优先使用 `team inspect-execution` 查看 linked execution run，而不是手动翻 run store。
 4. 执行默认从 approved plan 起跑，而不是从 raw requirement 重新起跑。
 
 ### `awaiting_human`
@@ -139,6 +141,7 @@ python -m agent_orchestrator.cli team runbook <session_id>
 
 - 可以通过 session 和 linked run 判断执行从哪个 approved plan 来
 - 可以通过 `team next`/`team runbook` 理解当前决策核心推荐的执行拓扑
+- 可以通过 `team inspect-execution` 直接查看 linked execution run，而不是先抄 `run_id`
 
 ## 日常操作建议
 
@@ -146,4 +149,5 @@ python -m agent_orchestrator.cli team runbook <session_id>
 - 每次准备继续时先看 `team summary` 或 `team next`。
 - 每次状态不清楚时优先跑 `team runbook`。
 - 每次 delegated job 失败时优先走标准命令恢复，不要直接编辑底层 JSON。
+- 每次 execution 完成后优先跑 `team inspect-execution` 看 provenance 和结果。
 - 每次 happy path 验证通过后，再推进主计划的下一实现段。

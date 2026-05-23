@@ -12,6 +12,41 @@ from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.routing import PolicyRouter
 
 
+def _write_minimal_process_docs(root: Path) -> None:
+    (root / "docs" / "process").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "agent_orchestrator").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "agent_orchestrator" / "__init__.py").write_text('"""package"""\n', encoding="utf-8")
+    (root / "README.md").write_text(
+        "# temp\n\n- 长周期主执行计划\n- agent-team-operator-runbook.md\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "长周期主执行计划.md").write_text(
+        "# 长周期主执行计划\n\n- 文档同步 / compliance / hook blocking\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "agent-orchestrator-implementation-process.md").write_text(
+        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "architecture").mkdir(parents=True, exist_ok=True)
+    (root / "docs" / "architecture" / "决策核心-执行拓扑-运行时分层说明.md").write_text(
+        "# 决策核心-执行拓扑-运行时分层说明\n\n- 决策核心\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "agent-team-operator-runbook.md").write_text(
+        "# Agent Team Operator Runbook\n\n- team next\n- topology_reason\n- fallback_reason\n- fallback_detail\n",
+        encoding="utf-8",
+    )
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=root / "plans"),
+        project_root=root,
+    )
+    team.refresh_documentation_sync()
+
+
 class _FakeClaudeRunner:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
@@ -951,6 +986,126 @@ def test_team_resume_command_can_apply_approval_reentry(tmp_path, capsys) -> Non
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
+def test_team_resume_command_rejects_apply_for_revision_state(tmp_path) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    session = team.start("Build plan with adversarial challenge")
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="resume",
+            session_id=session.id,
+            apply=True,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        with pytest.raises(ValueError, match="cannot auto-apply resume action 'revise'"):
+            cli.main()
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_resume_command_rejects_apply_for_completed_execution_state(tmp_path) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = team.start("Build a persisted plan artifact")
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="resume",
+            session_id=executed.id,
+            apply=True,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        with pytest.raises(ValueError, match="cannot auto-apply resume action 'inspect_execution'"):
+            cli.main()
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_resume_command_reconciles_completed_linked_run_from_executing_session(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = team.start("Build a persisted plan artifact")
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+    executed.status = "executing"
+    executed.gate_verdict = "approved"
+    executed.resume.current_phase = "executing"
+    executed.resume.pending_role = "build"
+    team.store.write_session(executed)
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="resume",
+            session_id=executed.id,
+            apply=False,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "accepted"
+        assert payload["status_summary"]["resume_action"] == "inspect_execution"
+        assert payload["resume"]["current_phase"] == "accepted"
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
 def test_team_next_command_reports_runbook_for_revision_session(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -1147,7 +1302,87 @@ def test_team_next_command_reports_execution_inspection_after_completion(tmp_pat
         cli.main()
         out = capsys.readouterr().out
         assert "action: inspect_execution" in out
-        assert "next_command: python -m agent_orchestrator.cli team summary" in out
+        assert "next_command: python -m agent_orchestrator.cli team inspect-execution" in out
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_inspect_execution_command_reports_linked_run_payload(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = team.start("Build a persisted plan artifact")
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="inspect-execution",
+            session_id=executed.id,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        out = capsys.readouterr().out
+        assert "execution_outcome: accepted" in out
+        assert "goal:" in out
+        assert "selected_topology:" in out
+        payload = json.loads(out[out.index('{\n  "run_id"'):])
+        assert payload["run_id"] == executed.resume.linked_execution_run_id
+        assert payload["metadata"]["approved_plan"]["session_id"] == executed.id
+        assert payload["metadata"]["provenance"]["plan_session_id"] == executed.id
+        assert payload["session_summary"]["outcome"] == "accepted"
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_inspect_execution_command_rejects_session_without_linked_run(tmp_path) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    session = team.start("Build a persisted plan artifact")
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="inspect-execution",
+            session_id=session.id,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        with pytest.raises(ValueError, match="linked execution run"):
+            cli.main()
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1186,8 +1421,112 @@ def test_team_runbook_command_reports_execution_followup_after_completion(tmp_pa
         cli.main()
         out = capsys.readouterr().out
         assert "operator_runbook:" in out
-        assert "Inspect the linked execution run" in out
+        assert "Inspect the linked execution run with `team inspect-execution`" in out
         assert "follow-up" in out or "followup" in out
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_runbook_command_reports_execution_blocked_recovery(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = team.start("Build a persisted plan artifact")
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+
+    run_path = tmp_path / "runs" / f"{executed.resume.linked_execution_run_id}.json"
+    payload = json.loads(run_path.read_text(encoding="utf-8"))
+    payload["status"] = "blocked"
+    payload["accepted"] = False
+    run_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    executed.status = "executing"
+    executed.gate_verdict = "approved"
+    executed.resume.current_phase = "executing"
+    executed.resume.pending_role = "build"
+    team.store.write_session(executed)
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="runbook",
+            session_id=executed.id,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        out = capsys.readouterr().out
+        assert "operator_runbook:" in out
+        assert "Inspect the linked execution run" in out
+        assert "blocked state" in out
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_runbook_command_reports_execution_provenance_mismatch_recovery(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = team.start("Build a persisted plan artifact")
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+
+    run_path = tmp_path / "runs" / f"{executed.resume.linked_execution_run_id}.json"
+    payload = json.loads(run_path.read_text(encoding="utf-8"))
+    payload["metadata"]["plan_session_id"] = "plan-wrong"
+    payload["status"] = "blocked"
+    payload["accepted"] = False
+    run_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    executed.status = "executing"
+    executed.gate_verdict = "approved"
+    executed.resume.current_phase = "executing"
+    executed.resume.pending_role = "build"
+    team.store.write_session(executed)
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="runbook",
+            session_id=executed.id,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        out = capsys.readouterr().out
+        assert "Inspect the compliance blocker" in out
+        assert "run/session mismatch" in out or "mismatch" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1352,6 +1691,110 @@ def test_team_next_command_reports_compliance_check_for_blocking_session(tmp_pat
         assert "action: inspect_compliance" in out
         assert "next_command: python -m agent_orchestrator.cli team check-compliance" in out
         assert session.id in out
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_inspect_blockers_command_prints_execution_blocker_summary(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    _write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = team.start("Build a persisted plan artifact")
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+
+    run_path = tmp_path / "runs" / f"{executed.resume.linked_execution_run_id}.json"
+    payload = json.loads(run_path.read_text(encoding="utf-8"))
+    payload["status"] = "blocked"
+    payload["accepted"] = False
+    run_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    executed.status = "executing"
+    executed.gate_verdict = "approved"
+    executed.resume.current_phase = "executing"
+    executed.resume.pending_role = "build"
+    team.store.write_session(executed)
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="inspect-blockers",
+            session_id=executed.id,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        out = capsys.readouterr().out
+        assert f"session: {executed.id}" in out
+        assert "block_source: execution_run" in out
+        assert "block_detail: run_blocked" in out
+        assert "resume_action: inspect_blockers" in out
+        assert f"team inspect-blockers {executed.id}" in out
+        json_payload = json.loads(out[out.index("{"):])
+        assert json_payload["blocker_summary"]["block_source"] == "execution_run"
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_inspect_blockers_command_prints_delegated_job_summary(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.jobs import FileJobRuntime
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    _write_minimal_process_docs(tmp_path)
+    runtime = FileJobRuntime(root=tmp_path / "jobs")
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+        runtime=runtime,
+    )
+    session = team.start("Build a persisted plan artifact")
+    review_round = session.review_rounds[1]
+    review_job_id = review_round.summary.split("job ")[-1].rstrip(".")
+    runtime.fail(review_job_id, summary="review failed", error="claude auth failed")
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="inspect-blockers",
+            session_id=session.id,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        out = capsys.readouterr().out
+        assert "block_source: delegated_job" in out
+        assert "resume_action: retry_review" in out
+        assert f"team inspect-blockers {session.id}" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
