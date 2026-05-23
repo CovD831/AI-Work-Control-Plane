@@ -15,41 +15,7 @@ from agent_orchestrator.cli import _print_run_summary
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.routing import PolicyRouter
-
-
-def _write_minimal_process_docs(root: Path) -> None:
-    (root / "docs" / "process").mkdir(parents=True, exist_ok=True)
-    (root / "src" / "agent_orchestrator").mkdir(parents=True, exist_ok=True)
-    (root / "src" / "agent_orchestrator" / "__init__.py").write_text('"""package"""\n', encoding="utf-8")
-    (root / "README.md").write_text(
-        "# temp\n\n- 长周期主执行计划\n- agent-team-operator-runbook.md\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "process" / "长周期主执行计划.md").write_text(
-        "# 长周期主执行计划\n\n- 文档同步 / compliance / hook blocking\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "process" / "agent-orchestrator-implementation-process.md").write_text(
-        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "architecture").mkdir(parents=True, exist_ok=True)
-    (root / "docs" / "architecture" / "决策核心-执行拓扑-运行时分层说明.md").write_text(
-        "# 决策核心-执行拓扑-运行时分层说明\n\n- 决策核心\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "process" / "agent-team-operator-runbook.md").write_text(
-        "# Agent Team Operator Runbook\n\n- team next\n- topology_reason\n- fallback_reason\n- fallback_detail\n",
-        encoding="utf-8",
-    )
-    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
-
-    team = TeamOrchestrator(
-        orchestrator=Orchestrator(),
-        store=PlanStore(root=root / "plans"),
-        project_root=root,
-    )
-    team.refresh_documentation_sync()
+from test_support import write_minimal_process_docs
 
 
 class _FakeClaudeRunner:
@@ -1701,11 +1667,86 @@ def test_team_next_command_reports_compliance_check_for_blocking_session(tmp_pat
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
+def test_team_runbook_command_reports_warning_only_compliance_guidance(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "stub.py").write_text(
+        '"""Stub module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Keep the changed file compliant while warning on unrelated debt.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    (package_dir / "legacy.py").write_text(
+        '"""Legacy module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: 待补充\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+    session = team.start("Build a persisted plan artifact")
+    session.compliance = team.check_compliance(changed_files=["src/agent_orchestrator/stub.py"])
+
+    cli._print_team_runbook(session)
+    out = capsys.readouterr().out
+
+    assert "non-blocking compliance warning" in out
+    assert "You may continue the current session" in out
+    assert "warning: src/agent_orchestrator/legacy.py" in out or "legacy.py has placeholder" in out
+
+
+def test_team_summary_command_preserves_warning_only_compliance_guidance(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "legacy.py").write_text(
+        '"""Legacy module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: 待补充\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+    session = team.start("Build a persisted plan artifact")
+    session.compliance = team.check_session_compliance(session.id, changed_files=["src/agent_orchestrator/stub.py"])
+    team.store.write_session(session)
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="summary",
+            session_id=session.id,
+            requirement=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            runtime="mock",
+            provider=None,
+        )
+        cli.main()
+        out = capsys.readouterr().out
+        assert "next: inspect_compliance" in out
+        assert "non-blocking compliance warnings exist" in out
+        assert "legacy.py" in out
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
 def test_team_inspect_blockers_command_prints_execution_blocker_summary(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1764,7 +1805,7 @@ def test_team_inspect_blockers_command_prints_delegated_job_summary(tmp_path, ca
     from agent_orchestrator.jobs import FileJobRuntime
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     runtime = FileJobRuntime(root=tmp_path / "jobs")
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
@@ -1843,7 +1884,16 @@ def test_team_check_compliance_command_passes_changed_files_to_team(tmp_path, ca
     class _FakeTeam:
         def check_compliance(self, changed_files=None):
             captured["changed_files"] = changed_files
-            return {"status": "passed", "blocking": False, "checks": [], "blocking_reasons": []}
+            return {
+                "status": "passed",
+                "blocking": False,
+                "checks": [],
+                "blocking_reasons": [],
+                "warnings": [],
+                "checked_files": [],
+                "required_actions": [],
+                "recommended_commands": ["python -m agent_orchestrator.cli team check-compliance"],
+            }
 
     original_build = cli._build_team_orchestrator
     original_parse = cli.argparse.ArgumentParser.parse_args
@@ -1874,6 +1924,38 @@ def test_team_check_compliance_command_passes_changed_files_to_team(tmp_path, ca
     finally:
         cli._build_team_orchestrator = original_build
         cli.argparse.ArgumentParser.parse_args = original_parse
+
+
+def test_team_check_compliance_command_reports_structured_contract_fields(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    write_minimal_process_docs(tmp_path)
+
+    original = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="check-compliance",
+            session_id=None,
+            changed_file=["src/agent_orchestrator/stub.py"],
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert "warnings" in payload
+        assert "checked_files" in payload
+        assert "required_actions" in payload
+        assert "recommended_commands" in payload
+    finally:
+        cli.argparse.ArgumentParser.parse_args = original
 
 
 def test_install_hooks_command_installs_pre_commit_script(tmp_path, capsys) -> None:

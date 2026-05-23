@@ -24,6 +24,7 @@ from agent_orchestrator.planning import (
     build_session_guidance,
 )
 from agent_orchestrator.review import Finding
+from test_support import write_minimal_process_docs
 
 
 def test_team_start_persists_session_artifacts(tmp_path) -> None:
@@ -611,7 +612,7 @@ def test_team_refresh_documentation_sync_writes_canonical_docs(tmp_path) -> None
 
 
 def test_team_check_compliance_blocks_on_root_map_structure_drift(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     (tmp_path / "docs" / "process" / "root-map.md").write_text(
         "# Root Map\n\n- module manifests\n- file-header contract\n- compliance checks\n- `src/agent_orchestrator/`: primary Python package\n- stale entry\n",
         encoding="utf-8",
@@ -630,7 +631,7 @@ def test_team_check_compliance_blocks_on_root_map_structure_drift(tmp_path) -> N
 
 
 def test_team_check_compliance_blocks_on_root_map_entry_drift(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     (tmp_path / "docs" / "process" / "root-map.md").write_text(
         "# Root Map\n\n- module manifests\n- file-header contract\n- compliance checks\n- `src/other/`: wrong package\n",
         encoding="utf-8",
@@ -649,7 +650,7 @@ def test_team_check_compliance_blocks_on_root_map_entry_drift(tmp_path) -> None:
 
 
 def test_team_check_compliance_blocks_on_source_file_header_drift(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
     package_dir.mkdir(parents=True, exist_ok=True)
     (package_dir / "__init__.py").write_text('"""package"""\n', encoding="utf-8")
@@ -665,15 +666,17 @@ def test_team_check_compliance_blocks_on_source_file_header_drift(tmp_path) -> N
     assert session.compliance is not None
     assert session.compliance["blocking"] is True
     assert any("demo.py" in reason for reason in session.compliance["blocking_reasons"])
+    assert "fix_changed_file_headers" in session.compliance["required_actions"]
+    assert any(path.endswith("demo.py") for path in session.compliance["checked_files"])
 
 
 def test_team_check_compliance_only_scans_changed_source_files_when_requested(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
     package_dir.mkdir(parents=True, exist_ok=True)
     (package_dir / "__init__.py").write_text('"""package"""\n', encoding="utf-8")
     (package_dir / "good.py").write_text(
-        '"""Good module."""\n\nfrom __future__ import annotations\n\nVALUE = 1\n',
+        '"""Good module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Exercise changed-file header compliance success cases.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
         encoding="utf-8",
     )
     (package_dir / "bad.py").write_text("print('missing header')\n", encoding="utf-8")
@@ -687,11 +690,90 @@ def test_team_check_compliance_only_scans_changed_source_files_when_requested(tm
     compliance = team.check_compliance(changed_files=["src/agent_orchestrator/good.py"])
 
     assert compliance["blocking"] is False
+    assert compliance["status"] == "passed"
     assert compliance["checks"][-1]["status"] == "passed"
+    assert any(path.endswith("good.py") for path in compliance["checked_files"])
+
+
+def test_team_check_compliance_warns_on_unrelated_placeholder_headers(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "good.py").write_text(
+        '"""Good module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Keep changed-file compliance focused.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    (package_dir / "legacy.py").write_text(
+        '"""Legacy module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: 待补充\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+
+    compliance = team.check_compliance(changed_files=["src/agent_orchestrator/good.py"])
+
+    assert compliance["blocking"] is False
+    assert compliance["status"] == "warning"
+    assert any("legacy.py" in warning for warning in compliance["warnings"])
+    assert "clean_up_non_blocking_header_warnings" in compliance["required_actions"]
+
+
+def test_team_status_surfaces_warning_only_compliance_guidance(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "stub.py").write_text(
+        '"""Stub module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Keep the changed file compliant while warning on unrelated debt.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    (package_dir / "legacy.py").write_text(
+        '"""Legacy module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: 待补充\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+    compliance = team.check_compliance(changed_files=["src/agent_orchestrator/stub.py"])
+    warning_session = team.start("Build a persisted plan artifact")
+    warning_session.compliance = compliance
+
+    status = warning_session.to_dict()["status_summary"]
+
+    assert status["primary_action"] == "inspect_compliance"
+    assert status["resume_action"] == "inspect_session"
+    assert status["resume_reason"] == "compliance_warning_only"
+    assert "non-blocking compliance" in status["primary_reason"]
+    assert any("warning" in reason for reason in status["blocking_reasons"])
+
+
+def test_team_check_compliance_blocks_on_placeholder_header_in_changed_file(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "bad.py").write_text(
+        '"""Bad module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: 待补充\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+
+    compliance = team.check_compliance(changed_files=["src/agent_orchestrator/bad.py"])
+
+    assert compliance["blocking"] is True
+    assert any("placeholder `RESPONSIBILITY` value" in reason for reason in compliance["blocking_reasons"])
+    assert "fix_changed_file_headers" in compliance["required_actions"]
 
 
 def test_team_check_compliance_blocks_on_module_manifest_coverage_drift(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
     package_dir.mkdir(parents=True, exist_ok=True)
     (package_dir / "__init__.py").write_text('"""package"""\n', encoding="utf-8")
@@ -718,6 +800,54 @@ def test_team_check_compliance_blocks_on_module_manifest_coverage_drift(tmp_path
         "module manifest coverage mismatch" in reason or "module-manifest.md" in reason
         for reason in session.compliance["blocking_reasons"]
     )
+
+
+def test_team_check_compliance_returns_structured_contract_for_project_and_session(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    session = team.start("Build a persisted plan artifact")
+
+    project_compliance = team.check_compliance(changed_files=["src/agent_orchestrator/stub.py"])
+    session_compliance = team.check_session_compliance(session.id, changed_files=["src/agent_orchestrator/stub.py"])
+
+    for payload in (project_compliance, session_compliance):
+        assert "status" in payload
+        assert "blocking_reasons" in payload
+        assert "warnings" in payload
+        assert "checked_files" in payload
+        assert "required_actions" in payload
+        assert "recommended_commands" in payload
+    assert project_compliance["scope"] == "project"
+    assert session_compliance["scope"] == "session"
+    assert session.id in session_compliance["recommended_commands"][0]
+
+
+def test_team_status_preserves_warning_only_compliance_snapshot(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "legacy.py").write_text(
+        '"""Legacy module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: 待补充\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+    session = team.start("Build a persisted plan artifact")
+    session.compliance = team.check_session_compliance(session.id, changed_files=["src/agent_orchestrator/stub.py"])
+    team.store.write_session(session)
+
+    refreshed = team.status(session.id)
+
+    assert refreshed.compliance is not None
+    assert refreshed.compliance["status"] == "warning"
+    assert any("legacy.py" in warning for warning in refreshed.compliance["warnings"])
 
 
 def test_team_revision_round_opens_and_closes_gaps_before_approval(tmp_path) -> None:
@@ -1258,7 +1388,7 @@ def test_team_status_reports_human_decision_requirement(tmp_path) -> None:
 
 
 def test_team_start_records_doc_sync_and_compliance_snapshot(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1307,7 +1437,7 @@ def test_team_status_reports_compliance_blocking_guidance(tmp_path) -> None:
 
 
 def test_team_status_reports_content_sync_blocking_for_missing_runbook_link(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     (tmp_path / "README.md").write_text("# temp\n", encoding="utf-8")
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
@@ -1323,7 +1453,7 @@ def test_team_status_reports_content_sync_blocking_for_missing_runbook_link(tmp_
 
 
 def test_team_status_reports_content_sync_blocking_for_stale_operator_runbook_signals(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     runbook_path = tmp_path / "docs" / "process" / "agent-team-operator-runbook.md"
     runbook_path.write_text("# Agent Team Operator Runbook\n\n- team next\n", encoding="utf-8")
     team = TeamOrchestrator(
@@ -1344,7 +1474,7 @@ def test_team_status_reports_content_sync_blocking_for_stale_operator_runbook_si
 
 
 def test_team_status_reports_provenance_sync_blocking_after_execution(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1366,7 +1496,7 @@ def test_team_status_reports_provenance_sync_blocking_after_execution(tmp_path) 
 
 
 def test_team_resume_reconciles_executing_session_when_linked_run_completed(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1391,7 +1521,7 @@ def test_team_resume_reconciles_executing_session_when_linked_run_completed(tmp_
 
 
 def test_team_resume_reconciles_executing_session_when_linked_run_blocked(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1423,7 +1553,7 @@ def test_team_resume_reconciles_executing_session_when_linked_run_blocked(tmp_pa
 
 
 def test_team_status_reports_execution_block_source_after_linked_run_failure(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1454,7 +1584,7 @@ def test_team_status_reports_execution_block_source_after_linked_run_failure(tmp
 
 
 def test_team_status_reports_execution_provenance_mismatch_block_detail(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1485,7 +1615,7 @@ def test_team_status_reports_execution_provenance_mismatch_block_detail(tmp_path
 
 
 def test_team_inspect_execution_reports_provenance_mismatch_summary(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1514,8 +1644,33 @@ def test_team_inspect_execution_reports_provenance_mismatch_summary(tmp_path) ->
     assert any("run provenance mismatch" in reason for reason in inspected["session_summary"]["blocking_reasons"])
 
 
+def test_team_inspect_execution_surfaces_warning_only_compliance_context(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "legacy.py").write_text(
+        '"""Legacy module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: 待补充\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    team.refresh_documentation_sync()
+    session = team.start("Build a persisted plan artifact")
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+    executed.compliance = team.check_session_compliance(executed.id, changed_files=["src/agent_orchestrator/stub.py"])
+    team.store.write_session(executed)
+
+    inspected = team.inspect_execution(executed.id)
+
+    assert inspected["session_summary"]["warnings"]
+    assert any("legacy.py" in warning for warning in inspected["session_summary"]["warnings"])
+
+
 def test_team_inspect_blockers_summarizes_execution_blocked_session(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1548,7 +1703,7 @@ def test_team_inspect_blockers_summarizes_execution_blocked_session(tmp_path) ->
 
 
 def test_team_inspect_blockers_summarizes_failed_delegated_review(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     runtime = FileJobRuntime(root=tmp_path / "jobs")
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
@@ -1588,7 +1743,7 @@ def test_team_inspect_blockers_summarizes_compliance_blocker(tmp_path) -> None:
 
 
 def test_team_status_reports_plan_artifact_blocking_when_checklist_snapshot_is_missing(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1606,7 +1761,7 @@ def test_team_status_reports_plan_artifact_blocking_when_checklist_snapshot_is_m
 
 
 def test_team_status_reports_plan_artifact_blocking_when_round_snapshots_are_incomplete(tmp_path) -> None:
-    _write_minimal_process_docs(tmp_path)
+    write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -1621,36 +1776,3 @@ def test_team_status_reports_plan_artifact_blocking_when_round_snapshots_are_inc
 
     assert status["next_actions"][0] == "inspect_compliance"
     assert any("review round snapshots are incomplete" in reason for reason in status["blocking_reasons"])
-
-
-def _write_minimal_process_docs(root: Path) -> None:
-    (root / "docs" / "process").mkdir(parents=True, exist_ok=True)
-    (root / "src" / "agent_orchestrator").mkdir(parents=True, exist_ok=True)
-    (root / "src" / "agent_orchestrator" / "__init__.py").write_text('"""package"""\n', encoding="utf-8")
-    (root / "README.md").write_text(
-        "# temp\n\n- 长周期主执行计划\n- agent-team-operator-runbook.md\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "process" / "长周期主执行计划.md").write_text(
-        "# 长周期主执行计划\n\n- 文档同步 / compliance / hook blocking\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "process" / "agent-orchestrator-implementation-process.md").write_text(
-        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "architecture").mkdir(parents=True, exist_ok=True)
-    (root / "docs" / "architecture" / "决策核心-执行拓扑-运行时分层说明.md").write_text(
-        "# 决策核心-执行拓扑-运行时分层说明\n\n- 决策核心\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "process" / "agent-team-operator-runbook.md").write_text(
-        "# Agent Team Operator Runbook\n\n- team next\n- topology_reason\n- fallback_reason\n- fallback_detail\n",
-        encoding="utf-8",
-    )
-    team = TeamOrchestrator(
-        orchestrator=Orchestrator(),
-        store=PlanStore(root=root / "plans"),
-        project_root=root,
-    )
-    team.refresh_documentation_sync()

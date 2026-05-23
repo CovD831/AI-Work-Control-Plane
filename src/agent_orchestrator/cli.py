@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 # DEPS: __future__, agent_orchestrator, argparse, json, pathlib, shutil
-# RESPONSIBILITY: 待补充
-# MODULE: 待确定
+# RESPONSIBILITY: Parse CLI commands and delegate presentation-safe orchestration actions.
+# MODULE: interface
 # ---
 
 
@@ -13,6 +13,20 @@ import shutil
 from pathlib import Path
 
 from agent_orchestrator.adapters import RuntimeProviderAdapter, RuntimeProviderReviewRescueAdapter
+from agent_orchestrator.cli_presenters import (
+    print_team_next as _print_team_next_presenter,
+    print_team_runbook as _print_team_runbook_presenter,
+    print_team_summary as _print_team_summary_presenter,
+    pick_primary_action as _pick_primary_action,
+    print_blocker_session_summary as _print_blocker_session_summary_presenter,
+    print_execution_session_summary as _print_execution_session_summary_presenter,
+    status_summary as _status_summary,
+    summary_bool as _summary_bool,
+    summary_list as _summary_list,
+    summary_text as _summary_text,
+    team_next_alternatives as _team_next_alternatives,
+    team_display_context as _team_display_context,
+)
 from agent_orchestrator.command import CommandJobRuntime, ProviderHealthCheck
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode
@@ -533,156 +547,33 @@ def _print_run_summary(run: object) -> None:
 
 
 def _print_team_summary(session: object) -> None:
-    payload = session.to_dict()
-    status_summary = payload.get("status_summary", {})
-    delegated_jobs = status_summary.get("delegated_jobs", [])
-    failed_jobs = [job for job in delegated_jobs if job.get("status") == "failed"]
-    primary_action = status_summary.get("primary_action") or _pick_primary_action(status_summary.get("next_actions", []))
-    primary_reason = status_summary.get("primary_reason") or status_summary.get(
-        "next_action_message",
-        "inspect the current session state before continuing",
-    )
-
-    print(f"session: {payload.get('id')}")
-    print(
-        "status: "
-        f"{payload.get('status')} "
-        f"(phase={status_summary.get('phase', 'unknown')}, pending_role={status_summary.get('pending_role', 'unknown')})"
-    )
-    print(f"next: {primary_action}")
-    print(f"message: {primary_reason}")
-    if status_summary.get("topology_reason"):
-        print(f"topology_reason: {status_summary.get('topology_reason')}")
-
-    blocking_reasons = status_summary.get("blocking_reasons", [])
-    if blocking_reasons:
-        print(f"blocking: {'; '.join(str(reason) for reason in blocking_reasons)}")
-
-    recovery_actions = status_summary.get("recovery_actions", [])
-    if recovery_actions:
-        print(f"recovery: {' -> '.join(str(action) for action in recovery_actions)}")
-    recovery_provider = status_summary.get("recovery_provider")
-    recovery_round_type = status_summary.get("recovery_round_type")
-    recovery_fallback = status_summary.get("recovery_provider_fallback_from")
-    recovery_fallback_reason = status_summary.get("recovery_provider_fallback_reason")
-    recovery_fallback_detail = status_summary.get("recovery_provider_fallback_detail")
-    if recovery_provider and recovery_round_type:
-        detail = f"recovery_provider: {recovery_provider} (round={recovery_round_type}"
-        if recovery_fallback and recovery_fallback != recovery_provider:
-            detail += f", fallback_from={recovery_fallback}"
-        if recovery_fallback_reason:
-            detail += f", fallback_reason={recovery_fallback_reason}"
-        if recovery_fallback_detail:
-            detail += f", fallback_detail={recovery_fallback_detail}"
-        detail += ")"
-        print(detail)
-
-    if failed_jobs:
-        first_failed = failed_jobs[0]
-        print(f"failed_job: {first_failed.get('provider')} {first_failed.get('job_id')}")
-    elif delegated_jobs:
-        print(f"delegated_jobs: {len(delegated_jobs)} completed")
+    _print_team_summary_presenter(session, pick_primary_action=_pick_primary_action)
 
 
 def _print_team_next(session: object, args: argparse.Namespace) -> None:
-    payload = session.to_dict()
-    status_summary = payload.get("status_summary", {})
-    delegated_jobs = status_summary.get("delegated_jobs", [])
-    failed_jobs = [job for job in delegated_jobs if job.get("status") == "failed"]
-    primary_action = status_summary.get("primary_action") or _pick_primary_action(status_summary.get("next_actions", []))
-    recommended_commands = [str(command) for command in status_summary.get("recommended_commands", [])]
-    command = recommended_commands[0] if recommended_commands else _build_team_next_command(payload, primary_action, failed_jobs, args)
-    alternatives = _team_next_alternatives(status_summary, primary_action)
-    delegated_failures = len(failed_jobs)
-
-    print(f"session: {payload.get('id')}")
-    print(f"action: {primary_action}")
-    print(f"reason: {status_summary.get('primary_reason') or status_summary.get('next_action_message', 'inspect the current session state before continuing')}")
-    print(f"next_command: {command}")
-    if alternatives:
-        print(f"alternatives: {', '.join(alternatives)}")
-    else:
-        print("alternatives: none")
-    print(
-        "context: "
-        f"required_gaps={status_summary.get('open_required_gaps', 0)} "
-        f"optional_followups={status_summary.get('open_optional_followups', 0)} "
-        f"delegated_failures={delegated_failures}"
+    _print_team_next_presenter(
+        session,
+        pick_primary_action=_pick_primary_action,
+        build_team_next_command=_build_team_next_command,
+        team_next_alternatives=_team_next_alternatives,
+        args=args,
     )
-    if status_summary.get("selected_topology"):
-        print(f"selected_topology: {status_summary.get('selected_topology')}")
-    if status_summary.get("topology_reason"):
-        print(f"topology_reason: {status_summary.get('topology_reason')}")
 
 
 def _print_team_runbook(session: object) -> None:
-    payload = session.to_dict()
-    status_summary = payload.get("status_summary", {})
-    runbook = build_operator_runbook(session)
-
-    print(f"session: {payload.get('id')}")
-    print(f"status: {payload.get('status')}")
-    print(f"phase: {status_summary.get('phase', 'unknown')}")
-    print(f"next: {status_summary.get('primary_action') or _pick_primary_action(status_summary.get('next_actions', []))}")
-    if status_summary.get("primary_reason"):
-        print(f"reason: {status_summary.get('primary_reason')}")
-    if status_summary.get("recommended_commands"):
-        print(f"next_command: {status_summary.get('recommended_commands', [])[0]}")
-    if status_summary.get("selected_topology"):
-        print(f"selected_topology: {status_summary.get('selected_topology')}")
-    if status_summary.get("topology_reason"):
-        print(f"topology_reason: {status_summary.get('topology_reason')}")
-    if status_summary.get("decision_rationale"):
-        print(f"decision_rationale: {' | '.join(status_summary.get('decision_rationale', []))}")
-    print("operator_runbook:")
-    for index, step in enumerate(runbook, start=1):
-        print(f"{index}. {step}")
+    _print_team_runbook_presenter(
+        session,
+        pick_primary_action=_pick_primary_action,
+        build_operator_runbook=build_operator_runbook,
+    )
 
 
 def _print_execution_session_summary(payload: dict[str, object]) -> None:
-    summary = payload.get("session_summary", {}) if isinstance(payload.get("session_summary"), dict) else {}
-    if not summary:
-        return
-    print(f"session: {summary.get('session_id')}")
-    print(f"run: {summary.get('run_id')}")
-    print(f"execution_outcome: {summary.get('outcome')}")
-    if summary.get("goal"):
-        print(f"goal: {summary.get('goal')}")
-    if summary.get("selected_topology"):
-        print(f"selected_topology: {summary.get('selected_topology')}")
-    if summary.get("selected_provider_runtime"):
-        print(f"selected_provider_runtime: {json.dumps(summary.get('selected_provider_runtime'), ensure_ascii=False)}")
-    blocking_reasons = summary.get("blocking_reasons", [])
-    if blocking_reasons:
-        print(f"blocking: {'; '.join(str(reason) for reason in blocking_reasons)}")
-    if summary.get("primary_action"):
-        print(f"primary_action: {summary.get('primary_action')}")
-    if summary.get("primary_reason"):
-        print(f"primary_reason: {summary.get('primary_reason')}")
-    recommended_commands = summary.get("recommended_commands", [])
-    if recommended_commands:
-        print(f"recommended_commands: {' | '.join(str(command) for command in recommended_commands)}")
+    _print_execution_session_summary_presenter(payload)
 
 
 def _print_blocker_session_summary(payload: dict[str, object]) -> None:
-    summary = payload.get("blocker_summary", {}) if isinstance(payload.get("blocker_summary"), dict) else {}
-    if not summary:
-        return
-    print(f"session: {summary.get('session_id')}")
-    print(f"session_status: {summary.get('session_status')}")
-    print(f"block_source: {summary.get('block_source')}")
-    if summary.get("block_detail"):
-        print(f"block_detail: {summary.get('block_detail')}")
-    print(f"resume_action: {summary.get('resume_action')}")
-    print(f"resume_reason: {summary.get('resume_reason')}")
-    if summary.get("primary_reason"):
-        print(f"message: {summary.get('primary_reason')}")
-    blocking_reasons = summary.get("blocking_reasons", [])
-    if blocking_reasons:
-        print(f"blocking: {'; '.join(str(reason) for reason in blocking_reasons)}")
-    recommended_commands = summary.get("recommended_commands", [])
-    if recommended_commands:
-        print(f"recommended_commands: {' | '.join(str(command) for command in recommended_commands)}")
+    _print_blocker_session_summary_presenter(payload)
 
 
 def _build_team_next_command(
@@ -694,7 +585,7 @@ def _build_team_next_command(
     session_id = str(payload.get("id"))
     plans_root = str(args.plans_root)
     runs_root = str(args.runs_root)
-    status_summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    status_summary = _status_summary(payload)
 
     if primary_action == "inspect_delegated_job" and failed_jobs:
         failed_job = failed_jobs[0]
@@ -726,7 +617,7 @@ def _build_team_next_command(
             f"{session_id} --plans-root {plans_root} --runs-root {runs_root}"
         )
     if primary_action == "execute":
-        if not status_summary.get("approved_plan_ready", False):
+        if not _summary_bool(status_summary, "approved_plan_ready"):
             return (
                 "python -m agent_orchestrator.cli team status "
                 f"{session_id} --plans-root {plans_root} --runs-root {runs_root}"
@@ -754,29 +645,6 @@ def _build_team_next_command(
         "python -m agent_orchestrator.cli team status "
         f"{session_id} --plans-root {plans_root} --runs-root {runs_root}"
     )
-
-
-def _team_next_alternatives(status_summary: dict[str, object], primary_action: str) -> list[str]:
-    recovery_actions = [str(action) for action in status_summary.get("recovery_actions", [])]
-    return [action for action in recovery_actions if action != primary_action]
-
-
-def _pick_primary_action(actions: list[str]) -> str:
-    priority = [
-        "inspect_delegated_job",
-        "inspect_compliance",
-        "revise",
-        "approve",
-        "execute",
-        "inspect_execution",
-        "human_decision",
-    ]
-    for action in priority:
-        if action in actions:
-            return action
-    return actions[0] if actions else "inspect_session"
-
-
 def _parse_agent_flag(value: str | None) -> bool | None:
     if value is None:
         return None

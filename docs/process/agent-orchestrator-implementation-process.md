@@ -5,7 +5,7 @@
 - Planning Governance Progress: `decision-core-first happy path established; recovery and handoff hardening in progress`
 - Execution Strategy Progress: `iteration 4 in progress`
 - Total Product Progress: `decision-core-first happy path established with planning skeleton advancing`
-- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, and operator-runbook signal compliance, but still lacks fully hardened recovery semantics, richer topology policy breadth, broader documentation coverage, and stronger narrow-scope hook enforcement for the internal-default workflow
+- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, operator-runbook signal compliance, and a structured compliance contract with changed-file header enforcement, but still lacks fully hardened recovery semantics, richer topology policy breadth, broader documentation coverage, and stronger narrow-scope hook enforcement for the internal-default workflow
 
 ## Purpose Of This Document
 
@@ -187,6 +187,7 @@ The product is not:
 - Basic documentation refresh exists through the team documentation sync path.
 - Basic hook-based compliance checks can detect process-document drift through `team check-compliance`.
 - Operator runbook drift for topology and provider fallback signals is now blocked by compliance.
+- Compliance output now exposes structured `warnings`, `checked_files`, `required_actions`, and `recommended_commands`, while keeping hard header enforcement scoped to changed files.
 - Richer code/header comparison coverage is still missing.
 - Automatic global map refresh is now tied to key team workflow transitions, but broader task-completion refresh semantics are still incomplete.
 
