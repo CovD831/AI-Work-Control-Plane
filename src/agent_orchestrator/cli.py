@@ -123,6 +123,16 @@ def main() -> None:
 
     health_parser = subparsers.add_parser("health", help="Check local provider availability.")
 
+    ui_parser = subparsers.add_parser("ui", help="Start the local Agent Team Console dashboard.")
+    ui_parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind.")
+    ui_parser.add_argument("--port", type=int, default=8765, help="Port to listen on.")
+    ui_parser.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    ui_parser.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    ui_parser.add_argument("--jobs-root", default=".agent_orchestrator/jobs")
+    ui_parser.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    ui_parser.add_argument("--job-runtime", choices=["mock", "tmux"], default="mock")
+    ui_parser.add_argument("--provider", choices=["codex", "claude"])
+
     install_hooks_parser = subparsers.add_parser("install-hooks", help="Install repository-managed git hooks.")
     install_hooks_parser.add_argument("--root", default=".", help="Repository root that contains .git/ and scripts/git-hooks/.")
 
@@ -262,6 +272,19 @@ def main() -> None:
                 ensure_ascii=False,
                 indent=2,
             )
+        )
+        return
+
+    if args.command == "ui":
+        _run_ui_server(
+            host=args.host,
+            port=args.port,
+            plans_root=args.plans_root,
+            runs_root=args.runs_root,
+            jobs_root=args.jobs_root,
+            runtime=args.runtime,
+            job_runtime=args.job_runtime,
+            provider=args.provider,
         )
         return
 
@@ -456,6 +479,38 @@ def _build_team_orchestrator(runtime: str, provider: str | None, plans_root: str
         store=PlanStore(root=plans_path),
         project_root=project_root,
     )
+
+
+def _run_ui_server(
+    *,
+    host: str,
+    port: int,
+    plans_root: str,
+    runs_root: str,
+    jobs_root: str,
+    runtime: str,
+    job_runtime: str,
+    provider: str | None,
+) -> None:
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise SystemExit("Install UI dependencies with `pip install -e '.[ui]'` to run the dashboard.") from exc
+
+    from agent_orchestrator.ui_server import create_app
+    from agent_orchestrator.ui_service import DashboardService
+    from agent_orchestrator.tmux_runtime import TmuxJobRuntime
+    from agent_orchestrator.jobs import FileJobRuntime
+
+    service = DashboardService(
+        team=_build_team_orchestrator(runtime, provider, plans_root, runs_root),
+        plans_root=plans_root,
+        runs_root=runs_root,
+        jobs_root=jobs_root,
+        job_runtime=TmuxJobRuntime(root=jobs_root) if job_runtime == "tmux" else FileJobRuntime(root=jobs_root),
+    )
+    print(f"Agent Team Console: http://{host}:{port}")
+    uvicorn.run(create_app(service), host=host, port=port)
 
 
 def _install_git_hooks(repo_root: Path) -> None:

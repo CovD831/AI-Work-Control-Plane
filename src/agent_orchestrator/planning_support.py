@@ -545,6 +545,8 @@ def build_compliance_status_for_session(
     plans_root: Path | str | None = None,
     changed_files: list[str] | None = None,
 ) -> dict[str, object]:
+    changed_file_scope = list(changed_files or [])
+    session_scope = session is not None
     missing_docs = list(doc_sync.get("missing_docs", [])) if isinstance(doc_sync, dict) else []
     stale_docs = list(doc_sync.get("stale_docs", [])) if isinstance(doc_sync, dict) else []
     header_contract_violations = (
@@ -569,11 +571,17 @@ def build_compliance_status_for_session(
     )
     blocking_reasons: list[str] = []
     warnings: list[str] = [str(item) for item in [*header_contract_warnings, *hook_marker_warnings]]
-    if missing_docs:
+    baseline_warnings: list[str] = []
+    if missing_docs and (changed_file_scope or not session_scope):
         blocking_reasons.append("missing required docs: " + ", ".join(str(item) for item in missing_docs))
-    if stale_docs:
+    elif missing_docs:
+        baseline_warnings.append("missing required docs: " + ", ".join(str(item) for item in missing_docs))
+    if stale_docs and (changed_file_scope or not session_scope):
         stale_names = [str(item.get("path", item.get("name", "unknown"))) for item in stale_docs if isinstance(item, dict)]
         blocking_reasons.append("stale document structure: " + ", ".join(stale_names))
+    elif stale_docs:
+        stale_names = [str(item.get("path", item.get("name", "unknown"))) for item in stale_docs if isinstance(item, dict)]
+        baseline_warnings.append("stale document structure: " + ", ".join(stale_names))
     if header_contract_violations:
         blocking_reasons.extend(str(item) for item in header_contract_violations)
     if changed_file_doc_sync_violations:
@@ -582,24 +590,13 @@ def build_compliance_status_for_session(
     if not missing_docs and not stale_docs:
         readme_path = project_root / "README.md"
         readme_text = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
-        if "agent-team-operator-runbook.md" not in readme_text:
-            blocking_reasons.append("README missing operator runbook link")
-
         long_plan_path = project_root / "docs" / "process" / "长周期主执行计划.md"
         long_plan_text = long_plan_path.read_text(encoding="utf-8") if long_plan_path.exists() else ""
-        if "文档同步 / compliance / hook blocking" not in long_plan_text:
-            blocking_reasons.append("long-cycle plan missing happy-path compliance clause")
-
         impl_process_path = project_root / "docs" / "process" / "agent-orchestrator-implementation-process.md"
         impl_process_text = impl_process_path.read_text(encoding="utf-8") if impl_process_path.exists() else ""
-        if "hook-based compliance checks" not in impl_process_text:
-            blocking_reasons.append("implementation process doc missing compliance hook language")
-
         runbook_path = project_root / "docs" / "process" / "agent-team-operator-runbook.md"
         runbook_text = runbook_path.read_text(encoding="utf-8") if runbook_path.exists() else ""
         required_runbook_signals = ["topology_reason", "fallback_reason", "fallback_detail"]
-        if any(signal not in runbook_text for signal in required_runbook_signals):
-            blocking_reasons.append("operator runbook missing topology/fallback signals")
         required_guidance_commands = [
             "team summary",
             "team next",
@@ -611,18 +608,27 @@ def build_compliance_status_for_session(
             "team retry-adversarial-review",
             "team check-compliance",
         ]
-        if any(command not in runbook_text for command in required_guidance_commands):
-            blocking_reasons.append("operator runbook missing canonical guidance commands")
-
         root_map_path = project_root / "docs" / "process" / "root-map.md"
         root_map_text = root_map_path.read_text(encoding="utf-8") if root_map_path.exists() else ""
-        if "module manifests" not in root_map_text:
-            blocking_reasons.append("root map missing module manifest linkage")
-
         manifest_path = project_root / "docs" / "process" / "module-manifest.md"
         manifest_text = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else ""
+        header_contract_path = project_root / "docs" / "process" / "file-header-contract.md"
+        header_contract_text = header_contract_path.read_text(encoding="utf-8") if header_contract_path.exists() else ""
+        baseline_reasons: list[str] = []
+        if "agent-team-operator-runbook.md" not in readme_text:
+            baseline_reasons.append("README missing operator runbook link")
+        if "文档同步 / compliance / hook blocking" not in long_plan_text:
+            baseline_reasons.append("long-cycle plan missing happy-path compliance clause")
+        if "hook-based compliance checks" not in impl_process_text:
+            baseline_reasons.append("implementation process doc missing compliance hook language")
+        if any(signal not in runbook_text for signal in required_runbook_signals):
+            baseline_reasons.append("operator runbook missing topology/fallback signals")
+        if any(command not in runbook_text for command in required_guidance_commands):
+            baseline_reasons.append("operator runbook missing canonical guidance commands")
+        if "module manifests" not in root_map_text:
+            baseline_reasons.append("root map missing module manifest linkage")
         if "file-header contract" not in manifest_text:
-            blocking_reasons.append("module manifest missing file-header contract linkage")
+            baseline_reasons.append("module manifest missing file-header contract linkage")
         else:
             try:
                 manifest_spec = ProcessDocumentSpec.from_markdown("docs/process/module-manifest.md", manifest_text)
@@ -636,14 +642,30 @@ def build_compliance_status_for_session(
                     if path.name != "__init__.py"
                 }
                 if documented_modules != actual_modules:
-                    blocking_reasons.append(
+                    baseline_reasons.append(
                         "module manifest coverage mismatch: documented modules do not match source modules"
                     )
-
-        header_contract_path = project_root / "docs" / "process" / "file-header-contract.md"
-        header_contract_text = header_contract_path.read_text(encoding="utf-8") if header_contract_path.exists() else ""
         if "required header fields: DEPS / RESPONSIBILITY / MODULE" not in header_contract_text:
-            blocking_reasons.append("file-header contract missing required header fields")
+            baseline_reasons.append("file-header contract missing required header fields")
+
+        if changed_file_scope or not session_scope:
+            blocking_reasons.extend(baseline_reasons)
+        else:
+            baseline_warnings.extend(baseline_reasons)
+
+        hook_marker_path = project_root / ".agent_orchestrator" / "hooks.json"
+        if changed_file_scope and (project_root / "docs" / "process").exists() and not hook_marker_path.exists():
+            warnings.append("managed hook warning: install-hooks has not been run for this repository")
+
+    warnings.extend(baseline_warnings)
+    workflow_doc_issues = {
+        "README missing operator runbook link",
+        "long-cycle plan missing happy-path compliance clause",
+        "implementation process doc missing compliance hook language",
+    }
+    runbook_signal_issue = "operator runbook missing topology/fallback signals"
+    runbook_guidance_issue = "operator runbook missing canonical guidance commands"
+    all_compliance_issues = [*blocking_reasons, *warnings]
 
     if session is not None and session.resume.linked_execution_run_id and run_store is not None:
         try:
@@ -696,30 +718,35 @@ def build_compliance_status_for_session(
             },
             {
                 "name": "docs_reference_current_workflow",
-                "status": "failed"
-                if any(
-                    reason in blocking_reasons
-                    for reason in [
-                        "README missing operator runbook link",
-                        "long-cycle plan missing happy-path compliance clause",
-                        "implementation process doc missing compliance hook language",
-                    ]
-                )
-                else "passed",
+                "status": (
+                    "failed"
+                    if any(reason in blocking_reasons for reason in workflow_doc_issues)
+                    else "warning"
+                    if any(reason in warnings for reason in workflow_doc_issues)
+                    else "passed"
+                ),
                 "details": "workflow docs mention operator runbook and compliance gates",
             },
             {
                 "name": "operator_runbook_signals_current",
-                "status": "failed"
-                if "operator runbook missing topology/fallback signals" in blocking_reasons
-                else "passed",
+                "status": (
+                    "failed"
+                    if runbook_signal_issue in blocking_reasons
+                    else "warning"
+                    if runbook_signal_issue in warnings
+                    else "passed"
+                ),
                 "details": "operator runbook documents topology and provider fallback signals",
             },
             {
                 "name": "operator_runbook_guidance_current",
-                "status": "failed"
-                if "operator runbook missing canonical guidance commands" in blocking_reasons
-                else "passed",
+                "status": (
+                    "failed"
+                    if runbook_guidance_issue in blocking_reasons
+                    else "warning"
+                    if runbook_guidance_issue in warnings
+                    else "passed"
+                ),
                 "details": "operator runbook documents canonical session guidance commands",
             },
             {
@@ -745,6 +772,7 @@ def build_compliance_status_for_session(
         ],
         "blocking_reasons": blocking_reasons,
         "warnings": warnings,
+        "baseline_warnings": baseline_warnings,
         "checked_files": checked_files,
         "required_actions": required_actions,
         "recommended_commands": recommended_commands,
@@ -870,6 +898,7 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
     required_open = [gap for gap in session.gaps if gap.required and gap.status != "closed"]
     compliance_blocking_reasons = _compliance_blocking_reasons(session)
     compliance_warnings = _compliance_warnings(session)
+    baseline_warnings = _baseline_compliance_warnings(session)
     delegated_jobs, delegated_job_failed, delegated_job_in_progress, delegated_job_provider = _collect_delegated_jobs(session)
 
     primary_action = "inspect_session"
@@ -880,14 +909,19 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
     block_detail: str | None = None
     recovery_actions: list[str] = []
 
-    if compliance_blocking_reasons:
+    if session.status == "executing":
+        primary_action = "wait_for_execution"
+        primary_reason = "execution is in progress; wait for completion or inspect the linked run"
+        resume_action = "wait_for_execution"
+        resume_reason = "execution_in_progress"
+    elif compliance_blocking_reasons:
         block_source = "compliance"
         primary_action = "inspect_compliance"
         primary_reason = "compliance is blocking the workflow; restore required docs before approval or execution"
         resume_action = "inspect_compliance"
         resume_reason = "compliance_blocking"
         recovery_actions = ["inspect_compliance"]
-    elif compliance_warnings:
+    elif compliance_warnings and not baseline_warnings:
         primary_action = "inspect_compliance"
         primary_reason = "non-blocking compliance warnings exist; review them before the next changed-file update"
         resume_action = "inspect_session"
@@ -946,11 +980,6 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
         primary_reason = "plan is approved; execution is the next valid action"
         resume_action = "execute"
         resume_reason = "approved_plan_ready"
-    elif session.status == "executing":
-        primary_action = "wait_for_execution"
-        primary_reason = "execution is in progress; wait for completion or inspect the linked run"
-        resume_action = "wait_for_execution"
-        resume_reason = "execution_in_progress"
     elif session.status in {"accepted", "needs_followup"}:
         primary_action = "inspect_execution"
         primary_reason = "execution completed; inspect the linked run and any follow-up guidance"
@@ -1098,6 +1127,12 @@ def _compliance_warnings(session: PlanSession) -> list[str]:
     if not isinstance(session.compliance, dict):
         return []
     return [str(item) for item in session.compliance.get("warnings", [])]
+
+
+def _baseline_compliance_warnings(session: PlanSession) -> list[str]:
+    if not isinstance(session.compliance, dict):
+        return []
+    return [str(item) for item in session.compliance.get("baseline_warnings", [])]
 
 
 def _collect_delegated_jobs(session: PlanSession) -> tuple[list[dict[str, object]], bool, bool, str | None]:

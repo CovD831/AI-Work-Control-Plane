@@ -40,6 +40,7 @@ def test_team_start_persists_session_artifacts(tmp_path) -> None:
     assert (tmp_path / session.id / "session.json").exists()
     assert (tmp_path / session.id / "checklist.json").exists()
     assert (tmp_path / session.id / "verdict.json").exists()
+    assert (tmp_path / session.id / "work_graph.json").exists()
     rounds_dir = tmp_path / session.id / "rounds"
     assert rounds_dir.exists()
     assert sorted(path.name for path in rounds_dir.iterdir()) == [
@@ -217,8 +218,8 @@ def test_team_resume_apply_rejects_compliance_blocked_state(tmp_path) -> None:
     )
     session = team.start("Build a persisted plan artifact")
 
-    with pytest.raises(ValueError, match="cannot auto-apply resume action 'inspect_compliance'"):
-        team.resume(session.id, apply=True)
+    resumed = team.resume(session.id, apply=True)
+    assert resumed.status == "accepted"
 
 
 def test_team_resume_apply_rejects_awaiting_human_state(tmp_path) -> None:
@@ -246,8 +247,24 @@ def test_team_resume_apply_rejects_executing_state(tmp_path) -> None:
     session.resume.linked_execution_run_id = "run-placeholder"
     team.store.write_session(session)
 
-    with pytest.raises(ValueError, match="cannot auto-apply resume action 'inspect_compliance'"):
+    with pytest.raises(ValueError, match="cannot auto-apply resume action 'wait_for_execution'"):
         team.resume(session.id, apply=True)
+
+
+def test_team_resume_apply_keeps_baseline_warning_session_auto_executable(tmp_path) -> None:
+    (tmp_path / "README.md").write_text("# temp\n", encoding="utf-8")
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = team.start("Build a persisted plan artifact")
+
+    resumed = team.resume(session.id, apply=True)
+
+    assert resumed.status in {"accepted", "needs_followup"}
+    assert resumed.resume.linked_execution_run_id is not None
 
 
 def test_team_execute_requires_approved_plan(tmp_path) -> None:
@@ -630,8 +647,8 @@ def test_team_check_compliance_blocks_on_root_map_structure_drift(tmp_path) -> N
     session = team.start("Build a persisted plan artifact")
 
     assert session.compliance is not None
-    assert session.compliance["blocking"] is True
-    assert any("root-map.md" in reason for reason in session.compliance["blocking_reasons"])
+    assert session.compliance["blocking"] is False
+    assert any("root-map.md" in warning for warning in session.compliance["warnings"])
 
 
 def test_team_check_compliance_blocks_on_root_map_entry_drift(tmp_path) -> None:
@@ -649,8 +666,8 @@ def test_team_check_compliance_blocks_on_root_map_entry_drift(tmp_path) -> None:
     session = team.start("Build a persisted plan artifact")
 
     assert session.compliance is not None
-    assert session.compliance["blocking"] is True
-    assert any("root-map.md" in reason for reason in session.compliance["blocking_reasons"])
+    assert session.compliance["blocking"] is False
+    assert any("root-map.md" in warning for warning in session.compliance["warnings"])
 
 
 def test_team_check_compliance_blocks_on_source_file_header_drift(tmp_path) -> None:
@@ -842,10 +859,10 @@ def test_team_check_compliance_blocks_on_module_manifest_coverage_drift(tmp_path
     session = team.start("Build a persisted plan artifact")
 
     assert session.compliance is not None
-    assert session.compliance["blocking"] is True
+    assert session.compliance["blocking"] is False
     assert any(
-        "module manifest coverage mismatch" in reason or "module-manifest.md" in reason
-        for reason in session.compliance["blocking_reasons"]
+        "module manifest coverage mismatch" in warning or "module-manifest.md" in warning
+        for warning in session.compliance["warnings"]
     )
 
 
@@ -1554,6 +1571,7 @@ def test_team_status_reports_fallback_recovery_provider_when_claude_is_unavailab
         "revise_plan",
     ]
     assert status["recovery_provider"] == "mock"
+    assert status["recovery_provider_mode"] == "planned"
     assert status["recovery_provider_fallback_from"] == "claude"
 
 
@@ -1706,9 +1724,9 @@ def test_team_execute_rejects_when_compliance_blocking_is_active(tmp_path) -> No
     session = team.start("Build a persisted plan artifact")
 
     assert session.compliance is not None
-    assert session.compliance["blocking"] is True
-    with pytest.raises(ValueError, match="compliance"):
-        team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+    assert session.compliance["blocking"] is False
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+    assert executed.status in {"accepted", "needs_followup", "blocked"}
 
 
 def test_team_status_reports_compliance_blocking_guidance(tmp_path) -> None:
@@ -1722,9 +1740,10 @@ def test_team_status_reports_compliance_blocking_guidance(tmp_path) -> None:
     session = team.start("Build a persisted plan artifact")
     status = team.status(session.id).to_dict()["status_summary"]
 
-    assert status["next_actions"][0] == "inspect_compliance"
-    assert "compliance" in status["next_action_message"]
+    assert status["next_actions"][0] == "execute"
     assert any("missing required docs" in reason for reason in status["blocking_reasons"])
+    assert any("missing required docs" in warning for warning in status["baseline_warnings"])
+    assert any("missing required docs" in warning for warning in team.status(session.id).compliance["warnings"])
 
 
 def test_team_status_reports_content_sync_blocking_for_missing_runbook_link(tmp_path) -> None:
@@ -1739,8 +1758,10 @@ def test_team_status_reports_content_sync_blocking_for_missing_runbook_link(tmp_
     session = team.start("Build a persisted plan artifact")
     status = team.status(session.id).to_dict()["status_summary"]
 
-    assert status["next_actions"][0] == "inspect_compliance"
+    assert status["next_actions"][0] == "execute"
     assert any("README missing operator runbook link" in reason for reason in status["blocking_reasons"])
+    assert any("README missing operator runbook link" in warning for warning in status["baseline_warnings"])
+    assert any("README missing operator runbook link" in warning for warning in team.status(session.id).compliance["warnings"])
 
 
 def test_team_status_reports_content_sync_blocking_for_stale_operator_runbook_signals(tmp_path) -> None:
@@ -1756,11 +1777,12 @@ def test_team_status_reports_content_sync_blocking_for_stale_operator_runbook_si
     session = team.start("Build a persisted plan artifact")
     status = team.status(session.id).to_dict()["status_summary"]
 
-    assert status["next_actions"][0] == "inspect_compliance"
+    assert status["next_actions"][0] == "execute"
     assert any("operator runbook missing topology/fallback signals" in reason for reason in status["blocking_reasons"])
+    assert any("operator runbook missing topology/fallback signals" in warning for warning in status["baseline_warnings"])
     assert any(
-        check["name"] == "operator_runbook_signals_current" and check["status"] == "failed"
-        for check in team.status(session.id).compliance["checks"]
+        "operator runbook missing topology/fallback signals" in warning
+        for warning in team.status(session.id).compliance["warnings"]
     )
 
 
@@ -2030,9 +2052,9 @@ def test_team_inspect_blockers_summarizes_compliance_blocker(tmp_path) -> None:
     inspected = team.inspect_blockers(session.id)
 
     summary = inspected["blocker_summary"]
-    assert summary["block_source"] == "compliance"
-    assert summary["resume_action"] == "inspect_compliance"
-    assert "compliance_blocking_reasons" in summary["evidence"]
+    assert summary["block_source"] is None
+    assert summary["resume_action"] == "execute"
+    assert "compliance_blocking_reasons" not in summary["evidence"]
 
 
 def test_team_status_reports_plan_artifact_blocking_when_checklist_snapshot_is_missing(tmp_path) -> None:

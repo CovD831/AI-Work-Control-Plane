@@ -16,6 +16,10 @@ from uuid import uuid4
 
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest, JobRuntime
 from agent_orchestrator.command import ProviderHealthCheck, ProviderStatus
+from agent_orchestrator.events import EventStore
+from agent_orchestrator.ideation import run_ideation
+from agent_orchestrator.memory import MemoryStore
+from agent_orchestrator.messages import MessageRouter, MessageStore
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode, get_policy
 from agent_orchestrator.planning_support import (
@@ -41,6 +45,7 @@ from agent_orchestrator.planning_support import (
 from agent_orchestrator.review import Finding, ReviewResult
 from agent_orchestrator.tasks import ExecutionContract
 from agent_orchestrator.topology import TopologyName
+from agent_orchestrator.work_graph import WorkGraphStore, build_initial_work_graph
 
 TeamRole = Literal["lead", "build", "review"]
 GapStatus = Literal["open", "acknowledged", "closed"]
@@ -90,6 +95,7 @@ class PlanStatusSummary(TypedDict):
     recovery_actions: list[str]
     recovery_round_type: str | None
     recovery_provider: str | None
+    recovery_provider_mode: str | None
     recovery_provider_fallback_from: str | None
     recovery_provider_fallback_reason: str | None
     recovery_provider_fallback_detail: str | None
@@ -97,6 +103,7 @@ class PlanStatusSummary(TypedDict):
     recovery_semantics: dict[str, object]
     blocking_reasons: list[str]
     warnings: list[str]
+    baseline_warnings: list[str]
     block_source: str | None
     block_detail: str | None
     resume_action: str
@@ -671,11 +678,62 @@ class PlanStore:
         )
         for index, round_ in enumerate(session.review_rounds, start=1):
             self._write_json(rounds_dir / f"round-{index:03d}.json", round_.to_dict())
+        self.write_work_graph(session)
+        EventStore(self.root.parent / "events").append(
+            type="session.updated",
+            scope="session",
+            scope_id=session.id,
+            message=f"Plan session {session.id} saved with status {session.status}.",
+            payload={
+                "session_id": session.id,
+                "status": session.status,
+                "phase": session.resume.current_phase,
+                "work_graph_path": str(session_dir / "work_graph.json"),
+            },
+        )
+        memory_store = MemoryStore(self.root.parent / "memory")
+        memory_store.append(
+            namespace="plan_session",
+            session_id=session.id,
+            record_type="session_snapshot",
+            role="lead",
+            provider="decision_core",
+            summary=f"{session.status}: {session.requirement}",
+            payload={
+                "status": session.status,
+                "gate_verdict": session.gate_verdict,
+                "review_round_count": len(session.review_rounds),
+                "gap_count": len(session.gaps),
+            },
+        )
+        if session.status in {"blocked", "awaiting_human"}:
+            memory_store.append(
+                namespace="postmortem",
+                session_id=session.id,
+                record_type="postmortem",
+                role="lead",
+                provider="decision_core",
+                summary=f"Session {session.id} blocked with status {session.status}.",
+                payload={"status": session.status, "blocking_reasons": session.to_dict()["status_summary"]["blocking_reasons"]},
+            )
 
     def read_session(self, session_id: str) -> PlanSession:
         session_dir = self.root / session_id
         payload = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
         return PlanSession.from_dict(payload)
+
+    def write_work_graph(self, session: PlanSession) -> None:
+        graph_store = WorkGraphStore(self.root)
+        graph_store.write(
+            build_initial_work_graph(
+                session,
+                existing=graph_store.read_optional(session.id),
+                message_store=self.message_store(),
+            )
+        )
+
+    def message_store(self) -> MessageStore:
+        return MessageStore(self.root.parent / "messages")
 
     @staticmethod
     def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -706,7 +764,13 @@ class TeamOrchestrator:
         work_units = self.orchestrator.decomposer.decompose(contract, policy)
         session = PlanSession.new(requirement=requirement, stage_target=self.stage_target)
         session.doc_sync = self._build_doc_sync_status()
-        session.compliance = self._build_compliance_status(session.doc_sync)
+        session.compliance = build_compliance_status_for_session(
+            project_root=self.project_root,
+            doc_sync=session.doc_sync,
+            session=session,
+            run_store=self.orchestrator.run_store,
+            plans_root=self.store.root,
+        )
         session.lead_brief = f"Lead target: {contract.goal}"
         session.subtasks = [
             PlanSubtask(
@@ -762,6 +826,7 @@ class TeamOrchestrator:
             requirement,
             session.structured_brief.topology_recommendation,
         )
+        message_router = MessageRouter(self.store.message_store())
 
         lead_job = self.runtime.start(
             JobRequest(
@@ -790,6 +855,17 @@ class TeamOrchestrator:
             ),
         )
         review_result = _review_plan(requirement, session)
+        review_request = message_router.build_review_request(
+            session_id=session.id,
+            to_role="reviewer",
+            content=f"Review the drafted plan for: {requirement}",
+            work_unit_id=session.id,
+            payload={
+                "goal": session.structured_brief.goal,
+                "subtask_ids": [subtask.id for subtask in session.subtasks],
+                "round_type": "review",
+            },
+        )
         review_job = self._start_job(
             JobRequest(
                 task_id=session.id,
@@ -797,7 +873,12 @@ class TeamOrchestrator:
                 kind="review",
                 prompt=f"Review planning round: {requirement}",
                 cwd=str(Path.cwd()),
-                metadata={"stage_target": self.stage_target, "role": "review"},
+                metadata={
+                    "stage_target": self.stage_target,
+                    "role": "review",
+                    "work_unit_id": session.id,
+                    "message_ids": [review_request.id],
+                },
             )
         )
         if hasattr(self.runtime, "complete"):
@@ -814,7 +895,30 @@ class TeamOrchestrator:
             summary=f"{review_result.summary} via {review_job.provider} review job {review_job.id}.",
             review_result=review_result,
         )
+        message_router.build_review_result(
+            session_id=session.id,
+            from_role="reviewer",
+            content=review_result.summary,
+            work_unit_id=review_round.id,
+            payload={
+                "job_id": review_job.id,
+                "review_round_id": review_round.id,
+                "review_result": review_result.to_dict(),
+                "reply_to_message_id": review_request.id,
+            },
+        )
         adversarial_result = _adversarial_review_plan(requirement, session)
+        adversarial_request = message_router.build_review_request(
+            session_id=session.id,
+            to_role="adversarial_reviewer",
+            content=f"Challenge the drafted plan adversarially for: {requirement}",
+            work_unit_id=session.id,
+            payload={
+                "goal": session.structured_brief.goal,
+                "subtask_ids": [subtask.id for subtask in session.subtasks],
+                "round_type": "adversarial_review",
+            },
+        )
         adversarial_job = self._start_job(
             JobRequest(
                 task_id=session.id,
@@ -822,7 +926,13 @@ class TeamOrchestrator:
                 kind="adversarial_review",
                 prompt=f"Adversarial review planning round: {requirement}",
                 cwd=str(Path.cwd()),
-                metadata={"stage_target": self.stage_target, "role": "review", "round_type": "adversarial_review"},
+                metadata={
+                    "stage_target": self.stage_target,
+                    "role": "review",
+                    "round_type": "adversarial_review",
+                    "work_unit_id": session.id,
+                    "message_ids": [adversarial_request.id],
+                },
             )
         )
         if hasattr(self.runtime, "complete"):
@@ -838,6 +948,18 @@ class TeamOrchestrator:
             role="review",
             summary=f"{adversarial_result.summary} via {adversarial_job.provider} adversarial_review job {adversarial_job.id}.",
             review_result=adversarial_result,
+        )
+        message_router.build_review_result(
+            session_id=session.id,
+            from_role="adversarial_reviewer",
+            content=adversarial_result.summary,
+            work_unit_id=adversarial_round.id,
+            payload={
+                "job_id": adversarial_job.id,
+                "review_round_id": adversarial_round.id,
+                "review_result": adversarial_result.to_dict(),
+                "reply_to_message_id": adversarial_request.id,
+            },
         )
         session.review_rounds = [author_round, review_round, adversarial_round]
         session.resume.active_round_id = adversarial_round.id
@@ -871,6 +993,52 @@ class TeamOrchestrator:
             session.approved_plan = _build_approved_plan(session)
 
         self.store.write_session(session)
+        session.compliance = build_compliance_status_for_session(
+            project_root=self.project_root,
+            doc_sync=session.doc_sync,
+            session=session,
+            run_store=self.orchestrator.run_store,
+            plans_root=self.store.root,
+        )
+        self.store.write_session(session)
+        return session
+
+    def ideate(self, requirement: str) -> PlanSession:
+        session = PlanSession.new(requirement=requirement, stage_target=self.stage_target)
+        session.status = "drafting"
+        session.resume.current_phase = "ideation"
+        session.resume.pending_role = "lead"
+        session.lead_brief = f"Ideation target: {requirement}"
+        round_ = run_ideation(
+            requirement=requirement,
+            session_id=session.id,
+            message_store=self.store.message_store(),
+        )
+        session.structured_brief.goal = requirement
+        session.structured_brief.open_questions = [
+            "Confirm the target user and success criteria before execution planning.",
+            "Decide whether the skeptical risks require deeper research.",
+        ]
+        session.structured_brief.decision_rationale = [
+            round_.proponent_summary,
+            round_.skeptic_summary,
+            round_.lead_synthesis,
+        ]
+        session.checklist = [
+            PlanChecklistItem(label="Ideation debate completed", owner="lead", completed=True),
+            PlanChecklistItem(label="Formal plan started", owner="lead", completed=False),
+        ]
+        self.store.write_session(session)
+        retrieved_memory = MemoryStore(self.store.root.parent / "memory").search(requirement, limit=5)
+        MemoryStore(self.store.root.parent / "memory").append(
+            namespace="ideation",
+            session_id=session.id,
+            record_type="debate",
+            role="lead",
+            provider="decision_core",
+            summary=round_.lead_synthesis,
+            payload={**round_.to_dict(), "retrieved_memory": retrieved_memory},
+        )
         return session
 
     def refresh_documentation_sync(self) -> dict[str, object]:
@@ -1014,13 +1182,14 @@ class TeamOrchestrator:
             session.approved_plan = _build_approved_plan(session)
         if self._can_refresh_process_docs():
             session.doc_sync = self.refresh_documentation_sync()
-            session.compliance = build_compliance_status_for_session(
-                project_root=self.project_root,
-                doc_sync=session.doc_sync,
-                session=session,
-                run_store=self.orchestrator.run_store,
-                plans_root=self.store.root,
-            )
+        self.store.write_session(session)
+        session.compliance = build_compliance_status_for_session(
+            project_root=self.project_root,
+            doc_sync=session.doc_sync,
+            session=session,
+            run_store=self.orchestrator.run_store,
+            plans_root=self.store.root,
+        )
         self.store.write_session(session)
         return session
 
@@ -1099,6 +1268,14 @@ class TeamOrchestrator:
                 plans_root=self.store.root,
             )
         self.store.write_session(session)
+        MessageRouter(self.store.message_store()).build_handoff(
+            session_id=session.id,
+            from_role="lead",
+            to_role="runtime",
+            content="Plan approved for execution.",
+            work_unit_id=session.id,
+            payload={"status": session.status, "gate_verdict": session.gate_verdict},
+        )
         return session
 
     def revise(self, session_id: str, *, summary: str, closed_gap_ids: list[str]) -> PlanSession:
@@ -1128,6 +1305,16 @@ class TeamOrchestrator:
         session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime)
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         session.doc_sync = self.refresh_documentation_sync()
+        self.store.write_session(session)
+        MessageRouter(self.store.message_store()).build_handoff(
+            session_id=session.id,
+            from_role="lead",
+            to_role="reviewer",
+            content=summary,
+            work_unit_id=revision_round.id,
+            payload={"closed_gap_ids": closed_gap_ids, "round_type": "revision"},
+            requires_response=True,
+        )
         session.compliance = build_compliance_status_for_session(
             project_root=self.project_root,
             doc_sync=session.doc_sync,
@@ -1198,6 +1385,15 @@ class TeamOrchestrator:
         session.approved_plan = _build_approved_plan(session)
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         session.doc_sync = self.refresh_documentation_sync()
+        self.store.write_session(session)
+        MessageRouter(self.store.message_store()).build_handoff(
+            session_id=session.id,
+            from_role="lead",
+            to_role="runtime",
+            content=f"Execution started from approved plan via run {run.run_id}.",
+            work_unit_id=run.run_id,
+            payload={"run_id": run.run_id, "status": session.status},
+        )
         session.compliance = build_compliance_status_for_session(
             project_root=self.project_root,
             doc_sync=session.doc_sync,
@@ -1265,11 +1461,14 @@ class TeamOrchestrator:
         self,
         doc_sync: dict[str, object] | None,
         *,
+        session: PlanSession | None = None,
         changed_files: list[str] | None = None,
     ) -> dict[str, object]:
         return build_compliance_status_for_session(
             project_root=self.project_root,
             doc_sync=doc_sync,
+            session=session,
+            run_store=self.orchestrator.run_store if session is not None else None,
             plans_root=self.store.root,
             changed_files=changed_files,
         )
@@ -1315,6 +1514,14 @@ class TeamOrchestrator:
 
         review_provider = self._selected_retry_provider(session, runtime_status)
         review_result = _review_plan(session.requirement, session)
+        message_router = MessageRouter(self.store.message_store())
+        retry_request = message_router.build_review_request(
+            session_id=session.id,
+            to_role="reviewer",
+            content=f"Retry review for: {session.requirement}",
+            work_unit_id=review_round.id,
+            payload={"round_type": "review_retry", "failed_job_id": review_job_id},
+        )
         review_job = self._start_job(
             JobRequest(
                 task_id=session.id,
@@ -1322,7 +1529,13 @@ class TeamOrchestrator:
                 kind="review",
                 prompt=f"Retry review planning round: {session.requirement}",
                 cwd=str(Path.cwd()),
-                metadata={"stage_target": self.stage_target, "role": "review", "round_type": "review_retry"},
+                metadata={
+                    "stage_target": self.stage_target,
+                    "role": "review",
+                    "round_type": "review_retry",
+                    "work_unit_id": review_round.id,
+                    "message_ids": [retry_request.id],
+                },
             )
         )
         if hasattr(self.runtime, "complete"):
@@ -1339,6 +1552,18 @@ class TeamOrchestrator:
             role="review",
             summary=f"{review_result.summary} via {review_job.provider} review job {review_job.id}.",
             review_result=review_result,
+        )
+        message_router.build_review_result(
+            session_id=session.id,
+            from_role="reviewer",
+            content=review_result.summary,
+            work_unit_id=retry_round.id,
+            payload={
+                "job_id": review_job.id,
+                "review_round_id": retry_round.id,
+                "review_result": review_result.to_dict(),
+                "reply_to_message_id": retry_request.id,
+            },
         )
         return self._apply_retry_round_outcome(
             session,
@@ -1359,6 +1584,14 @@ class TeamOrchestrator:
 
         review_provider = self._selected_retry_provider(session, runtime_status)
         adversarial_result = _adversarial_review_plan(session.requirement, session)
+        message_router = MessageRouter(self.store.message_store())
+        retry_request = message_router.build_review_request(
+            session_id=session.id,
+            to_role="adversarial_reviewer",
+            content=f"Retry adversarial review for: {session.requirement}",
+            work_unit_id=adversarial_round.id,
+            payload={"round_type": "adversarial_review_retry", "failed_job_id": job_id},
+        )
         retry_job = self._start_job(
             JobRequest(
                 task_id=session.id,
@@ -1366,7 +1599,13 @@ class TeamOrchestrator:
                 kind="adversarial_review",
                 prompt=f"Retry adversarial review planning round: {session.requirement}",
                 cwd=str(Path.cwd()),
-                metadata={"stage_target": self.stage_target, "role": "review", "round_type": "adversarial_review_retry"},
+                metadata={
+                    "stage_target": self.stage_target,
+                    "role": "review",
+                    "round_type": "adversarial_review_retry",
+                    "work_unit_id": adversarial_round.id,
+                    "message_ids": [retry_request.id],
+                },
             )
         )
         if hasattr(self.runtime, "complete"):
@@ -1383,6 +1622,18 @@ class TeamOrchestrator:
             role="review",
             summary=f"{adversarial_result.summary} via {retry_job.provider} adversarial_review job {retry_job.id}.",
             review_result=adversarial_result,
+        )
+        message_router.build_review_result(
+            session_id=session.id,
+            from_role="adversarial_reviewer",
+            content=adversarial_result.summary,
+            work_unit_id=retry_round.id,
+            payload={
+                "job_id": retry_job.id,
+                "review_round_id": retry_round.id,
+                "review_result": adversarial_result.to_dict(),
+                "reply_to_message_id": retry_request.id,
+            },
         )
         return self._apply_retry_round_outcome(
             session,
@@ -1689,6 +1940,7 @@ def _recovery_policy_for_session(
             return {
                 "round_type": round_type,
                 "provider": provider,
+                "provider_mode": provider_mode,
                 "fallback_from": str(fallback_from) if isinstance(fallback_from, str) else None,
                 "fallback_reason": str(fallback_reason) if isinstance(fallback_reason, str) else None,
                 "fallback_detail": str(fallback_detail) if isinstance(fallback_detail, str) else None,
@@ -1696,6 +1948,7 @@ def _recovery_policy_for_session(
     return {
         "round_type": None,
         "provider": str(reviewer) if isinstance(reviewer, str) else None,
+        "provider_mode": None,
         "fallback_from": str(fallback_from) if isinstance(fallback_from, str) else None,
         "fallback_reason": str(fallback_reason) if isinstance(fallback_reason, str) else None,
         "fallback_detail": str(fallback_detail) if isinstance(fallback_detail, str) else None,
@@ -1705,17 +1958,7 @@ def _recovery_policy_for_session(
 def _resume_apply_action(team: TeamOrchestrator, session: PlanSession) -> PlanSession:
     guidance = build_session_guidance(session)
     action = guidance.resume_action
-    inspect_only_actions = {
-        "inspect_execution",
-        "inspect_compliance",
-        "human_decision",
-        "wait_for_execution",
-        "inspect_blockers",
-        "inspect_delegated_job",
-        "inspect_session",
-        "revise",
-    }
-    if action in inspect_only_actions:
+    if not _resume_action_is_auto_applicable(session, guidance):
         next_command = _resume_guidance_command_support(session.id, action)
         reason = guidance.resume_reason
         raise ValueError(
@@ -1735,6 +1978,20 @@ def _resume_apply_action(team: TeamOrchestrator, session: PlanSession) -> PlanSe
     if action == "retry_adversarial_review":
         return team.retry_adversarial_review(session.id)
     return session
+
+
+def _resume_action_is_auto_applicable(session: PlanSession, guidance: Any) -> bool:
+    action = guidance.resume_action
+    auto_actions = {"approve", "execute", "retry_review", "retry_adversarial_review"}
+    if action not in auto_actions:
+        return False
+    if action == "execute":
+        return session.status == "approved_for_execution"
+    if action == "approve":
+        return session.status == "needs_revision"
+    if action in {"retry_review", "retry_adversarial_review"}:
+        return guidance.block_source == "delegated_job"
+    return False
 
 
 def _resume_guidance_command(session_id: str, action: str) -> str:
@@ -2298,6 +2555,9 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
     blocking_reasons: list[str] = []
     compliance_blocking_reasons = _compliance_blocking_reasons_support(session)
     compliance_warnings = _compliance_warnings_support(session)
+    baseline_warnings = [
+        str(item) for item in session.compliance.get("baseline_warnings", [])
+    ] if isinstance(session.compliance, dict) else []
     delegated_jobs, delegated_job_failed, delegated_job_provider = _collect_delegated_jobs_support(session)
     guidance = build_session_guidance(session)
     next_actions = [guidance.primary_action]
@@ -2311,7 +2571,10 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
     elif session.status == "needs_revision" and required_open:
         blocking_reasons.append(f"{len(required_open)} required gaps remain open")
     elif compliance_warnings:
-        blocking_reasons.append(f"{len(compliance_warnings)} non-blocking compliance warning(s) remain")
+        if baseline_warnings:
+            blocking_reasons.extend(baseline_warnings)
+        else:
+            blocking_reasons.append(f"{len(compliance_warnings)} non-blocking compliance warning(s) remain")
 
     preferred_recovery_round_type = None
     recovery_provider_mode = "observed"
@@ -2340,6 +2603,7 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
         "recovery_actions": guidance.recovery_actions,
         "recovery_round_type": recovery_policy.get("round_type"),
         "recovery_provider": recovery_policy.get("provider"),
+        "recovery_provider_mode": recovery_policy.get("provider_mode"),
         "recovery_provider_fallback_from": recovery_policy.get("fallback_from"),
         "recovery_provider_fallback_reason": recovery_policy.get("fallback_reason"),
         "recovery_provider_fallback_detail": recovery_policy.get("fallback_detail"),
@@ -2347,6 +2611,7 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
         "recovery_semantics": _recovery_semantics_for_guidance(guidance),
         "blocking_reasons": blocking_reasons,
         "warnings": compliance_warnings,
+        "baseline_warnings": baseline_warnings,
         "block_source": guidance.block_source,
         "block_detail": guidance.block_detail,
         "resume_action": guidance.resume_action,

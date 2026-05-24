@@ -259,6 +259,167 @@ def test_poll_run_command_returns_execution_contract_metadata(tmp_path, capsys) 
         cli.argparse.ArgumentParser.parse_args = original_parse
 
 
+def test_ui_command_starts_dashboard_server(monkeypatch, capsys) -> None:
+    from agent_orchestrator import cli
+
+    calls = {}
+
+    class _FakeApp:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def mount(self, *args, **kwargs):
+            return None
+
+        def get(self, *args, **kwargs):
+            return lambda fn: fn
+
+        def post(self, *args, **kwargs):
+            return lambda fn: fn
+
+    class _FakeHTTPException(Exception):
+        def __init__(self, *, status_code, detail):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+    class _FakeBaseModel:
+        pass
+
+    class _FakeUvicorn:
+        @staticmethod
+        def run(app, *, host, port):
+            calls["app"] = app
+            calls["host"] = host
+            calls["port"] = port
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "fastapi",
+        type("FastApiModule", (), {"Body": lambda default=None, **kwargs: default, "FastAPI": _FakeApp, "HTTPException": _FakeHTTPException}),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "fastapi.responses",
+        type("ResponsesModule", (), {"FileResponse": lambda path: path, "StreamingResponse": lambda body, media_type=None: body}),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "fastapi.staticfiles",
+        type("StaticFilesModule", (), {"StaticFiles": lambda directory: directory}),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "pydantic", type("PydanticModule", (), {"BaseModel": _FakeBaseModel}))
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", _FakeUvicorn)
+    monkeypatch.setattr(
+        cli,
+        "_build_team_orchestrator",
+        lambda runtime, provider, plans_root, runs_root: __import__(
+            "agent_orchestrator.planning",
+            fromlist=["TeamOrchestrator", "PlanStore"],
+        ).TeamOrchestrator(
+            orchestrator=__import__("agent_orchestrator").Orchestrator(),
+            store=__import__("agent_orchestrator.planning", fromlist=["PlanStore"]).PlanStore(root=plans_root),
+        ),
+    )
+
+    original_parse = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="ui",
+            host="127.0.0.1",
+            port=8765,
+            plans_root=".agent_orchestrator/plans",
+            runs_root=".agent_orchestrator/runs",
+            jobs_root=".agent_orchestrator/jobs",
+            runtime="mock",
+            job_runtime="mock",
+            provider=None,
+        )
+        cli.main()
+    finally:
+        cli.argparse.ArgumentParser.parse_args = original_parse
+
+    assert calls["host"] == "127.0.0.1"
+    assert calls["port"] == 8765
+    assert "Agent Team Console: http://127.0.0.1:8765" in capsys.readouterr().out
+
+
+def test_ui_command_accepts_tmux_job_runtime(monkeypatch, capsys) -> None:
+    from agent_orchestrator import cli
+
+    calls = {}
+
+    class _FakeApp:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def mount(self, *args, **kwargs):
+            return None
+
+        def get(self, *args, **kwargs):
+            return lambda fn: fn
+
+        def post(self, *args, **kwargs):
+            return lambda fn: fn
+
+    class _FakeHTTPException(Exception):
+        def __init__(self, *, status_code, detail):
+            super().__init__(detail)
+
+    class _FakeUvicorn:
+        @staticmethod
+        def run(app, *, host, port):
+            calls["host"] = host
+            calls["port"] = port
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "fastapi",
+        type("FastApiModule", (), {"Body": lambda default=None, **kwargs: default, "FastAPI": _FakeApp, "HTTPException": _FakeHTTPException}),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "fastapi.responses",
+        type("ResponsesModule", (), {"FileResponse": lambda path: path, "StreamingResponse": lambda body, media_type=None: body}),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "fastapi.staticfiles",
+        type("StaticFilesModule", (), {"StaticFiles": lambda directory: directory}),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", _FakeUvicorn)
+    monkeypatch.setattr(
+        cli,
+        "_build_team_orchestrator",
+        lambda runtime, provider, plans_root, runs_root: __import__(
+            "agent_orchestrator.planning",
+            fromlist=["TeamOrchestrator", "PlanStore"],
+        ).TeamOrchestrator(
+            orchestrator=__import__("agent_orchestrator").Orchestrator(),
+            store=__import__("agent_orchestrator.planning", fromlist=["PlanStore"]).PlanStore(root=plans_root),
+        ),
+    )
+
+    original_parse = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="ui",
+            host="127.0.0.1",
+            port=8765,
+            plans_root=".agent_orchestrator/plans",
+            runs_root=".agent_orchestrator/runs",
+            jobs_root=".agent_orchestrator/jobs",
+            runtime="mock",
+            job_runtime="tmux",
+            provider=None,
+        )
+        cli.main()
+    finally:
+        cli.argparse.ArgumentParser.parse_args = original_parse
+
+    assert calls == {"host": "127.0.0.1", "port": 8765}
+
+
 def test_team_status_command_round_trips_session(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -738,7 +899,7 @@ def test_team_summary_command_reports_recovery_actions_for_failed_claude_job(tmp
         cli.main()
         out = capsys.readouterr().out
         assert "recovery: inspect_delegated_job -> retry_review -> revise_plan" in out
-        assert "recovery_provider: claude (round=review)" in out
+        assert "recovery_provider: claude (round=review, mode=planned)" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -789,7 +950,7 @@ def test_team_summary_command_reports_fallback_recovery_provider_policy(tmp_path
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "recovery_provider: mock (round=review, fallback_from=claude," in out
+        assert "recovery_provider: mock (round=review, mode=planned, fallback_from=claude," in out
         assert "fallback_reason=reviewer_unavailable" in out
         assert "fallback_detail=claude unavailable" in out
     finally:
@@ -1590,7 +1751,7 @@ def test_team_summary_command_reports_compliance_blocking(tmp_path, capsys) -> N
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "next: inspect_compliance" in out
+        assert "next: execute" in out
         assert "missing required docs" in out
     finally:
         cli._build_team_orchestrator = original_build_team
@@ -1631,7 +1792,7 @@ def test_team_runbook_command_reports_compliance_recovery(tmp_path, capsys) -> N
         out = capsys.readouterr().out
         assert "operator_runbook:" in out
         assert "1. Use `team status` to inspect the current session state." not in out
-        assert "required docs" in out or "Inspect the blocking review findings" in out
+        assert "Execute the approved plan" in out or "Inspect the linked execution run" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1669,8 +1830,8 @@ def test_team_next_command_reports_compliance_check_for_blocking_session(tmp_pat
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "action: inspect_compliance" in out
-        assert "next_command: python -m agent_orchestrator.cli team check-compliance" in out
+        assert "action: execute" in out
+        assert "next_command: python -m agent_orchestrator.cli team execute" in out
         assert session.id in out
     finally:
         cli._build_team_orchestrator = original_build_team

@@ -91,6 +91,7 @@ def test_print_team_summary_reports_topology_and_failed_job(capsys) -> None:
                 "recovery_actions": ["inspect_delegated_job", "retry_review"],
                 "recovery_provider": "claude",
                 "recovery_round_type": "review",
+                "recovery_provider_mode": "planned",
                 "recovery_provider_fallback_from": "codex",
                 "recovery_provider_fallback_reason": "preferred_unavailable",
                 "recovery_provider_fallback_detail": "claude auth missing",
@@ -128,7 +129,7 @@ def test_print_team_summary_reports_topology_and_failed_job(capsys) -> None:
     assert "topology_reason: parallel review is required" in out
     assert "blocking: reviewer unavailable" in out
     assert "recovery: inspect_delegated_job -> retry_review" in out
-    assert "recovery_provider: claude (round=review, fallback_from=codex" in out
+    assert "recovery_provider: claude (round=review, mode=planned, fallback_from=codex" in out
     assert "resume: retry_review (reason=failed_review_job)" in out
     assert "recovery_guidance: mode=retry; resume_action=retry_review; reason=failed_review_job; block=delegated_job/failed_review_job; auto_apply=yes" in out
     assert "recovery_steps: inspect_delegated_job=inspect failed delegated job evidence -> retry_review=retry delegated review" in out
@@ -225,6 +226,7 @@ def test_print_team_next_reports_warning_only_compliance_context(capsys) -> None
                 "open_required_gaps": 0,
                 "open_optional_followups": 0,
                 "warnings": ["header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value"],
+                "baseline_warnings": ["README missing operator runbook link"],
             },
         )
     )
@@ -241,6 +243,7 @@ def test_print_team_next_reports_warning_only_compliance_context(capsys) -> None
 
     assert "action: inspect_compliance" in out
     assert "warnings: header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value" in out
+    assert "baseline_warnings: README missing operator runbook link" in out
 
 
 def test_print_team_runbook_includes_recommended_command_and_steps(capsys) -> None:
@@ -366,6 +369,7 @@ def test_print_blocker_session_summary_reports_warning_details(capsys) -> None:
                 "primary_reason": "non-blocking compliance warnings exist; review them before the next changed-file update",
                 "blocking_reasons": ["1 non-blocking compliance warning(s) remain"],
                 "warnings": ["header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value"],
+                "baseline_warnings": ["README missing operator runbook link"],
                 "recommended_commands": [
                     "python -m agent_orchestrator.cli team check-compliance session-123",
                 ],
@@ -375,3 +379,4 @@ def test_print_blocker_session_summary_reports_warning_details(capsys) -> None:
     out = capsys.readouterr().out
 
     assert "warnings: header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value" in out
+    assert "baseline_warnings: README missing operator runbook link" in out

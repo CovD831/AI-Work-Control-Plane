@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent 团队控制台</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="console">
+      <header class="topbar">
+        <div class="brand">
+          <h1>Agent 团队控制台</h1>
+          <span id="session-status" class="badge idle">空闲</span>
+        </div>
+        <div class="top-summary">
+          <div>
+            <span class="eyebrow">当前计划</span>
+            <h2 id="session-title">未选择会话</h2>
+          </div>
+          <div id="session-meta" class="mini-meta"></div>
+        </div>
+        <div class="top-actions">
+          <button id="refresh" title="刷新监控屏">刷新</button>
+        </div>
+      </header>
+
+      <section class="board">
+        <aside class="sidebar">
+          <form id="new-session" class="new-session">
+            <textarea id="requirement" rows="3" placeholder="输入新任务，启动团队"></textarea>
+            <button type="submit">启动</button>
+          </form>
+          <section>
+            <h2>会话</h2>
+            <div id="sessions" class="list"></div>
+          </section>
+        </aside>
+
+        <section class="mission">
+          <section class="plan-tree" id="plan-tree"></section>
+          <section class="agent-wall">
+            <div class="section-head">
+              <div>
+                <span class="eyebrow">Agent 团队</span>
+                <h2>组织作战室</h2>
+              </div>
+              <span class="wall-note">每个 agent / job 一个格子</span>
+            </div>
+            <div id="agent-cards" class="agent-grid">
+              <section class="role-group">
+                <div class="role-head"><strong>决策层</strong><span>0 个</span></div>
+                <div class="role-cards"></div>
+              </section>
+              <section class="role-group">
+                <div class="role-head"><strong>执行层</strong><span>0 个</span></div>
+                <div class="role-cards"></div>
+              </section>
+              <section class="role-group">
+                <div class="role-head"><strong>审核层</strong><span>0 个</span></div>
+                <div class="role-cards">
+                  <div class="agent-card idle">
+                    <div class="agent-main">
+                      <div class="agent-avatar">A</div>
+                      <div class="agent-title">
+                        <strong>暂无可见 Agent</strong>
+                        <span class="summary">等待委派任务</span>
+                      </div>
+                    </div>
+                    <div class="agent-task">启动或选择一个团队会话。Agent 的工作会以独立格子显示在这里。</div>
+                    <div class="agent-footer"><span class="badge idle">空闲</span><span>格子已就绪</span></div>
+                  </div>
+                </div>
+              </section>
+              <section class="role-group">
+                <div class="role-head"><strong>救援层</strong><span>0 个</span></div>
+                <div class="role-cards"></div>
+              </section>
+              <section class="role-group">
+                <div class="role-head"><strong>运行时层</strong><span>0 个</span></div>
+                <div class="role-cards"></div>
+              </section>
+            </div>
+          </section>
+          <section class="job-strip">
+            <div class="section-head compact">
+              <h2>最近任务</h2>
+              <span class="wall-note">点击查看日志</span>
+            </div>
+            <div id="jobs" class="job-list"></div>
+          </section>
+        </section>
+
+        <aside class="control">
+          <section class="next-action">
+            <div>
+              <span class="eyebrow">下一步</span>
+              <h2 id="next-title">请选择会话</h2>
+              <p id="next-reason">这里会显示当前会话的操作建议。</p>
+            </div>
+            <div id="action-buttons" class="actions"></div>
+            <div id="governance-summary" class="governance-summary">
+              <div class="governance-item"><span>拓扑</span>未知</div>
+              <div class="governance-item"><span>运行时</span>未知</div>
+              <div class="governance-item"><span>阻塞</span>否</div>
+              <div class="governance-item"><span>恢复</span>0 项</div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">操作手册</span>
+                <h2>建议步骤</h2>
+              </div>
+            </div>
+            <ol id="runbook" class="runbook"></ol>
+          </section>
+
+          <section class="panel log-panel">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">输出</span>
+                <h2 id="log-title">任务日志</h2>
+              </div>
+            </div>
+            <pre id="log" class="log-view">选择一个任务查看日志。</pre>
+          </section>
+
+          <section class="panel decision-panel">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">证据</span>
+                <h2>记忆与工具</h2>
+              </div>
+            </div>
+            <div id="evidence-summary" class="evidence-summary"></div>
+            <pre id="decision" class="json-view">{}</pre>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

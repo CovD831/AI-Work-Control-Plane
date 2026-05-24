@@ -239,6 +239,9 @@ def print_execution_session_summary(payload: dict[str, object]) -> None:
     warnings = summary_list(summary, "warnings")
     if warnings:
         print(f"warnings: {'; '.join(str(reason) for reason in warnings)}")
+    baseline_warnings = summary_list(summary, "baseline_warnings")
+    if baseline_warnings:
+        print(f"baseline_warnings: {'; '.join(str(reason) for reason in baseline_warnings)}")
     primary_action = summary_text(summary, "primary_action")
     if primary_action:
         print(f"primary_action: {primary_action}")
@@ -273,6 +276,9 @@ def print_blocker_session_summary(payload: dict[str, object]) -> None:
     if warnings:
         print(f"warnings: {'; '.join(str(reason) for reason in warnings)}")
     print_recovery_details(summary, include_commands=False, include_resume=False)
+    baseline_warnings = summary_list(summary, "baseline_warnings")
+    if baseline_warnings:
+        print(f"baseline_warnings: {'; '.join(str(reason) for reason in baseline_warnings)}")
     recommended_commands = summary_list(summary, "recommended_commands")
     if recommended_commands:
         print(f"recommended_commands: {' | '.join(str(command) for command in recommended_commands)}")
@@ -303,17 +309,23 @@ def print_team_summary(session: object, *, pick_primary_action: Any) -> None:
     warnings = summary_list(status, "warnings")
     if warnings:
         print(f"warnings: {'; '.join(str(reason) for reason in warnings)}")
+    baseline_warnings = summary_list(status, "baseline_warnings")
+    if baseline_warnings:
+        print(f"baseline_warnings: {'; '.join(str(reason) for reason in baseline_warnings)}")
 
     recovery_actions = summary_list(status, "recovery_actions")
     if recovery_actions:
         print(f"recovery: {' -> '.join(str(action) for action in recovery_actions)}")
     recovery_provider = summary_text(status, "recovery_provider")
     recovery_round_type = summary_text(status, "recovery_round_type")
+    recovery_provider_mode = summary_text(status, "recovery_provider_mode")
     recovery_fallback = summary_text(status, "recovery_provider_fallback_from")
     recovery_fallback_reason = summary_text(status, "recovery_provider_fallback_reason")
     recovery_fallback_detail = summary_text(status, "recovery_provider_fallback_detail")
     if recovery_provider and recovery_round_type:
         detail = f"recovery_provider: {recovery_provider} (round={recovery_round_type}"
+        if recovery_provider_mode:
+            detail += f", mode={recovery_provider_mode}"
         if recovery_fallback and recovery_fallback != recovery_provider:
             detail += f", fallback_from={recovery_fallback}"
         if recovery_fallback_reason:
@@ -367,6 +379,9 @@ def print_team_next(
     warnings = summary_list(status, "warnings")
     if warnings:
         print(f"warnings: {'; '.join(str(reason) for reason in warnings)}")
+    baseline_warnings = summary_list(status, "baseline_warnings")
+    if baseline_warnings:
+        print(f"baseline_warnings: {'; '.join(str(reason) for reason in baseline_warnings)}")
     selected_topology = summary_text(status, "selected_topology")
     if selected_topology:
         print(f"selected_topology: {selected_topology}")
@@ -396,6 +411,12 @@ def print_team_runbook(
     recommended_commands = context["recommended_commands"]
     if recommended_commands:
         print(f"next_command: {recommended_commands[0]}")
+    warnings = summary_list(status, "warnings")
+    if warnings:
+        print(f"warnings: {'; '.join(str(reason) for reason in warnings)}")
+    baseline_warnings = summary_list(status, "baseline_warnings")
+    if baseline_warnings:
+        print(f"baseline_warnings: {'; '.join(str(reason) for reason in baseline_warnings)}")
     selected_topology = summary_text(status, "selected_topology")
     if selected_topology:
         print(f"selected_topology: {selected_topology}")
