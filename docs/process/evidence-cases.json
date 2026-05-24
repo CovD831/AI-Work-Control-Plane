@@ -22,5 +22,11 @@
     "requirement": "Coordinate parallel independent validation tasks across multiple modules",
     "scenario_type": "parallel",
     "mode": "speed_first"
+  },
+  {
+    "label": "cli_workflow_hardening",
+    "requirement": "Harden CLI setup summary for release readiness and validate the operator workflow evidence path",
+    "scenario_type": "standard",
+    "mode": "success_first"
   }
 ]

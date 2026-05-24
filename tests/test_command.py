@@ -60,6 +60,26 @@ def test_provider_health_check_refresh_bypasses_cache(tmp_path, monkeypatch) -> 
     assert len(runner.commands) == 2
 
 
+def test_provider_health_check_reports_missing_binary_with_fallback(monkeypatch) -> None:
+    monkeypatch.setattr("agent_orchestrator.command.shutil.which", lambda binary: None)
+    runner = FakeRunner(CommandResult(command=["unused"], exit_code=0, stdout="", stderr=""))
+    checker = ProviderHealthCheck(runner=runner, use_cache=False)
+
+    codex = checker.check("codex", refresh=True)
+    claude = checker.check("claude", refresh=True)
+    mock = checker.check("mock", refresh=True)
+
+    assert codex.available is False
+    assert codex.detail == "codex not found"
+    assert codex.recommended_fallback == "claude"
+    assert claude.available is False
+    assert claude.detail == "claude not found"
+    assert claude.recommended_fallback == "codex"
+    assert mock.available is True
+    assert mock.detail == "mock provider is always available"
+    assert runner.commands == []
+
+
 class SlowRunner(FakeRunner):
     def run(self, command: list[str], *, cwd: str, env: dict[str, str] | None = None) -> CommandResult:
         time.sleep(0.05)

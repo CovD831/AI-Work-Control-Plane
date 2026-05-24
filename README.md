@@ -36,6 +36,45 @@ task input
 
 The system is intentionally not trying to win by rebuilding every bridge, session runtime, or provider shell. Its value comes from stronger planning governance, stronger execution decisions, and stronger project discipline around docs, hooks, and recoverable plan state.
 
+## 5-Minute CLI Quickstart
+
+Run from the repository root. The quickstart is CLI-first and uses the default local/mock-safe path unless you explicitly choose a command provider.
+
+```bash
+cd /Users/abab/Desktop/Agent-Orchestratoar
+PYTHONPATH=src python -m agent_orchestrator.cli health
+PYTHONPATH=src python -m agent_orchestrator.cli team setup
+```
+
+Start a governed planning session, inspect the next operator action, and approve only after required gaps are closed:
+
+```bash
+PYTHONPATH=src python -m agent_orchestrator.cli team start "Build a persisted plan artifact for a routine implementation task"
+PYTHONPATH=src python -m agent_orchestrator.cli team summary <session-id>
+PYTHONPATH=src python -m agent_orchestrator.cli team next <session-id>
+PYTHONPATH=src python -m agent_orchestrator.cli team runbook <session-id>
+PYTHONPATH=src python -m agent_orchestrator.cli team revise <session-id>
+PYTHONPATH=src python -m agent_orchestrator.cli team approve <session-id>
+PYTHONPATH=src python -m agent_orchestrator.cli team execute <session-id>
+PYTHONPATH=src python -m agent_orchestrator.cli team inspect-execution <session-id>
+```
+
+For a direct smoke run, keep the same CLI entrypoint and let `auto` choose the policy profile:
+
+```bash
+PYTHONPATH=src python -m agent_orchestrator.cli "Review this workspace and report the next hardening step" --mode auto
+```
+
+Before calling a candidate ready, capture the local release signals:
+
+```bash
+PYTHONPATH=src python -m agent_orchestrator.cli evidence report \
+  --case-file docs/process/evidence-cases.json \
+  --output docs/process/v1x-evidence-report.md \
+  --json-output .agent_orchestrator/evidence/real-tasks.json
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
+```
+
 ## Product Shape
 
 The intended v1 product shape is:

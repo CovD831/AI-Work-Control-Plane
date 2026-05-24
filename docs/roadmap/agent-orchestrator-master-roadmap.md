@@ -209,11 +209,13 @@ The roadmap is complete when:
 
 ## v1.x Reference-Informed Upgrade Track
 
-The current v1.x backlog is now organized by a reference-informed master plan:
+The v1.x backlog was organized by a reference-informed master plan:
 
 - [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-reference-upgrade-master-plan.md)
 
-This plan borrows targeted strengths from local reference repositories while preserving Agent Orchestrator's boundaries: it strengthens job observability, review/rescue/setup action grammar, context recovery, packaging discipline, and evidence reporting without turning the product into a bridge, session manager, or plugin marketplace.
+Status: **completed for the v1.x reference-informed upgrade scope**.
+
+The completed upgrade borrows targeted strengths from local reference repositories while preserving Agent Orchestrator's boundaries: it strengthens job observability, review/rescue/setup action grammar, context recovery, packaging discipline, and evidence reporting without turning the product into a bridge, session manager, or plugin marketplace.
 
 ## v1.x Convergence
 
@@ -236,3 +238,18 @@ Release readiness is deliberately local and honest:
 - `team setup` surfaces provider health, doc sync, compliance, and release readiness
 - evidence reports and trend reports are generated as local markdown artifacts
 - no plugin-marketplace or external distribution promise is implied
+
+Pre-release checklist source of truth:
+
+- [v1.x Release Readiness](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-release-readiness.md)
+
+## v1.0 Candidate Remaining Hardening
+
+The reference-informed upgrade is complete, but the v1.0 candidate should stay open until the following release-candidate hardening items are closed:
+
+- Run and record the Phase 5 targeted suite: `pytest tests/test_docs_process.py tests/test_planning_support.py tests/test_team.py -q`.
+- Run final `team check-compliance` after any docs/evidence refresh.
+- Freeze the committed evidence paths: `docs/process/evidence-cases.json`, `docs/process/v1x-evidence-report.md`, and `docs/process/v1x-evidence-trend.md`.
+- Re-check `docs/process/v1x-hardening-workflow-report.md` so the candidate carries both happy-path and friction/fix evidence.
+- Confirm `team setup` still reports version sync, provider/runtime health, evidence status, tests, and compliance in the release_readiness snapshot.
+- Keep the runtime limitation explicit: v1.x has a guarded command runtime and job controls, not a full Codex/Claude bridge or persistent session manager.

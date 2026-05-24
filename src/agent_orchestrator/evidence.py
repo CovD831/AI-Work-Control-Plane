@@ -147,6 +147,10 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
         f"- team_cases_with_execution_run: {summary.get('team_cases_with_execution_run', 0)}",
         f"- direct_runs_without_plan_metadata: {summary.get('direct_runs_without_plan_metadata', 0)}",
         "",
+        "## Conclusion Summary",
+        "",
+        *_evidence_conclusion_lines(summary, report, cases),
+        "",
         "## Scenario Aggregates",
         "",
     ]
@@ -264,6 +268,7 @@ def render_workflow_evidence_trend_markdown(payload: dict[str, object]) -> str:
     baseline = payload.get("baseline", {}) if isinstance(payload.get("baseline"), dict) else {}
     current = payload.get("current", {}) if isinstance(payload.get("current"), dict) else {}
     deltas = payload.get("deltas", {}) if isinstance(payload.get("deltas"), dict) else {}
+    assessment = _trend_assessment(deltas)
     lines = [
         "# v1.x Evidence Trend",
         "",
@@ -274,6 +279,11 @@ def render_workflow_evidence_trend_markdown(payload: dict[str, object]) -> str:
         f"- average_benefit_score_delta: {_format_signed(deltas.get('average_benefit_score', 0.0))}",
         f"- execution_run_delta: {_format_signed(deltas.get('team_cases_with_execution_run', 0))}",
         f"- direct_without_plan_metadata_delta: {_format_signed(deltas.get('direct_runs_without_plan_metadata', 0))}",
+        f"- current_version_assessment: {assessment}",
+        "",
+        "## Version Assessment",
+        "",
+        *_trend_assessment_lines(assessment, deltas),
         "",
         "## Scenario Aggregates",
         "",
@@ -301,7 +311,7 @@ def render_workflow_evidence_trend_markdown(payload: dict[str, object]) -> str:
             "",
             "## Interpretation",
             "",
-            "- positive deltas favor the current capture; flat deltas mean the comparison shape stayed stable.",
+            "- positive score, execution-run, and team-advantage deltas favor the current capture; flat deltas mean the comparison shape stayed stable.",
             "- treat team advantage deltas and direct limitation deltas together when judging whether governance-first orchestration is improving.",
         ]
     )
@@ -429,6 +439,64 @@ def _comparison_snapshot(
         "team_advantage_counts": _case_tag_counts(cases, "team_advantages"),
         "direct_limitation_counts": _case_tag_counts(cases, "direct_limitations"),
     }
+
+
+def _evidence_conclusion_lines(
+    summary: dict[str, object],
+    report: dict[str, object],
+    cases: list[object],
+) -> list[str]:
+    case_count = int(summary.get("case_count", len(cases)) or 0)
+    signal_counts = summary.get("signal_counts", {}) if isinstance(summary.get("signal_counts"), dict) else {}
+    scenario_counts = report.get("scenario_type_counts", {}) if isinstance(report.get("scenario_type_counts"), dict) else {}
+    scenario_names = ", ".join(sorted(str(name) for name in scenario_counts)) if scenario_counts else "none"
+    approved_plan_count = int(summary.get("cases_showing_approved_plan_benefit", 0) or 0)
+    recovery_count = int(signal_counts.get("recovery_guidance_present", 0) or 0)
+    provenance_count = int(signal_counts.get("provenance_matches_plan_session", 0) or 0)
+    fallback_count = int(signal_counts.get("fallback_present", 0) or 0)
+    direct_without_plan = int(summary.get("direct_runs_without_plan_metadata", 0) or 0)
+    return [
+        f"- planning_quality: {approved_plan_count}/{case_count} cases produced an approved plan artifact across scenarios: {scenario_names}.",
+        f"- rescue_quality: {recovery_count}/{case_count} cases carried next-step or recovery guidance for the operator.",
+        f"- runtime_limitation: {fallback_count}/{case_count} cases showed provider fallback signals; v1.x evidence validates command-runtime selection/provenance, not a full provider bridge or persistent session manager.",
+        f"- fixed_template_advantage: {provenance_count}/{case_count} cases matched execution provenance to the plan session while {direct_without_plan} direct runs lacked approved-plan metadata.",
+    ]
+
+
+def _trend_assessment(deltas: dict[str, object]) -> str:
+    score_delta = float(deltas.get("average_benefit_score", 0.0) or 0.0)
+    execution_delta = float(deltas.get("team_cases_with_execution_run", 0) or 0)
+    advantage_delta = _positive_delta_total(deltas.get("team_advantage_counts", {}))
+    negative_score = score_delta < 0
+    negative_execution = execution_delta < 0
+    if negative_score or negative_execution:
+        return "mixed_or_regressed"
+    if score_delta > 0 or execution_delta > 0 or advantage_delta > 0:
+        return "better"
+    return "stable"
+
+
+def _trend_assessment_lines(assessment: str, deltas: dict[str, object]) -> list[str]:
+    score_delta = deltas.get("average_benefit_score", 0.0)
+    execution_delta = deltas.get("team_cases_with_execution_run", 0)
+    advantage_delta = _positive_delta_total(deltas.get("team_advantage_counts", {}))
+    limitation_delta = deltas.get("direct_runs_without_plan_metadata", 0)
+    if assessment == "better":
+        verdict = "current_is_better: yes"
+    elif assessment == "stable":
+        verdict = "current_is_better: no measurable improvement; no regression detected"
+    else:
+        verdict = "current_is_better: mixed; inspect negative deltas before release"
+    return [
+        f"- {verdict}",
+        f"- improvement_signals: average_benefit_score_delta={_format_signed(score_delta)}, execution_run_delta={_format_signed(execution_delta)}, positive_team_advantage_delta={_format_signed(advantage_delta)}.",
+        f"- limitation_signals: direct_without_plan_metadata_delta={_format_signed(limitation_delta)}; compare this with case_count_delta before treating it as a regression.",
+    ]
+
+
+def _positive_delta_total(value: object) -> int:
+    counts = value if isinstance(value, dict) else {}
+    return sum(max(int(item or 0), 0) for item in counts.values())
 
 
 def _number_delta(baseline: object, current: object) -> float | int:

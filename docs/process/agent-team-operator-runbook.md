@@ -70,7 +70,7 @@ python -m agent_orchestrator.cli team runbook <session_id>
 2. 如需确认状态，先看 `team status` 或 `team summary`。
 3. 如需 deeper provenance，再去看 linked execution run。
 4. 优先使用 `team inspect-execution` 查看 linked execution run，而不是手动翻 run store。
-4. 执行默认从 approved plan 起跑，而不是从 raw requirement 重新起跑。
+5. 执行默认从 approved plan 起跑，而不是从 raw requirement 重新起跑。
 
 ### `awaiting_human`
 
@@ -119,6 +119,44 @@ python -m agent_orchestrator.cli team runbook <session_id>
 - 用 `team setup` 查看 release_readiness，确认 version_sync、tests、evidence 和 compliance 的收尾状态。
 - 用 `ui` 打开 Agent Team Console，检查 provenance、review policy、fallback、compliance、event/message timeline、work graph 和 job log。
 - 对运行中的 job，可用 CLI 或 Console 执行 `send` / `cancel`，并查看 terminal_ref、last log excerpt 和 last_seen_at。
+
+## 真实案例与证据路径
+
+Phase 5 发布候选收尾时，operator 不需要猜测“真实工作流证据”在哪里。优先按下面的固定路径检查：
+
+- 工作流回归记录：`docs/process/v1x-hardening-workflow-report.md`
+  - Phase 1 记录了 `Harden CLI setup summary for release readiness` 的 start/next/execute/inspect-execution 路径。
+  - Phase 1 也记录了 `Build plan with followup checklist and recovery guidance` 暴露的 runbook wording friction，以及对应修复。
+  - Phase 3 记录了 provider health、command-runtime stdout/stderr/exit-code、fallback、send/cancel 的验证边界。
+- 可提交真实任务样本：`docs/process/evidence-cases.json`
+  - `standard_plan_artifact`
+  - `followup_checklist_recovery`
+  - `high_risk_auth_migration`
+  - `parallel_validation_modules`
+- 当前 evidence 汇总：`docs/process/v1x-evidence-report.md`
+  - 检查 `case_count`、`average_benefit_score`、`team_cases_with_execution_run`、`provenance_present`、`recovery_guidance_present`。
+- evidence 趋势：`docs/process/v1x-evidence-trend.md`
+  - 检查平均收益、execution run、direct-run limitation 和 team advantage delta 是否退化。
+- 本地 JSON 输出默认位置：`.agent_orchestrator/evidence/real-tasks.json`
+  - 这是 evidence report 命令的机器可读输出，不需要手工编辑。
+
+推荐复现命令：
+
+```bash
+PYTHONPATH=src python -m agent_orchestrator.cli evidence report \
+  --case-file docs/process/evidence-cases.json \
+  --output docs/process/v1x-evidence-report.md \
+  --json-output .agent_orchestrator/evidence/real-tasks.json
+PYTHONPATH=src python -m agent_orchestrator.cli team setup
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
+```
+
+验收口径：
+
+- runbook 只指向可提交文档和可再生成的 local evidence，不要求外部服务。
+- evidence cases 覆盖 standard、followup、high_risk、parallel 四类场景。
+- `v1x-hardening-workflow-report.md` 记录真实 friction 和修复，不只记录 happy path。
+- 发布候选判断以 `team setup` 的 release_readiness、evidence report、targeted tests 和 compliance 共同为准。
 
 ## 标准验收场景
 
