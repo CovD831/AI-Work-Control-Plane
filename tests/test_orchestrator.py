@@ -5,7 +5,7 @@ from dataclasses import replace
 
 from agent_orchestrator import ExecutionContract, OrchestrationMode, Orchestrator, PlanStore, TeamOrchestrator, get_policy
 from agent_orchestrator.adapters import RuntimeProviderAdapter, RuntimeProviderReviewRescueAdapter
-from agent_orchestrator.command import ClaudeCodeAdapter, CodexCliAdapter, CommandJobRuntime, CommandResult
+from agent_orchestrator.command import ClaudeCodeAdapter, CodexCliAdapter, CommandJobRuntime, CommandResult, ProviderStatus
 from agent_orchestrator.jobs import AgentJob, InMemoryJobRuntime, JobRequest
 from agent_orchestrator.run_store import RunStore
 from agent_orchestrator.routing import PolicyRouter
@@ -172,6 +172,173 @@ def test_runtime_provider_adapter_fails_when_job_never_reaches_terminal_state() 
     assert job.status == "failed"
     assert job.parsed_payload is not None
     assert job.parsed_payload["timeout"]["poll_attempts"] == 1
+
+
+def test_runtime_provider_adapter_records_provider_fallback_artifact(tmp_path) -> None:
+    runner = _MixedRunner(CommandResult(command=["fake"], exit_code=0, stdout="ok", stderr=""))
+    runtime = CommandJobRuntime(root=tmp_path, runner=runner, adapters={"codex": CodexCliAdapter()})
+    adapter = RuntimeProviderAdapter(runtime=runtime, kind="implementation")
+
+    result = adapter.execute(
+        WorkUnit(
+            goal="Implement with unsupported provider hint",
+            context="exercise runtime fallback metadata",
+            inputs=["input"],
+            outputs=["output"],
+            acceptance_criteria=["finish"],
+            risk_level="low",
+            parallelizable=False,
+            owner_type="single_worker",
+            max_depth=1,
+            failure_policy="retry",
+            provider_hint="gemini",
+        ),
+        get_policy(OrchestrationMode.SUCCESS_FIRST),
+    )
+
+    assert result.status == "succeeded"
+    job = runtime.status(result.job_id)
+    assert job.provider == "codex"
+    assert job.metadata["provider_runtime"] == {
+        "preferred_provider": "gemini",
+        "actual_provider": "codex",
+        "fallback_source": "runtime_provider_adapter",
+        "fallback_reason": "unsupported_provider_hint",
+        "fallback_detail": "Provider hint 'gemini' is unsupported by the runtime adapter; using 'codex'.",
+    }
+    assert result.job_lifecycle[0]["provider_runtime"] == job.metadata["provider_runtime"]
+
+
+def test_runtime_provider_adapter_falls_back_when_preferred_adapter_is_missing(tmp_path) -> None:
+    runner = _MixedRunner(CommandResult(command=["fake"], exit_code=0, stdout="ok", stderr=""))
+    runtime = CommandJobRuntime(root=tmp_path, runner=runner, adapters={"codex": CodexCliAdapter()})
+    adapter = RuntimeProviderAdapter(runtime=runtime, kind="implementation")
+
+    result = adapter.execute(
+        WorkUnit(
+            goal="Implement with missing preferred adapter",
+            context="exercise adapter fallback metadata",
+            inputs=["input"],
+            outputs=["output"],
+            acceptance_criteria=["finish"],
+            risk_level="low",
+            parallelizable=False,
+            owner_type="single_worker",
+            max_depth=1,
+            failure_policy="retry",
+            provider_hint="claude",
+        ),
+        get_policy(OrchestrationMode.SUCCESS_FIRST),
+    )
+
+    assert result.status == "succeeded"
+    job = runtime.status(result.job_id)
+    assert job.provider == "codex"
+    assert job.metadata["provider_runtime"]["preferred_provider"] == "claude"
+    assert job.metadata["provider_runtime"]["actual_provider"] == "codex"
+    assert job.metadata["provider_runtime"]["fallback_source"] == "runtime_provider_adapter"
+    assert job.metadata["provider_runtime"]["fallback_reason"] == "adapter_missing"
+    assert "claude runtime adapter unavailable" in job.metadata["provider_runtime"]["fallback_detail"]
+    assert result.job_lifecycle[0]["provider_runtime"] == job.metadata["provider_runtime"]
+
+
+def test_runtime_provider_adapter_falls_back_when_preferred_provider_is_unavailable(tmp_path) -> None:
+    runner = _MixedRunner(
+        CommandResult(
+            command=["fake"],
+            exit_code=0,
+            stdout=json.dumps({"result": "ok", "is_error": False}),
+            stderr="",
+        )
+    )
+    runtime = CommandJobRuntime(
+        root=tmp_path,
+        runner=runner,
+        adapters={"codex": CodexCliAdapter(), "claude": ClaudeCodeAdapter()},
+    )
+
+    def provider_health(provider: str) -> ProviderStatus:
+        if provider == "codex":
+            return ProviderStatus(provider="codex", available=False, detail="codex unavailable")
+        return ProviderStatus(provider="claude", available=True, detail="claude ok")
+
+    adapter = RuntimeProviderAdapter(
+        runtime=runtime,
+        kind="implementation",
+        provider_health_check=provider_health,
+    )
+
+    result = adapter.execute(
+        WorkUnit(
+            goal="Implement with unavailable preferred provider",
+            context="exercise health-check fallback metadata",
+            inputs=["input"],
+            outputs=["output"],
+            acceptance_criteria=["finish"],
+            risk_level="low",
+            parallelizable=False,
+            owner_type="single_worker",
+            max_depth=1,
+            failure_policy="retry",
+            provider_hint="codex",
+        ),
+        get_policy(OrchestrationMode.SUCCESS_FIRST),
+    )
+
+    assert result.status == "succeeded"
+    job = runtime.status(result.job_id)
+    assert job.provider == "claude"
+    assert job.command[:2] == ["claude", "-p"]
+    assert job.metadata["provider_runtime"]["preferred_provider"] == "codex"
+    assert job.metadata["provider_runtime"]["actual_provider"] == "claude"
+    assert job.metadata["provider_runtime"]["fallback_reason"] == "provider_unavailable"
+    assert "codex unavailable" in job.metadata["provider_runtime"]["fallback_detail"]
+    assert result.job_lifecycle[0]["provider_runtime"] == job.metadata["provider_runtime"]
+
+
+def test_runtime_provider_review_adapter_records_reviewer_fallback_artifact(tmp_path) -> None:
+    runner = _MixedRunner(CommandResult(command=["fake"], exit_code=0, stdout="ok", stderr=""))
+    runtime = CommandJobRuntime(root=tmp_path, runner=runner, adapters={"codex": CodexCliAdapter()})
+    adapter = RuntimeProviderReviewRescueAdapter(runtime=runtime)
+
+    reviewed = adapter.review_or_rescue(
+        WorkUnit(
+            goal="Review with missing preferred adapter",
+            context="exercise reviewer adapter fallback metadata",
+            inputs=["input"],
+            outputs=["output"],
+            acceptance_criteria=["finish"],
+            risk_level="medium",
+            parallelizable=False,
+            owner_type="claude_team",
+            max_depth=1,
+            failure_policy="rescue",
+            provider_hint="claude",
+        ),
+        WorkUnitResult(
+            work_unit_id="work-1",
+            status="succeeded",
+            summary="worker ok",
+            patch="patch",
+            tests=["validation passed"],
+            needs_rescue=False,
+            job_id="job-origin",
+            job_ids=["job-origin"],
+            job_status="completed",
+            job_phase="done",
+            job_lifecycle=[],
+        ),
+        get_policy(OrchestrationMode.SUCCESS_FIRST),
+    )
+
+    assert reviewed.status == "succeeded"
+    job = runtime.status(reviewed.job_id)
+    assert job.provider == "codex"
+    assert job.metadata["provider_runtime"]["preferred_provider"] == "claude"
+    assert job.metadata["provider_runtime"]["actual_provider"] == "codex"
+    assert job.metadata["provider_runtime"]["fallback_source"] == "runtime_provider_review_rescue_adapter"
+    assert job.metadata["provider_runtime"]["fallback_reason"] == "adapter_missing"
+    assert reviewed.job_lifecycle[-1]["provider_runtime"] == job.metadata["provider_runtime"]
 
 
 def test_runtime_provider_review_adapter_fails_when_review_job_never_reaches_terminal_state() -> None:
@@ -401,15 +568,33 @@ def test_direct_run_persists_entrypoint_provenance_metadata(tmp_path) -> None:
     assert payload["metadata"]["provenance"]["selected_mode"] == "success_first"
     assert payload["metadata"]["provenance"]["selected_topology"] == "team_with_adversarial_review"
     assert payload["metadata"]["provenance"]["selected_provider_runtime"]["author"] == "codex"
+    assert payload["metadata"]["provenance"]["selected_provider_runtime"]["preferred_author"] == "codex"
+    assert payload["metadata"]["provenance"]["selected_provider_runtime"]["actual_author"] == "codex"
+    assert payload["metadata"]["provenance"]["selected_provider_runtime"]["author_fallback_reason"] is None
+    assert payload["metadata"]["provenance"]["selected_provider_runtime"]["preferred_reviewer"] == "claude"
+    assert payload["metadata"]["provenance"]["selected_provider_runtime"]["actual_reviewer"] == "claude"
+    assert payload["metadata"]["provenance"]["selected_provider_runtime"]["fallback_reason"] is None
     assert payload["metadata"]["execution_contract"]["source"] == "approved_plan_style_direct_run"
     assert payload["metadata"]["execution_contract"]["goal"] == "Build dashboard"
     assert payload["metadata"]["execution_contract"]["topology"]["selected_mode"] == "success_first"
     assert payload["metadata"]["execution_contract"]["topology"]["selected_topology"] == "team_with_adversarial_review"
     assert payload["metadata"]["execution_contract"]["provider_recommendation"]["author"] == "codex"
+    assert payload["metadata"]["execution_contract"]["provider_recommendation"]["actual_author"] == "codex"
     assert payload["metadata"]["execution_contract"]["provider_recommendation"]["reviewer"] == "claude"
+    assert payload["metadata"]["execution_contract"]["provider_recommendation"]["actual_reviewer"] == "claude"
+    assert payload["metadata"]["execution_contract"]["provider_recommendation"]["fallback_source"] is None
+    assert payload["metadata"]["execution_contract"]["review_policy"]["policy_name"] == "adversarial_required"
+    assert payload["metadata"]["execution_contract"]["fallback_policy"]["author"]["actual"] == "codex"
+    assert payload["metadata"]["execution_contract"]["fallback_policy"]["author"]["preferred"] == "codex"
+    assert payload["metadata"]["execution_contract"]["fallback_policy"]["author"]["fallback_source"] is None
+    assert payload["metadata"]["execution_contract"]["fallback_policy"]["reviewer"]["actual"] == "claude"
+    assert payload["metadata"]["execution_contract"]["fallback_policy"]["reviewer"]["preferred"] == "claude"
+    assert payload["metadata"]["execution_contract"]["fallback_policy"]["reviewer"]["fallback_source"] is None
+    assert payload["metadata"]["execution_contract"]["compliance_snapshot"]["source"] == "direct_run"
     assert payload["metadata"]["execution_contract"]["gating"]["contract_source"] == "direct_requirement_with_planning_contract"
     assert payload["metadata"]["approved_plan_summary"]["session_id"] is None
     assert payload["metadata"]["approved_plan_summary"]["selected_topology"] == "team_with_adversarial_review"
+    assert payload["metadata"]["approved_plan_summary"]["review_policy"]["policy_name"] == "adversarial_required"
 
 
 def test_direct_run_exposes_execution_contract_on_run_object() -> None:

@@ -94,6 +94,19 @@ def test_print_team_summary_reports_topology_and_failed_job(capsys) -> None:
                 "recovery_provider_fallback_from": "codex",
                 "recovery_provider_fallback_reason": "preferred_unavailable",
                 "recovery_provider_fallback_detail": "claude auth missing",
+                "resume_action": "retry_review",
+                "resume_reason": "failed_review_job",
+                "block_source": "delegated_job",
+                "block_detail": "failed_review_job",
+                "recovery_semantics": {
+                    "category": "retry",
+                    "auto_apply_allowed": True,
+                    "human_escalation_required": False,
+                },
+                "recommended_commands": [
+                    "python -m agent_orchestrator.cli team retry-review session-123",
+                    "python -m agent_orchestrator.cli team inspect-blockers session-123",
+                ],
                 "delegated_jobs": [
                     {
                         "provider": "claude",
@@ -116,6 +129,10 @@ def test_print_team_summary_reports_topology_and_failed_job(capsys) -> None:
     assert "blocking: reviewer unavailable" in out
     assert "recovery: inspect_delegated_job -> retry_review" in out
     assert "recovery_provider: claude (round=review, fallback_from=codex" in out
+    assert "resume: retry_review (reason=failed_review_job)" in out
+    assert "recovery_guidance: mode=retry; resume_action=retry_review; reason=failed_review_job; block=delegated_job/failed_review_job; auto_apply=yes" in out
+    assert "recovery_steps: inspect_delegated_job=inspect failed delegated job evidence -> retry_review=retry delegated review" in out
+    assert "recovery_commands: python -m agent_orchestrator.cli team retry-review session-123 | python -m agent_orchestrator.cli team inspect-blockers session-123" in out
     assert "failed_job: claude job-77" in out
 
 
@@ -152,6 +169,48 @@ def test_print_team_next_prefers_recommended_command_and_lists_alternatives(caps
     assert "context: required_gaps=0 optional_followups=1 delegated_failures=0" in out
     assert "selected_topology: team" in out
     assert "topology_reason: standard topology is sufficient" in out
+
+
+def test_print_team_next_reports_rerun_recovery_guidance(capsys) -> None:
+    session = _FakeSession(
+        _team_payload(
+            status="blocked",
+            status_summary={
+                "primary_action": "inspect_blockers",
+                "primary_reason": "execution ended in a blocked state; inspect before re-running execution",
+                "next_actions": ["inspect_blockers"],
+                "recommended_commands": [
+                    "python -m agent_orchestrator.cli team inspect-blockers session-123",
+                    "python -m agent_orchestrator.cli team inspect-execution session-123",
+                ],
+                "recovery_actions": ["inspect_blockers", "inspect_execution"],
+                "resume_action": "inspect_blockers",
+                "resume_reason": "review_blocked",
+                "block_source": "execution_run",
+                "block_detail": "run_blocked",
+                "recovery_semantics": {
+                    "category": "inspect_before_rerun",
+                    "auto_apply_allowed": False,
+                    "human_escalation_required": False,
+                },
+            },
+        )
+    )
+    args = argparse.Namespace(plans_root=".agent_orchestrator/plans", runs_root=".agent_orchestrator/runs")
+
+    print_team_next(
+        session,
+        pick_primary_action=pick_primary_action,
+        build_team_next_command=lambda payload, action, failed_jobs, parsed_args: "unexpected",
+        team_next_alternatives=team_next_alternatives,
+        args=args,
+    )
+    out = capsys.readouterr().out
+
+    assert "action: inspect_blockers" in out
+    assert "recovery_guidance: mode=re-run; resume_action=inspect_blockers; reason=review_blocked; block=execution_run/run_blocked; auto_apply=no; inspect before re-running execution" in out
+    assert "recovery_steps: inspect_blockers=inspect blockers before resume or re-run -> inspect_execution=inspect linked execution run before resume or re-run" in out
+    assert "recovery_commands: python -m agent_orchestrator.cli team inspect-blockers session-123 | python -m agent_orchestrator.cli team inspect-execution session-123" in out
 
 
 def test_print_team_next_reports_warning_only_compliance_context(capsys) -> None:
@@ -235,6 +294,8 @@ def test_print_execution_session_summary_reports_structured_fields(capsys) -> No
                 "warnings": ["header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value"],
                 "primary_action": "inspect_execution",
                 "primary_reason": "review the execution outcome before continuing",
+                "resume_action": "inspect_execution",
+                "resume_reason": "execution_completed",
                 "recommended_commands": [
                     "python -m agent_orchestrator.cli team inspect-execution session-123",
                 ],
@@ -253,6 +314,9 @@ def test_print_execution_session_summary_reports_structured_fields(capsys) -> No
     assert "warnings: header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value" in out
     assert "primary_action: inspect_execution" in out
     assert "primary_reason: review the execution outcome before continuing" in out
+    assert "resume: inspect_execution (reason=execution_completed)" in out
+    assert "recovery_guidance: mode=inspect; resume_action=inspect_execution; reason=execution_completed" in out
+    assert "recovery_steps: inspect_execution=inspect linked execution run before resume or re-run" in out
     assert "recommended_commands: python -m agent_orchestrator.cli team inspect-execution session-123" in out
 
 
@@ -268,6 +332,7 @@ def test_print_blocker_session_summary_reports_resume_guidance(capsys) -> None:
                 "resume_reason": "doc drift detected",
                 "primary_reason": "fix compliance issues before continuing",
                 "blocking_reasons": ["module manifest mismatch"],
+                "recovery_actions": ["inspect_compliance"],
                 "recommended_commands": [
                     "python -m agent_orchestrator.cli team check-compliance session-123",
                 ],
@@ -284,6 +349,8 @@ def test_print_blocker_session_summary_reports_resume_guidance(capsys) -> None:
     assert "resume_reason: doc drift detected" in out
     assert "message: fix compliance issues before continuing" in out
     assert "blocking: module manifest mismatch" in out
+    assert "recovery_guidance: mode=inspect; resume_action=inspect_compliance; reason=doc drift detected; block=compliance" in out
+    assert "recovery_steps: inspect_compliance=inspect compliance blockers or warnings" in out
     assert "recommended_commands: python -m agent_orchestrator.cli team check-compliance session-123" in out
 
 

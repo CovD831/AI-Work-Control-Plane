@@ -390,9 +390,17 @@ class RuntimeProviderAdapter:
     default_provider: str = "codex"
     poll_interval_seconds: float = 0.01
     poll_attempts: int = 200
+    provider_health_check: Any | None = None
 
     def execute(self, work_unit: WorkUnit, policy: PolicyProfile) -> WorkUnitResult:
-        provider = _work_unit_provider(work_unit, default=self.default_provider)
+        provider_selection = _provider_selection(
+            work_unit,
+            default=self.default_provider,
+            runtime=self.runtime,
+            provider_health_check=self.provider_health_check,
+            fallback_source="runtime_provider_adapter",
+        )
+        provider = provider_selection["actual_provider"]
         job = self.runtime.start(
             JobRequest(
                 task_id=work_unit.id,
@@ -407,6 +415,7 @@ class RuntimeProviderAdapter:
                     "inputs": work_unit.inputs,
                     "outputs": work_unit.outputs,
                     "acceptance_criteria": work_unit.acceptance_criteria,
+                    "provider_runtime": provider_selection,
                 },
             )
         )
@@ -487,6 +496,7 @@ class RuntimeProviderReviewRescueAdapter:
     default_provider: str = "claude"
     poll_interval_seconds: float = 0.01
     poll_attempts: int = 200
+    provider_health_check: Any | None = None
 
     def review_or_rescue(
         self,
@@ -494,7 +504,14 @@ class RuntimeProviderReviewRescueAdapter:
         result: WorkUnitResult,
         policy: PolicyProfile,
     ) -> WorkUnitResult:
-        provider = _work_unit_provider(work_unit, default=self.default_provider)
+        provider_selection = _provider_selection(
+            work_unit,
+            default=self.default_provider,
+            runtime=self.runtime,
+            provider_health_check=self.provider_health_check,
+            fallback_source="runtime_provider_review_rescue_adapter",
+        )
+        provider = provider_selection["actual_provider"]
         kind = "rescue" if result.status == "failed" and policy.rescue_enabled else "review"
         failure_reason = result.summary if kind == "rescue" else None
         job = self.runtime.start(
@@ -512,6 +529,7 @@ class RuntimeProviderReviewRescueAdapter:
                     "outputs": work_unit.outputs,
                     "acceptance_criteria": work_unit.acceptance_criteria,
                     "origin_status": result.status,
+                    "provider_runtime": provider_selection,
                 },
             )
         )
@@ -648,7 +666,7 @@ def _runtime_fail(
 
 
 def _job_ref(job: AgentJob) -> dict[str, object]:
-    return {
+    payload = {
         "job_id": job.id,
         "provider": job.provider,
         "kind": job.kind,
@@ -660,6 +678,10 @@ def _job_ref(job: AgentJob) -> dict[str, object]:
         "started_at": job.started_at,
         "completed_at": job.completed_at,
     }
+    provider_runtime = job.metadata.get("provider_runtime")
+    if isinstance(provider_runtime, dict):
+        payload["provider_runtime"] = dict(provider_runtime)
+    return payload
 
 
 def _merge_job_ids(result: WorkUnitResult, job: AgentJob) -> list[str]:
@@ -676,8 +698,107 @@ def _flow_provider(flow: tuple[str, ...], index: int, *, fallback: str) -> str:
 
 
 def _work_unit_provider(work_unit: WorkUnit, *, default: str) -> str:
-    provider = work_unit.provider_hint or default
-    return provider if provider in {"claude", "codex"} else default
+    return str(_provider_selection(work_unit, default=default)["actual_provider"])
+
+
+def _provider_selection(
+    work_unit: WorkUnit,
+    *,
+    default: str,
+    runtime: JobRuntime | None = None,
+    provider_health_check: Any | None = None,
+    fallback_source: str = "runtime_provider_adapter",
+) -> dict[str, object]:
+    preferred = work_unit.provider_hint or default
+    if preferred not in {"claude", "codex", "mock"}:
+        actual = _fallback_provider(default=default, runtime=runtime, provider_health_check=provider_health_check)
+        return {
+            "preferred_provider": preferred,
+            "actual_provider": actual,
+            "fallback_source": fallback_source,
+            "fallback_reason": "unsupported_provider_hint",
+            "fallback_detail": f"Provider hint '{preferred}' is unsupported by the runtime adapter; using '{actual}'.",
+        }
+
+    status = _provider_runtime_status(preferred, runtime=runtime, provider_health_check=provider_health_check)
+    if status["available"]:
+        return {
+            "preferred_provider": preferred,
+            "actual_provider": preferred,
+            "fallback_source": None,
+            "fallback_reason": None,
+            "fallback_detail": None,
+        }
+
+    actual = _fallback_provider(
+        default=default,
+        runtime=runtime,
+        provider_health_check=provider_health_check,
+        exclude={preferred},
+    )
+    fallback_reason = str(status["reason"])
+    if actual == preferred:
+        detail = f"Preferred provider '{preferred}' is unavailable: {status['detail']}; no fallback provider was available."
+    else:
+        detail = f"Preferred provider '{preferred}' is unavailable: {status['detail']}; using '{actual}'."
+    return {
+        "preferred_provider": preferred,
+        "actual_provider": actual,
+        "fallback_source": fallback_source,
+        "fallback_reason": fallback_reason,
+        "fallback_detail": detail,
+    }
+
+
+def _fallback_provider(
+    *,
+    default: str,
+    runtime: JobRuntime | None,
+    provider_health_check: Any | None,
+    exclude: set[str] | None = None,
+) -> str:
+    excluded = exclude or set()
+    configured = _configured_runtime_providers(runtime)
+    candidates = [default, "codex", "claude", "mock"]
+    for candidate in candidates:
+        if candidate in excluded or candidate not in configured:
+            continue
+        status = _provider_runtime_status(candidate, runtime=runtime, provider_health_check=provider_health_check)
+        if status["available"]:
+            return candidate
+    return default
+
+
+def _configured_runtime_providers(runtime: JobRuntime | None) -> set[str]:
+    adapters = getattr(runtime, "adapters", None)
+    if isinstance(adapters, dict):
+        return {str(provider) for provider in adapters}
+    return {"claude", "codex", "mock"}
+
+
+def _provider_runtime_status(
+    provider: str,
+    *,
+    runtime: JobRuntime | None,
+    provider_health_check: Any | None,
+) -> dict[str, object]:
+    if provider not in {"claude", "codex", "mock"}:
+        return {"available": False, "reason": "unsupported_provider_hint", "detail": f"{provider} is unsupported"}
+    if provider not in _configured_runtime_providers(runtime):
+        return {"available": False, "reason": "adapter_missing", "detail": f"{provider} runtime adapter unavailable"}
+    if provider_health_check is None:
+        return {"available": True, "reason": None, "detail": "provider availability was not health-checked"}
+    try:
+        status = provider_health_check(provider) if callable(provider_health_check) else provider_health_check.check(provider)
+    except Exception as exc:
+        return {"available": False, "reason": "provider_unavailable", "detail": str(exc) or type(exc).__name__}
+    available = bool(getattr(status, "available", False))
+    detail = str(getattr(status, "detail", "provider unavailable"))
+    return {
+        "available": available,
+        "reason": None if available else "provider_unavailable",
+        "detail": detail,
+    }
 
 
 def _review_provider(policy: PolicyProfile) -> str:

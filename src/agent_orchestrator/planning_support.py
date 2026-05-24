@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-# DEPS: __future__, agent_orchestrator, ast, dataclasses, pathlib, typing
+# DEPS: __future__, agent_orchestrator, ast, dataclasses, json, pathlib, shlex, typing
 # RESPONSIBILITY: Centralize planning compliance checks and session guidance helpers.
 # MODULE: decision_core
 # ---
 
 import ast
+import json
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -211,6 +213,7 @@ def build_doc_sync_status_for_project(
         changed_files=changed_files,
         document_statuses=document_statuses,
     )
+    hook_marker_warnings = _managed_hook_marker_warnings(project_root, changed_files=changed_files)
 
     payload: dict[str, object] = {
         "project_root": str(project_root),
@@ -220,6 +223,7 @@ def build_doc_sync_status_for_project(
         "stale_docs": stale_docs,
         "header_contract_violations": header_contract_violations,
         "header_contract_warnings": _scan_unrelated_header_warnings(project_root, changed_files=changed_files),
+        "hook_marker_warnings": hook_marker_warnings,
         "changed_file_doc_sync_violations": changed_file_doc_sync_violations,
         "documents": document_statuses,
     }
@@ -375,6 +379,53 @@ def _changed_file_doc_sync_violations(
     return sorted(dict.fromkeys(violations))
 
 
+def _managed_hook_marker_warnings(project_root: Path, *, changed_files: list[str] | None = None) -> list[str]:
+    if not changed_files or not _changed_files_include_compliance_inputs(changed_files):
+        return []
+    if not (project_root / "docs" / "process").exists():
+        return []
+
+    marker_path = project_root / ".agent_orchestrator" / "hooks.json"
+    if not marker_path.exists():
+        return ["managed hook warning: install-hooks has not been run for this repository"]
+
+    warnings: list[str] = []
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ["managed hook warning: .agent_orchestrator/hooks.json is unreadable; rerun install-hooks"]
+
+    if not isinstance(marker, dict):
+        return ["managed hook warning: .agent_orchestrator/hooks.json is malformed; rerun install-hooks"]
+
+    if marker.get("managed_hooks_enabled") is not True:
+        warnings.append("managed hook warning: managed_hooks_enabled is not true; rerun install-hooks")
+
+    installed_hooks = marker.get("installed_hooks")
+    if not isinstance(installed_hooks, list) or "pre-commit" not in {str(item) for item in installed_hooks}:
+        warnings.append("managed hook warning: pre-commit is missing from hook marker; rerun install-hooks")
+
+    source_hook = project_root / "scripts" / "git-hooks" / "pre-commit"
+    installed_hook = project_root / ".git" / "hooks" / "pre-commit"
+    if (project_root / ".git" / "hooks").exists():
+        if not installed_hook.exists():
+            warnings.append("managed hook warning: installed pre-commit hook is missing; rerun install-hooks")
+        elif source_hook.exists() and installed_hook.read_text(encoding="utf-8") != source_hook.read_text(encoding="utf-8"):
+            warnings.append("managed hook warning: installed pre-commit hook differs from scripts/git-hooks/pre-commit; rerun install-hooks")
+
+    return warnings
+
+
+def _changed_files_include_compliance_inputs(changed_files: list[str]) -> bool:
+    return any(
+        item == "README.md"
+        or item.startswith("docs/process/")
+        or item.startswith("docs/architecture/")
+        or (item.startswith("src/agent_orchestrator/") and item.endswith(".py"))
+        for item in changed_files
+    )
+
+
 def _header_contract_field_violations(path: Path, lines: list[str], docstring_end_index: int) -> list[str]:
     fields = _extract_header_fields(lines, docstring_end_index)
     violations: list[str] = []
@@ -511,8 +562,13 @@ def build_compliance_status_for_session(
         if isinstance(doc_sync, dict)
         else []
     )
+    hook_marker_warnings = (
+        list(doc_sync.get("hook_marker_warnings", []))
+        if isinstance(doc_sync, dict)
+        else []
+    )
     blocking_reasons: list[str] = []
-    warnings: list[str] = [str(item) for item in header_contract_warnings]
+    warnings: list[str] = [str(item) for item in [*header_contract_warnings, *hook_marker_warnings]]
     if missing_docs:
         blocking_reasons.append("missing required docs: " + ", ".join(str(item) for item in missing_docs))
     if stale_docs:
@@ -589,11 +645,6 @@ def build_compliance_status_for_session(
         if "required header fields: DEPS / RESPONSIBILITY / MODULE" not in header_contract_text:
             blocking_reasons.append("file-header contract missing required header fields")
 
-        hook_marker_path = project_root / ".agent_orchestrator" / "hooks.json"
-        changed_file_scope = list(doc_sync.get("changed_files", [])) if isinstance(doc_sync, dict) else []
-        if changed_file_scope and (project_root / "docs" / "process").exists() and not hook_marker_path.exists():
-            warnings.append("managed hook warning: install-hooks has not been run for this repository")
-
     if session is not None and session.resume.linked_execution_run_id and run_store is not None:
         try:
             payload = run_store.read(session.resume.linked_execution_run_id)
@@ -624,7 +675,12 @@ def build_compliance_status_for_session(
         session=session,
         plans_root=plans_root,
     )
-    recommended_commands = _compliance_recommended_commands(session)
+    recommended_commands = _compliance_recommended_commands(
+        session,
+        changed_files=changed_files,
+        project_root=project_root,
+        warnings=warnings,
+    )
     required_actions = _compliance_required_actions(blocking_reasons, warnings)
     status = "blocked" if blocking_reasons else "warning" if warnings else "passed"
 
@@ -681,6 +737,11 @@ def build_compliance_status_for_session(
                 "status": "failed" if changed_file_doc_sync_violations else "passed",
                 "details": "changed source files do not leave module manifest or root map behind",
             },
+            {
+                "name": "managed_git_hooks_declared",
+                "status": "warning" if hook_marker_warnings else "passed",
+                "details": "managed hook marker and installed pre-commit hook are current",
+            },
         ],
         "blocking_reasons": blocking_reasons,
         "warnings": warnings,
@@ -712,6 +773,9 @@ def _collect_checked_files(
         warning_paths = _paths_from_messages(doc_sync.get("header_contract_warnings", []))
         checked.extend(header_paths)
         checked.extend(warning_paths)
+        if doc_sync.get("hook_marker_warnings"):
+            checked.extend([".agent_orchestrator/hooks.json", "scripts/git-hooks/pre-commit"])
+        checked.extend(_paths_from_messages(doc_sync.get("hook_marker_warnings", [])))
         checked.extend(_paths_from_messages(doc_sync.get("changed_file_doc_sync_violations", [])))
     if session is not None and plans_root is not None:
         session_dir = Path(plans_root) / session.id
@@ -762,19 +826,33 @@ def _compliance_required_actions(blocking_reasons: list[str], warnings: list[str
         actions.append("repair_execution_provenance")
     if any("missing plan artifact snapshot" in reason or "review round snapshots are incomplete" in reason for reason in blocking_reasons):
         actions.append("restore_plan_artifacts")
+    if any("managed hook warning" in warning for warning in warnings):
+        actions.append("install_or_repair_managed_hooks")
     if warnings:
         actions.append("clean_up_non_blocking_header_warnings")
     return actions
 
 
-def _compliance_recommended_commands(session: PlanSession | None) -> list[str]:
+def _compliance_recommended_commands(
+    session: PlanSession | None,
+    *,
+    changed_files: list[str] | None,
+    project_root: Path,
+    warnings: list[str],
+) -> list[str]:
+    changed_file_flags = " ".join(f"--changed-file={shlex.quote(path)}" for path in changed_files or [])
+    suffix = f" {changed_file_flags}" if changed_file_flags else ""
     if session is None:
-        return ["python -m agent_orchestrator.cli team check-compliance"]
-    return [
-        f"python -m agent_orchestrator.cli team check-compliance {session.id}",
-        "python -m agent_orchestrator.cli team status",
-        f"python -m agent_orchestrator.cli team summary {session.id}",
-    ]
+        commands = [f"python -m agent_orchestrator.cli team check-compliance{suffix}"]
+    else:
+        commands = [
+            f"python -m agent_orchestrator.cli team check-compliance {session.id}{suffix}",
+            "python -m agent_orchestrator.cli team status",
+            f"python -m agent_orchestrator.cli team summary {session.id}",
+        ]
+    if any("managed hook warning" in warning for warning in warnings):
+        commands.append(f"python -m agent_orchestrator.cli install-hooks --root {shlex.quote(str(project_root))}")
+    return commands
 
 
 def execution_block_detail(session: PlanSession) -> str | None:
@@ -837,7 +915,10 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
         block_source = "delegated_job"
         block_detail = "failed_delegated_job"
         primary_action = "inspect_delegated_job"
-        primary_reason = "delegated job failed; inspect the failed job before continuing"
+        primary_reason = (
+            "delegated job failed and automatic retry is not currently supported; "
+            "inspect the failed job, then revise the plan or escalate manually"
+        )
         resume_action = "inspect_delegated_job"
         resume_reason = "failed_delegated_job"
         recovery_actions = ["inspect_delegated_job", "revise_plan"]
@@ -878,7 +959,7 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
     elif session.status == "awaiting_human":
         block_source = "awaiting_human"
         primary_action = "human_decision"
-        primary_reason = "human confirmation is required before the workflow can continue"
+        primary_reason = "escalate to human decision; human confirmation is required before the workflow can continue"
         resume_action = "human_decision"
         resume_reason = "human_confirmation_required"
         recovery_actions = ["human_decision"]
@@ -890,7 +971,10 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
         if session.resume.linked_execution_run_id and not required_open:
             block_source = "execution_run"
             block_detail = execution_block_detail(session) or "run_blocked"
-            primary_reason = "execution ended in a blocked state; inspect the linked run before changing the plan"
+            primary_reason = (
+                "execution ended in a blocked state; inspect the linked run before changing the plan "
+                "or re-running execution"
+            )
             recovery_actions = ["inspect_blockers", "inspect_execution"]
             if block_detail == "provenance_mismatch":
                 recovery_actions.append("inspect_compliance")

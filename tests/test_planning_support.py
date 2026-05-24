@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.planning_support import (
+    build_compliance_status_for_session,
     build_doc_sync_status_for_project,
     build_session_guidance,
     canonical_process_documentation_bundle,
@@ -109,6 +110,62 @@ def test_changed_files_header_check_blocks_only_changed_source_header_fields(tmp
         "header contract warning: src/agent_orchestrator/unchanged.py has placeholder `RESPONSIBILITY` value"
     ]
     assert status["changed_files"] == ["src/agent_orchestrator/changed.py"]
+
+
+def test_changed_file_compliance_recommends_hook_install_without_blocking_tmp_repo(tmp_path) -> None:
+    _write_module(
+        tmp_path,
+        "changed.py",
+        "# DEPS: __future__\n# RESPONSIBILITY: Provide changed behavior.\n# MODULE: decision_core\n# ---",
+    )
+    _write_required_docs(tmp_path)
+
+    doc_sync = build_doc_sync_status_for_project(
+        tmp_path,
+        FileJobRuntime(root=tmp_path / "jobs"),
+        changed_files=["src/agent_orchestrator/changed.py"],
+    )
+    compliance = build_compliance_status_for_session(
+        project_root=tmp_path,
+        doc_sync=doc_sync,
+        changed_files=["src/agent_orchestrator/changed.py"],
+    )
+
+    assert compliance["status"] == "warning"
+    assert compliance["blocking"] is False
+    assert "install_or_repair_managed_hooks" in compliance["required_actions"]
+    assert "clean_up_non_blocking_header_warnings" in compliance["required_actions"]
+    assert compliance["recommended_commands"] == [
+        "python -m agent_orchestrator.cli team check-compliance --changed-file=src/agent_orchestrator/changed.py",
+        f"python -m agent_orchestrator.cli install-hooks --root {tmp_path}",
+    ]
+    assert ".agent_orchestrator/hooks.json" in compliance["checked_files"]
+
+
+def test_changed_file_doc_sync_warns_on_stale_hook_marker(tmp_path) -> None:
+    _write_module(
+        tmp_path,
+        "changed.py",
+        "# DEPS: __future__\n# RESPONSIBILITY: Provide changed behavior.\n# MODULE: decision_core\n# ---",
+    )
+    _write_required_docs(tmp_path)
+    marker_dir = tmp_path / ".agent_orchestrator"
+    marker_dir.mkdir()
+    (marker_dir / "hooks.json").write_text(
+        '{"managed_hooks_enabled": false, "installed_hooks": []}',
+        encoding="utf-8",
+    )
+
+    status = build_doc_sync_status_for_project(
+        tmp_path,
+        FileJobRuntime(root=tmp_path / "jobs"),
+        changed_files=["src/agent_orchestrator/changed.py"],
+    )
+
+    assert status["hook_marker_warnings"] == [
+        "managed hook warning: managed_hooks_enabled is not true; rerun install-hooks",
+        "managed hook warning: pre-commit is missing from hook marker; rerun install-hooks",
+    ]
 
 
 def test_changed_files_doc_sync_flags_new_module_missing_from_manifest(tmp_path) -> None:

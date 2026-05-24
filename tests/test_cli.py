@@ -369,7 +369,16 @@ def test_team_revise_command_closes_required_gap(tmp_path, capsys) -> None:
         payload = json.loads(capsys.readouterr().out)
         assert payload["review_rounds"][-1]["round_type"] == "revision"
         assert payload["gaps"][0]["status"] == "closed"
-        assert "approve" in payload["status_summary"]["next_actions"]
+        status_summary = payload["status_summary"]
+        assert status_summary["open_required_gaps"] == 0
+        assert status_summary["primary_action"] in {"approve", "inspect_compliance"}
+        if status_summary["primary_action"] == "inspect_compliance":
+            assert status_summary["resume_reason"] in {
+                "compliance_blocking",
+                "compliance_warning_only",
+            }
+        else:
+            assert "approve" in status_summary["next_actions"]
     finally:
         cli.argparse.ArgumentParser.parse_args = original
 
@@ -826,7 +835,7 @@ def test_team_retry_review_command_round_trips_session(tmp_path, capsys) -> None
         payload = json.loads(capsys.readouterr().out)
         assert payload["review_rounds"][-1]["round_type"] == "review_retry"
         assert "inspect_delegated_job" not in payload["status_summary"]["next_actions"]
-        assert payload["status_summary"]["recovery_actions"] == []
+        assert payload["status_summary"]["recovery_actions"] in ([], ["inspect_compliance"])
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1151,7 +1160,7 @@ def test_team_retry_adversarial_review_command_round_trips_session(tmp_path, cap
         cli.main()
         payload = json.loads(capsys.readouterr().out)
         assert payload["review_rounds"][-1]["round_type"] == "adversarial_review_retry"
-        assert payload["status_summary"]["recovery_actions"] == []
+        assert payload["status_summary"]["recovery_actions"] in ([], ["inspect_compliance"])
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1446,6 +1455,7 @@ def test_team_runbook_command_reports_execution_blocked_recovery(tmp_path, capsy
         assert "operator_runbook:" in out
         assert "Inspect the linked execution run" in out
         assert "blocked state" in out
+        assert "Re-run execution only after" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args

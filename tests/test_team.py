@@ -695,7 +695,8 @@ def test_team_check_compliance_only_scans_changed_source_files_when_requested(tm
 
     assert compliance["blocking"] is False
     assert compliance["status"] in {"passed", "warning"}
-    assert compliance["checks"][-1]["status"] == "passed"
+    check_by_name = {check["name"]: check for check in compliance["checks"]}
+    assert check_by_name["changed_files_keep_process_docs_in_sync"]["status"] == "passed"
     assert any(path.endswith("good.py") for path in compliance["checked_files"])
 
 
@@ -1294,6 +1295,9 @@ def test_team_approved_plan_exposes_shared_execution_contract_schema(tmp_path) -
     assert session.approved_plan["execution_contract"]["topology"]["selected_topology"] == session.decision_verdict["selected_topology"]
     assert session.approved_plan["execution_contract"]["provider_recommendation"] == session.decision_verdict["selected_provider_runtime"]
     assert session.approved_plan["review_policy"] == session.structured_brief.review_policy
+    assert session.approved_plan["execution_contract"]["review_policy"] == session.structured_brief.review_policy
+    assert session.approved_plan["execution_contract"]["fallback_policy"]["author"]["actual"]
+    assert session.approved_plan["execution_contract"]["compliance_snapshot"]["source"] == "session"
 
 
 def test_team_start_records_explicit_topology_selection_reasoning(tmp_path) -> None:
@@ -1515,6 +1519,8 @@ def test_team_status_reports_generic_recovery_actions_for_non_claude_failure(tmp
         "inspect_delegated_job",
         "revise_plan",
     ]
+    assert "automatic retry is not currently supported" in status["next_action_message"]
+    assert "escalate manually" in status["next_action_message"]
     assert status["recovery_provider"] == "mock"
 
 
@@ -1664,7 +1670,12 @@ def test_team_status_reports_human_decision_requirement(tmp_path) -> None:
     status = team.status(session.id).to_dict()["status_summary"]
 
     assert status["next_actions"] == ["human_decision"]
+    assert "escalate to human decision" in status["next_action_message"]
     assert "human confirmation" in status["next_action_message"]
+    assert status["review_policy"]["policy_name"] == "human_escalation_required"
+    assert status["review_policy"]["execution_config"]["minimum_approval"] == "human_decision"
+    assert status["recovery_semantics"]["category"] == "escalate"
+    assert status["recovery_semantics"]["human_escalation_required"] is True
 
 
 def test_team_start_records_doc_sync_and_compliance_snapshot(tmp_path) -> None:
@@ -1861,6 +1872,8 @@ def test_team_status_reports_execution_block_source_after_linked_run_failure(tmp
     assert status["block_detail"] == "run_blocked"
     assert status["resume_action"] == "inspect_blockers"
     assert "execution ended in a blocked state" in status["next_action_message"]
+    assert "re-running execution" in status["next_action_message"]
+    assert status["recovery_semantics"]["category"] == "inspect_before_rerun"
 
 
 def test_team_status_reports_execution_provenance_mismatch_block_detail(tmp_path) -> None:

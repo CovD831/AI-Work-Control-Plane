@@ -5,9 +5,11 @@ repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$repo_root"
 
 set --
+has_compliance_input=0
 for file in $(git diff --cached --name-only --diff-filter=ACMR); do
     case "$file" in
         README.md|docs/process/*.md|docs/architecture/*.md|src/agent_orchestrator/*.py)
+            has_compliance_input=1
             set -- "$@" --changed-file="$file"
             ;;
         *)
@@ -15,5 +17,13 @@ for file in $(git diff --cached --name-only --diff-filter=ACMR); do
             ;;
     esac
 done
+
+if [ "$has_compliance_input" -eq 0 ]; then
+    exit 0
+fi
+
+if [ ! -f ".agent_orchestrator/hooks.json" ]; then
+    echo "agent-orchestrator: managed hook marker missing; run python -m agent_orchestrator.cli install-hooks --root \"$repo_root\"" >&2
+fi
 
 PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance "$@"

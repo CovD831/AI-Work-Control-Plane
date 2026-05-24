@@ -36,6 +36,139 @@ def summary_bool(summary: dict[str, object], key: str, default: bool = False) ->
     return bool(value)
 
 
+def summary_dict(summary: dict[str, object], key: str) -> dict[str, object]:
+    value = summary.get(key, {})
+    return value if isinstance(value, dict) else {}
+
+
+def recovery_category(summary: dict[str, object]) -> str:
+    semantics = summary_dict(summary, "recovery_semantics")
+    category = summary_text(semantics, "category")
+    if category:
+        return category
+
+    action = summary_text(summary, "resume_action") or summary_text(summary, "primary_action")
+    block_source = summary_text(summary, "block_source")
+    if action in {"retry_review", "retry_adversarial_review"}:
+        return "retry"
+    if action in {"approve", "execute"}:
+        return "resume"
+    if action == "human_decision":
+        return "escalate"
+    if block_source == "execution_run":
+        return "inspect_before_rerun"
+    recovery_actions = {str(action) for action in summary_list(summary, "recovery_actions")}
+    if recovery_actions & {"retry_review", "retry_adversarial_review"}:
+        return "retry"
+    if "human_decision" in recovery_actions:
+        return "escalate"
+    if "inspect_execution" in recovery_actions and "inspect_blockers" in recovery_actions:
+        return "inspect_before_rerun"
+    if any(action.startswith("inspect_") for action in recovery_actions):
+        return "inspect"
+    if action in {"inspect_compliance", "inspect_blockers", "inspect_delegated_job", "inspect_execution"}:
+        return "inspect"
+    return ""
+
+
+def recovery_action_description(action: str) -> str:
+    descriptions = {
+        "inspect_delegated_job": "inspect failed delegated job evidence",
+        "retry_review": "retry delegated review",
+        "retry_adversarial_review": "retry delegated adversarial review",
+        "revise_plan": "revise plan or escalate manually if retry is unsafe",
+        "revise": "revise plan and close required gaps",
+        "approve": "resume by approving the reviewed plan",
+        "execute": "resume by running approved execution",
+        "inspect_execution": "inspect linked execution run before resume or re-run",
+        "inspect_blockers": "inspect blockers before resume or re-run",
+        "inspect_compliance": "inspect compliance blockers or warnings",
+        "human_decision": "escalate for human decision",
+        "wait_for_execution": "wait or inspect the linked run",
+        "inspect_session": "inspect session state",
+    }
+    return descriptions.get(action, "inspect session state before continuing")
+
+
+def recovery_guidance(summary: dict[str, object]) -> str:
+    category = recovery_category(summary)
+    recovery_actions = summary_list(summary, "recovery_actions")
+    resume_action = summary_text(summary, "resume_action") or summary_text(summary, "primary_action")
+    if not category and not recovery_actions and not resume_action:
+        return ""
+
+    mode_labels = {
+        "inspect_before_rerun": "re-run",
+        "retry": "retry",
+        "resume": "resume",
+        "escalate": "escalate",
+        "inspect": "inspect",
+        "manual": "manual",
+    }
+    mode = mode_labels.get(category, category or "manual")
+    parts = [f"mode={mode}"]
+    if resume_action:
+        parts.append(f"resume_action={resume_action}")
+    resume_reason = summary_text(summary, "resume_reason")
+    if resume_reason:
+        parts.append(f"reason={resume_reason}")
+    block_source = summary_text(summary, "block_source")
+    block_detail = summary_text(summary, "block_detail")
+    if block_source and block_detail:
+        parts.append(f"block={block_source}/{block_detail}")
+    elif block_source:
+        parts.append(f"block={block_source}")
+
+    semantics = summary_dict(summary, "recovery_semantics")
+    if semantics:
+        if "auto_apply_allowed" in semantics:
+            parts.append(f"auto_apply={'yes' if summary_bool(semantics, 'auto_apply_allowed') else 'no'}")
+        if summary_bool(semantics, "human_escalation_required"):
+            parts.append("human_escalation_required=yes")
+    elif category == "escalate":
+        parts.append("human_escalation_required=yes")
+    if category == "inspect_before_rerun":
+        parts.append("inspect before re-running execution")
+    return "; ".join(parts)
+
+
+def recovery_steps(summary: dict[str, object]) -> str:
+    actions = [str(action) for action in summary_list(summary, "recovery_actions")]
+    if not actions and recovery_category(summary):
+        action = summary_text(summary, "resume_action") or summary_text(summary, "primary_action")
+        if action:
+            actions = [action]
+    if not actions:
+        return ""
+    return " -> ".join(f"{action}={recovery_action_description(action)}" for action in actions)
+
+
+def print_recovery_details(
+    summary: dict[str, object],
+    *,
+    include_commands: bool = False,
+    include_resume: bool = True,
+) -> None:
+    resume_action = summary_text(summary, "resume_action")
+    resume_reason = summary_text(summary, "resume_reason")
+    if include_resume and resume_action:
+        detail = f"resume: {resume_action}"
+        if resume_reason:
+            detail += f" (reason={resume_reason})"
+        print(detail)
+
+    guidance = recovery_guidance(summary)
+    if guidance:
+        print(f"recovery_guidance: {guidance}")
+    steps = recovery_steps(summary)
+    if steps:
+        print(f"recovery_steps: {steps}")
+    if include_commands:
+        commands = summary_list(summary, "recommended_commands")
+        if commands:
+            print(f"recovery_commands: {' | '.join(str(command) for command in commands)}")
+
+
 def team_display_context(payload: dict[str, object], *, pick_primary_action: Any) -> dict[str, object]:
     summary = status_summary(payload)
     delegated_jobs = summary_list(summary, "delegated_jobs")
@@ -112,6 +245,7 @@ def print_execution_session_summary(payload: dict[str, object]) -> None:
     primary_reason = summary_text(summary, "primary_reason")
     if primary_reason:
         print(f"primary_reason: {primary_reason}")
+    print_recovery_details(summary, include_commands=False)
     recommended_commands = summary_list(summary, "recommended_commands")
     if recommended_commands:
         print(f"recommended_commands: {' | '.join(str(command) for command in recommended_commands)}")
@@ -138,6 +272,7 @@ def print_blocker_session_summary(payload: dict[str, object]) -> None:
     warnings = summary_list(summary, "warnings")
     if warnings:
         print(f"warnings: {'; '.join(str(reason) for reason in warnings)}")
+    print_recovery_details(summary, include_commands=False, include_resume=False)
     recommended_commands = summary_list(summary, "recommended_commands")
     if recommended_commands:
         print(f"recommended_commands: {' | '.join(str(command) for command in recommended_commands)}")
@@ -187,6 +322,7 @@ def print_team_summary(session: object, *, pick_primary_action: Any) -> None:
             detail += f", fallback_detail={recovery_fallback_detail}"
         detail += ")"
         print(detail)
+    print_recovery_details(status, include_commands=True)
 
     if failed_jobs:
         first_failed = failed_jobs[0]
@@ -217,6 +353,7 @@ def print_team_next(
     print(f"action: {primary_action}")
     print(f"reason: {context['primary_reason']}")
     print(f"next_command: {command}")
+    print_recovery_details(status, include_commands=True)
     if alternatives:
         print(f"alternatives: {', '.join(alternatives)}")
     else:

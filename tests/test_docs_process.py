@@ -83,6 +83,9 @@ def test_hook_script_exists_and_runs_compliance_gate() -> None:
     assert "team check-compliance" in text
     assert "PYTHONPATH=src" in text
     assert "root-map.md" not in text
+    assert "has_compliance_input" in text
+    assert "exit 0" in text
+    assert "managed hook marker missing" in text
 
 
 def test_hook_script_scopes_changed_file_checks_to_compliance_inputs() -> None:

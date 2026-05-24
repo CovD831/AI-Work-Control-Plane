@@ -135,6 +135,9 @@ class ExecutionContract:
     topology: dict[str, object]
     provider_recommendation: dict[str, object]
     gating: dict[str, object]
+    review_policy: dict[str, object] = field(default_factory=dict)
+    fallback_policy: dict[str, object] = field(default_factory=dict)
+    compliance_snapshot: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -144,6 +147,9 @@ class ExecutionContract:
             "topology": self.topology,
             "provider_recommendation": self.provider_recommendation,
             "gating": self.gating,
+            "review_policy": self.review_policy,
+            "fallback_policy": self.fallback_policy,
+            "compliance_snapshot": self.compliance_snapshot,
         }
 
     @classmethod
@@ -155,6 +161,9 @@ class ExecutionContract:
             topology=dict(data.get("topology", {})),
             provider_recommendation=dict(data.get("provider_recommendation", {})),
             gating=dict(data.get("gating", {})),
+            review_policy=dict(data.get("review_policy", {})),
+            fallback_policy=dict(data.get("fallback_policy", {})),
+            compliance_snapshot=dict(data.get("compliance_snapshot", {})),
         )
 
 

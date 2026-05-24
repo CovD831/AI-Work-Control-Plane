@@ -877,7 +877,24 @@ def _build_execution_contract_payload(
         agent_enabled=False if single_worker_only else None,
         depth=len([unit for unit in work_units if unit.provider_hint]),
     )
-    return ExecutionContract(
+    provider_recommendation = {
+        "author": "codex",
+        "actual_author": "codex",
+        "preferred_author": "codex",
+        "author_fallback_source": None,
+        "author_fallback_reason": None,
+        "author_fallback_detail": None,
+        "reviewer": "claude",
+        "actual_reviewer": "claude",
+        "preferred_reviewer": "claude",
+        "reviewer_fallback_source": None,
+        "fallback_source": None,
+        "fallback_from": None,
+        "fallback_reason": None,
+        "fallback_detail": None,
+        "runtime": "mock",
+    }
+    execution_contract = ExecutionContract(
         source="approved_plan_style_direct_run",
         goal=goal,
         acceptance_criteria=acceptance_criteria,
@@ -887,15 +904,73 @@ def _build_execution_contract_payload(
             "provider_flow": [unit.provider_hint for unit in work_units if unit.provider_hint],
             "work_unit_count": len(work_units),
         },
-        provider_recommendation={
-            "author": "codex",
-            "reviewer": "claude",
-        },
+        provider_recommendation=provider_recommendation,
         gating={
             "contract_source": "direct_requirement_with_planning_contract",
             "review_required": bool(contract and "review summary" in contract.outputs),
         },
     ).to_dict()
+    execution_contract.update(
+        {
+            "review_policy": _direct_review_policy_payload(policy_mode, topology, contract),
+            "fallback_policy": _direct_fallback_policy_payload(provider_recommendation),
+            "compliance_snapshot": {
+                "status": "not_applicable",
+                "blocking": False,
+                "blocking_reason_count": 0,
+                "warning_count": 0,
+                "source": "direct_run",
+            },
+        }
+    )
+    return execution_contract
+
+
+def _direct_review_policy_payload(
+    policy_mode: str,
+    topology: object,
+    contract: TaskContract | None,
+) -> dict[str, object]:
+    review_required = bool(contract and "review summary" in contract.outputs)
+    adversarial_required = getattr(topology, "topology_name", None) == "team_with_adversarial_review"
+    return {
+        "policy_name": "adversarial_required" if adversarial_required else "standard",
+        "review_required": review_required,
+        "adversarial_required": adversarial_required,
+        "selected_mode": policy_mode,
+        "execution_config": {
+            "round_sequence": ["implementation", "review", "adversarial_review"]
+            if adversarial_required
+            else ["implementation", "review"],
+            "minimum_approval": "accepted_run",
+        },
+    }
+
+
+def _direct_fallback_policy_payload(provider_recommendation: dict[str, object]) -> dict[str, object]:
+    return {
+        "author": {
+            "preferred": provider_recommendation.get("preferred_author") or provider_recommendation.get("author"),
+            "actual": provider_recommendation.get("actual_author") or provider_recommendation.get("author"),
+            "fallback_source": provider_recommendation.get("author_fallback_source"),
+            "fallback_from": provider_recommendation.get("author_fallback_from"),
+            "fallback_reason": provider_recommendation.get("author_fallback_reason"),
+            "fallback_detail": provider_recommendation.get("author_fallback_detail"),
+        },
+        "reviewer": {
+            "preferred": provider_recommendation.get("preferred_reviewer") or provider_recommendation.get("reviewer"),
+            "actual": provider_recommendation.get("actual_reviewer") or provider_recommendation.get("reviewer"),
+            "fallback_source": provider_recommendation.get("reviewer_fallback_source")
+            or provider_recommendation.get("fallback_source"),
+            "fallback_from": provider_recommendation.get("fallback_from"),
+            "fallback_reason": provider_recommendation.get("fallback_reason"),
+            "fallback_detail": provider_recommendation.get("fallback_detail"),
+        },
+        "runtime": {
+            "preferred": provider_recommendation.get("runtime"),
+            "actual": provider_recommendation.get("runtime"),
+        },
+    }
 
 
 def _build_run_metadata(
@@ -930,6 +1005,9 @@ def _build_run_metadata(
             "goal": contract.goal,
             "selected_topology": topology.get("selected_topology"),
             "selected_provider_runtime": provider_recommendation,
+            "review_policy": execution_contract.get("review_policy", {}),
+            "fallback_policy": execution_contract.get("fallback_policy", {}),
+            "compliance_snapshot": execution_contract.get("compliance_snapshot", {}),
         },
         "execution_contract": execution_contract,
     }

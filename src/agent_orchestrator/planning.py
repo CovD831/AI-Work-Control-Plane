@@ -93,6 +93,8 @@ class PlanStatusSummary(TypedDict):
     recovery_provider_fallback_from: str | None
     recovery_provider_fallback_reason: str | None
     recovery_provider_fallback_detail: str | None
+    review_policy: dict[str, object]
+    recovery_semantics: dict[str, object]
     blocking_reasons: list[str]
     warnings: list[str]
     block_source: str | None
@@ -1932,7 +1934,44 @@ def _build_plan_execution_contract(session: PlanSession) -> dict[str, object]:
             "contract_source": "approved_plan_session",
             "review_required": True,
         },
+        review_policy=dict(session.structured_brief.review_policy),
+        fallback_policy=_fallback_policy_from_provider_recommendation(provider_recommendation),
+        compliance_snapshot=_execution_contract_compliance_snapshot(session.compliance),
     ).to_dict()
+
+
+def _fallback_policy_from_provider_recommendation(provider_recommendation: dict[str, object]) -> dict[str, object]:
+    return {
+        "author": {
+            "preferred": provider_recommendation.get("preferred_author") or provider_recommendation.get("author"),
+            "actual": provider_recommendation.get("author"),
+            "fallback_from": provider_recommendation.get("author_fallback_from"),
+            "fallback_reason": provider_recommendation.get("author_fallback_reason"),
+            "fallback_detail": provider_recommendation.get("author_fallback_detail"),
+        },
+        "reviewer": {
+            "preferred": provider_recommendation.get("preferred_reviewer") or provider_recommendation.get("reviewer"),
+            "actual": provider_recommendation.get("reviewer"),
+            "fallback_from": provider_recommendation.get("fallback_from"),
+            "fallback_reason": provider_recommendation.get("fallback_reason"),
+            "fallback_detail": provider_recommendation.get("fallback_detail"),
+        },
+        "runtime": {
+            "actual": provider_recommendation.get("runtime"),
+        },
+    }
+
+
+def _execution_contract_compliance_snapshot(compliance: dict[str, object] | None) -> dict[str, object]:
+    if not isinstance(compliance, dict):
+        return {"status": "unknown", "blocking": None, "source": "session"}
+    return {
+        "status": compliance.get("status"),
+        "blocking": compliance.get("blocking"),
+        "blocking_reason_count": len(list(compliance.get("blocking_reasons", []))),
+        "warning_count": len(list(compliance.get("warnings", []))),
+        "source": "session",
+    }
 
 
 def _recommend_topology(policy: Any, requirement: str, subtasks: list[PlanSubtask]) -> dict[str, object]:
@@ -1981,23 +2020,50 @@ def _requirement_or_subtasks_look_parallel(requirement: str, subtasks: list[Plan
 
 
 def _recommend_review_policy(requirement: str, topology_recommendation: dict[str, object]) -> dict[str, object]:
+    lowered = requirement.lower()
     recommended_topology = str(topology_recommendation.get("recommended_topology", "team"))
     signals = dict(topology_recommendation.get("signals", {}))
     risk_level = str(signals.get("risk_level", "normal"))
+    if "architecture direction" in lowered or "stage transition" in lowered:
+        return {
+            "policy_name": "human_escalation_required",
+            "author_round": "lead",
+            "review_rounds": ["review", "adversarial_review"],
+            "adversarial_required": True,
+            "requires_human_escalation": True,
+            "selection_reason": "strategic direction changes require adversarial review and an explicit human decision.",
+            "execution_config": {
+                "round_sequence": ["lead", "review", "adversarial_review", "human_decision"],
+                "minimum_approval": "human_decision",
+                "retryable_rounds": ["review", "adversarial_review"],
+            },
+        }
     if recommended_topology == "team_with_adversarial_review" or risk_level == "high":
         return {
             "policy_name": "adversarial_required",
             "author_round": "lead",
             "review_rounds": ["review", "adversarial_review"],
             "adversarial_required": True,
+            "requires_human_escalation": False,
             "selection_reason": "topology and risk signals require both standard and adversarial review rounds.",
+            "execution_config": {
+                "round_sequence": ["lead", "review", "adversarial_review"],
+                "minimum_approval": "all_required_gaps_closed",
+                "retryable_rounds": ["review", "adversarial_review"],
+            },
         }
     return {
         "policy_name": "standard",
         "author_round": "lead",
         "review_rounds": ["review"],
         "adversarial_required": False,
+        "requires_human_escalation": False,
         "selection_reason": "current topology signals support the standard review loop.",
+        "execution_config": {
+            "round_sequence": ["lead", "review"],
+            "minimum_approval": "required_gaps_closed",
+            "retryable_rounds": ["review"],
+        },
     }
 
 
@@ -2152,7 +2218,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
             ]
         return [
             "Inspect the failed delegated job with `status <job_id>` before taking any other action.",
-            "Use `team revise` if the failure means the plan itself needs changes.",
+            "Automatic retry is not currently supported for this delegated provider; use `team revise` or escalate manually after inspection.",
             "Re-run `team summary` after recovery so the next allowed action is explicit again.",
         ]
 
@@ -2192,7 +2258,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
 
     if session.status == "awaiting_human":
         return [
-            "Pause autonomous progress and gather the blocking strategic question for the human.",
+            "Escalate to a human decision and gather the blocking strategic question before continuing.",
             "Use `team summary` to review why human confirmation is required.",
             "Resume the workflow only after the human decision is reflected in the plan direction.",
         ]
@@ -2208,7 +2274,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
             return [
                 "Inspect the linked execution run to identify why execution ended in a blocked state.",
                 f"Use `{guidance.recommended_commands[0]}` and `team summary` together before deciding whether the plan or execution path should change.",
-                "Resume planning only after the execution-side blocker is understood and reflected in the session direction.",
+                "Re-run execution only after the execution-side blocker is understood and reflected in the session direction.",
             ]
         step = "Close required review blockers before trying to approve or execute again."
         if required_open:
@@ -2277,6 +2343,8 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
         "recovery_provider_fallback_from": recovery_policy.get("fallback_from"),
         "recovery_provider_fallback_reason": recovery_policy.get("fallback_reason"),
         "recovery_provider_fallback_detail": recovery_policy.get("fallback_detail"),
+        "review_policy": dict(session.structured_brief.review_policy),
+        "recovery_semantics": _recovery_semantics_for_guidance(guidance),
         "blocking_reasons": blocking_reasons,
         "warnings": compliance_warnings,
         "block_source": guidance.block_source,
@@ -2289,6 +2357,31 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
         "decision_rationale": session.decision_verdict.rationale if session.decision_verdict else [],
         "approved_plan_ready": bool(session.approved_plan),
         "approved_plan_source": session.approved_plan.get("execution_contract", {}).get("source") if session.approved_plan else None,
+    }
+
+
+def _recovery_semantics_for_guidance(guidance: SessionGuidance) -> dict[str, object]:
+    action = guidance.resume_action
+    if action in {"retry_review", "retry_adversarial_review"}:
+        category = "retry"
+    elif action in {"approve", "execute"}:
+        category = "resume"
+    elif action == "human_decision":
+        category = "escalate"
+    elif guidance.block_source == "execution_run":
+        category = "inspect_before_rerun"
+    elif action in {"inspect_compliance", "inspect_blockers", "inspect_delegated_job", "inspect_execution"}:
+        category = "inspect"
+    else:
+        category = "manual"
+    return {
+        "category": category,
+        "resume_action": guidance.resume_action,
+        "resume_reason": guidance.resume_reason,
+        "block_source": guidance.block_source,
+        "block_detail": guidance.block_detail,
+        "auto_apply_allowed": action in {"approve", "execute", "retry_review", "retry_adversarial_review"},
+        "human_escalation_required": action == "human_decision",
     }
 
 def _validate_compliance_ready(session: PlanSession) -> None:
