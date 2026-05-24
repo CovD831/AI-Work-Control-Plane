@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-# DEPS: __future__, agent_orchestrator, dataclasses, pathlib, typing
+# DEPS: __future__, agent_orchestrator, ast, dataclasses, pathlib, typing
 # RESPONSIBILITY: Centralize planning compliance checks and session guidance helpers.
 # MODULE: decision_core
 # ---
 
+import ast
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -356,11 +357,20 @@ def _changed_file_doc_sync_violations(
         return sorted(dict.fromkeys(violations))
 
     documented_modules = _manifest_entry_paths(manifest_spec)
+    manifest_bullets = {bullet for bullet in manifest_spec.bullets if bullet.startswith("`") and "`:" in bullet}
     for relative_path in changed_source_files:
         filename = Path(relative_path).name
         if filename not in documented_modules:
             violations.append(
                 f"changed-file doc sync violation: {relative_path} is missing from docs/process/module-manifest.md"
+            )
+            continue
+        source_path = project_root / relative_path
+        expected_summary = _extract_module_summary(source_path)
+        expected_bullet = f"`{filename}`: {expected_summary}"
+        if expected_bullet not in manifest_bullets:
+            violations.append(
+                f"changed-file doc sync violation: {relative_path} summary is stale in docs/process/module-manifest.md"
             )
     return sorted(dict.fromkeys(violations))
 
@@ -375,6 +385,8 @@ def _header_contract_field_violations(path: Path, lines: list[str], docstring_en
             continue
         if _is_placeholder_header_value(value):
             violations.append(f"header contract violation: {path} has placeholder `{field}` value")
+    if not violations:
+        violations.extend(_header_dependency_violations(path, lines, fields))
     return violations
 
 
@@ -412,6 +424,60 @@ def _extract_header_fields(lines: list[str], docstring_end_index: int) -> dict[s
         key, value = content.split(":", 1)
         fields[key.strip()] = value.strip()
     return fields
+
+
+def _header_dependency_violations(path: Path, lines: list[str], fields: dict[str, str]) -> list[str]:
+    declared_raw = fields.get("DEPS")
+    if declared_raw is None or _is_placeholder_header_value(declared_raw):
+        return []
+
+    declared = {item.strip() for item in declared_raw.split(",") if item.strip()}
+    if not declared:
+        return []
+
+    imported = _module_dependency_names("\n".join(lines))
+    expected = {
+        name
+        for name in imported
+        if name in {"__future__", "agent_orchestrator"}
+    }
+
+    missing = sorted(expected - declared)
+    extra = sorted(name for name in declared - imported if name in {"__future__", "agent_orchestrator"})
+
+    violations: list[str] = []
+    if missing:
+        violations.append(
+            f"header contract violation: {path} missing dependency declaration(s): {', '.join(missing)}"
+        )
+    if extra:
+        violations.append(
+            f"header contract violation: {path} has stale dependency declaration(s): {', '.join(extra)}"
+        )
+    return violations
+
+
+def _module_dependency_names(source: str) -> set[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    dependencies: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                if root:
+                    dependencies.add(root)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level and not module:
+                continue
+            root = module.split(".", 1)[0]
+            if root:
+                dependencies.add(root)
+    return dependencies
 
 
 def _is_placeholder_header_value(value: str) -> bool:
@@ -522,6 +588,11 @@ def build_compliance_status_for_session(
         header_contract_text = header_contract_path.read_text(encoding="utf-8") if header_contract_path.exists() else ""
         if "required header fields: DEPS / RESPONSIBILITY / MODULE" not in header_contract_text:
             blocking_reasons.append("file-header contract missing required header fields")
+
+        hook_marker_path = project_root / ".agent_orchestrator" / "hooks.json"
+        changed_file_scope = list(doc_sync.get("changed_files", [])) if isinstance(doc_sync, dict) else []
+        if changed_file_scope and (project_root / "docs" / "process").exists() and not hook_marker_path.exists():
+            warnings.append("managed hook warning: install-hooks has not been run for this repository")
 
     if session is not None and session.resume.linked_execution_run_id and run_store is not None:
         try:
@@ -721,7 +792,7 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
     required_open = [gap for gap in session.gaps if gap.required and gap.status != "closed"]
     compliance_blocking_reasons = _compliance_blocking_reasons(session)
     compliance_warnings = _compliance_warnings(session)
-    delegated_jobs, delegated_job_failed, delegated_job_provider = _collect_delegated_jobs(session)
+    delegated_jobs, delegated_job_failed, delegated_job_in_progress, delegated_job_provider = _collect_delegated_jobs(session)
 
     primary_action = "inspect_session"
     primary_reason = "inspect the current session state before continuing"
@@ -770,6 +841,14 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
         resume_action = "inspect_delegated_job"
         resume_reason = "failed_delegated_job"
         recovery_actions = ["inspect_delegated_job", "revise_plan"]
+    elif delegated_job_in_progress:
+        block_source = "delegated_job"
+        block_detail = "delegated_job_in_progress"
+        primary_action = "inspect_delegated_job"
+        primary_reason = "delegated review job is still in progress; inspect the job before deciding whether to wait or intervene"
+        resume_action = "inspect_delegated_job"
+        resume_reason = "delegated_job_in_progress"
+        recovery_actions = ["inspect_delegated_job"]
     elif session.status == "needs_revision" and required_open:
         block_source = "review"
         primary_action = "revise"
@@ -937,9 +1016,10 @@ def _compliance_warnings(session: PlanSession) -> list[str]:
     return [str(item) for item in session.compliance.get("warnings", [])]
 
 
-def _collect_delegated_jobs(session: PlanSession) -> tuple[list[dict[str, object]], bool, str | None]:
+def _collect_delegated_jobs(session: PlanSession) -> tuple[list[dict[str, object]], bool, bool, str | None]:
     delegated_jobs: list[dict[str, object]] = []
     delegated_job_failed = False
+    delegated_job_in_progress = False
     delegated_job_provider = None
     latest_round_by_family: dict[str, PlanReviewRound] = {}
     for round_ in session.review_rounds:
@@ -963,6 +1043,8 @@ def _collect_delegated_jobs(session: PlanSession) -> tuple[list[dict[str, object
             provider = runtime_status.provider
             if runtime_status.status == "failed" and latest_round_by_family.get(_delegated_round_family(round_.round_type) or "") is round_:
                 delegated_job_failed = True
+            if runtime_status.status in {"pending", "running"} and latest_round_by_family.get(_delegated_round_family(round_.round_type) or "") is round_:
+                delegated_job_in_progress = True
         else:
             provider = "claude" if "claude" in summary else "mock"
         if job_status == "failed" and latest_round_by_family.get(_delegated_round_family(round_.round_type) or "") is round_ and delegated_job_provider is None:
@@ -977,7 +1059,7 @@ def _collect_delegated_jobs(session: PlanSession) -> tuple[list[dict[str, object
                 "error": job_error,
             }
         )
-    return delegated_jobs, delegated_job_failed, delegated_job_provider
+    return delegated_jobs, delegated_job_failed, delegated_job_in_progress, delegated_job_provider
 
 
 def _has_failed_delegated_family(delegated_jobs: list[dict[str, object]], round_types: set[str]) -> bool:
@@ -1060,7 +1142,8 @@ def compliance_warnings(session: PlanSession) -> list[str]:
 
 
 def collect_delegated_jobs(session: PlanSession) -> tuple[list[dict[str, object]], bool, str | None]:
-    return _collect_delegated_jobs(session)
+    jobs, failed, _in_progress, provider = _collect_delegated_jobs(session)
+    return jobs, failed, provider
 
 
 def has_failed_delegated_family(delegated_jobs: list[dict[str, object]], round_types: set[str]) -> bool:

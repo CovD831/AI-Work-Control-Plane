@@ -473,8 +473,24 @@ def _install_git_hooks(repo_root: Path) -> None:
         target.chmod(0o755)
         installed.append(target)
 
+    marker_dir = repo_root / ".agent_orchestrator"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = marker_dir / "hooks.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "managed_hooks_enabled": True,
+                "installed_hooks": [path.name for path in installed],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
     for path in installed:
         print(f"Installed git hook: {path}")
+    print(f"Recorded managed hook marker: {marker_path}")
 
 
 def _print_run_summary(run: object) -> None:

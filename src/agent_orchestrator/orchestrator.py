@@ -906,18 +906,31 @@ def _build_run_metadata(
     work_units: list[WorkUnit],
     routing_decision: RoutingDecision | None,
 ) -> dict[str, object]:
+    execution_contract = _build_execution_contract_payload(
+        requirement=requirement,
+        policy_mode=mode,
+        contract=contract,
+        work_units=work_units,
+    )
+    topology = execution_contract.get("topology", {}) if isinstance(execution_contract, dict) else {}
+    provider_recommendation = (
+        execution_contract.get("provider_recommendation", {}) if isinstance(execution_contract, dict) else {}
+    )
     metadata = {
         "entrypoint": "direct_run",
         "provenance": {
             "source_requirement": requirement,
             "selected_mode": mode,
             "route_source": "router" if routing_decision else "explicit_mode",
+            "selected_topology": topology.get("selected_topology"),
+            "selected_provider_runtime": provider_recommendation,
         },
-        "execution_contract": _build_execution_contract_payload(
-            requirement=requirement,
-            policy_mode=mode,
-            contract=contract,
-            work_units=work_units,
-        ),
+        "approved_plan_summary": {
+            "session_id": None,
+            "goal": contract.goal,
+            "selected_topology": topology.get("selected_topology"),
+            "selected_provider_runtime": provider_recommendation,
+        },
+        "execution_contract": execution_contract,
     }
     return metadata

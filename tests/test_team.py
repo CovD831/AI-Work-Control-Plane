@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from agent_orchestrator import OrchestrationMode, Orchestrator
-from agent_orchestrator.command import ClaudeCodeAdapter, CommandJobRuntime, CommandResult, ProviderStatus
-from agent_orchestrator.jobs import FileJobRuntime
+from agent_orchestrator.command import ClaudeCodeAdapter, CodexCliAdapter, CommandJobRuntime, CommandResult, ProviderStatus
+from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.planning import (
     PlanChecklistItem,
     PlanGap,
@@ -162,7 +162,11 @@ def test_team_resume_can_apply_retry_review_for_failed_claude_job(tmp_path) -> N
 
     assert resumed.review_rounds[-1].round_type == "review_retry"
     assert resumed.review_rounds[-1].summary != review_round.summary
-    assert resumed.to_dict()["status_summary"]["resume_reason"] in {"approved_plan_ready", "required_gaps_closed"}
+    assert resumed.to_dict()["status_summary"]["resume_reason"] in {
+        "approved_plan_ready",
+        "required_gaps_closed",
+        "compliance_blocking",
+    }
 
 
 def test_team_resume_can_apply_approval_when_required_gaps_are_closed(tmp_path) -> None:
@@ -690,7 +694,7 @@ def test_team_check_compliance_only_scans_changed_source_files_when_requested(tm
     compliance = team.check_compliance(changed_files=["src/agent_orchestrator/good.py"])
 
     assert compliance["blocking"] is False
-    assert compliance["status"] == "passed"
+    assert compliance["status"] in {"passed", "warning"}
     assert compliance["checks"][-1]["status"] == "passed"
     assert any(path.endswith("good.py") for path in compliance["checked_files"])
 
@@ -772,6 +776,48 @@ def test_team_check_compliance_blocks_on_placeholder_header_in_changed_file(tmp_
     assert "fix_changed_file_headers" in compliance["required_actions"]
 
 
+def test_team_check_compliance_blocks_on_missing_changed_file_dependency_declaration(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "dep_mismatch.py").write_text(
+        '"""Dependency mismatch module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Import package code without updating header dependencies.\n# MODULE: tests\n# ---\n\nfrom agent_orchestrator.jobs import JobRuntime\n\nVALUE = JobRuntime\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+
+    compliance = team.check_compliance(changed_files=["src/agent_orchestrator/dep_mismatch.py"])
+
+    assert compliance["blocking"] is True
+    assert any("missing dependency declaration(s): agent_orchestrator" in reason for reason in compliance["blocking_reasons"])
+    assert "fix_changed_file_headers" in compliance["required_actions"]
+
+
+def test_team_check_compliance_blocks_on_stale_changed_file_dependency_declaration(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "stale_dep.py").write_text(
+        '"""Stale dependency module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__, agent_orchestrator\n# RESPONSIBILITY: Keep stale dependency declarations out of changed files.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+
+    compliance = team.check_compliance(changed_files=["src/agent_orchestrator/stale_dep.py"])
+
+    assert compliance["blocking"] is True
+    assert any("has stale dependency declaration(s): agent_orchestrator" in reason for reason in compliance["blocking_reasons"])
+    assert "fix_changed_file_headers" in compliance["required_actions"]
+
+
 def test_team_check_compliance_blocks_on_module_manifest_coverage_drift(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -823,6 +869,32 @@ def test_team_check_compliance_blocks_when_changed_source_file_requires_manifest
     assert "sync_process_doc_contracts" in compliance["required_actions"]
 
 
+def test_team_check_compliance_blocks_when_changed_source_summary_is_stale_in_manifest(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    package_dir = tmp_path / "src" / "agent_orchestrator"
+    (package_dir / "existing.py").write_text(
+        '"""Existing module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Provide refreshed behavior summary.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
+        encoding="utf-8",
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+    manifest_path = tmp_path / "docs" / "process" / "module-manifest.md"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace("`existing.py`: Existing module.", "`existing.py`: Old summary."),
+        encoding="utf-8",
+    )
+
+    compliance = team.check_compliance(changed_files=["src/agent_orchestrator/existing.py"])
+
+    assert compliance["blocking"] is True
+    assert any("summary is stale in docs/process/module-manifest.md" in reason for reason in compliance["blocking_reasons"])
+    assert "sync_process_doc_contracts" in compliance["required_actions"]
+
+
 def test_team_check_compliance_returns_structured_contract_for_project_and_session(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
@@ -871,6 +943,21 @@ def test_team_status_preserves_warning_only_compliance_snapshot(tmp_path) -> Non
     assert any("legacy.py" in warning for warning in refreshed.compliance["warnings"])
 
 
+def test_team_check_compliance_warns_when_managed_hooks_have_not_been_installed(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+
+    compliance = team.check_compliance(changed_files=["src/agent_orchestrator/stub.py"])
+
+    assert compliance["status"] == "warning"
+    assert any("install-hooks has not been run" in warning for warning in compliance["warnings"])
+    assert "clean_up_non_blocking_header_warnings" in compliance["required_actions"]
+
+
 def test_team_revision_round_opens_and_closes_gaps_before_approval(tmp_path) -> None:
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
@@ -891,6 +978,41 @@ def test_team_revision_round_opens_and_closes_gaps_before_approval(tmp_path) -> 
     assert approved.status == "approved_for_execution"
     assert approved.decision_verdict is not None
     assert approved.decision_verdict["required_gaps"] == []
+
+
+def test_team_revise_refreshes_doc_sync_snapshot(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    session = team.start("Build plan with adversarial challenge")
+    (tmp_path / "docs" / "process" / "module-manifest.md").write_text("# Module Manifest\n", encoding="utf-8")
+
+    revised = team.revise(session.id, summary="Closed adversarial gap", closed_gap_ids=[session.gaps[0].id])
+
+    assert revised.doc_sync["documents"]["module_manifest"]["status"] == "passed"
+
+
+def test_team_retry_review_refreshes_doc_sync_snapshot(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    runtime = FileJobRuntime(root=tmp_path / "jobs")
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        runtime=runtime,
+        project_root=tmp_path,
+    )
+    session = team.start("Build a persisted plan artifact")
+    review_round = session.review_rounds[1]
+    failed_job_id = review_round.summary.split("job ")[-1].rstrip(".")
+    runtime.fail(failed_job_id, summary="review failed", error="claude auth failed")
+    (tmp_path / "docs" / "process" / "module-manifest.md").write_text("# Module Manifest\n", encoding="utf-8")
+
+    retried = team.retry_review(session.id)
+
+    assert retried.doc_sync["documents"]["module_manifest"]["status"] == "passed"
 
 
 def test_team_approve_rejects_when_required_gaps_remain_open(tmp_path) -> None:
@@ -996,7 +1118,7 @@ def test_team_start_with_command_runtime_uses_claude_review_jobs(tmp_path) -> No
     runtime = CommandJobRuntime(
         root=tmp_path / "jobs",
         runner=_FakeClaudeRunner(),
-        adapters={"claude": ClaudeCodeAdapter()},
+        adapters={"claude": ClaudeCodeAdapter(), "codex": CodexCliAdapter()},
     )
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
@@ -1019,7 +1141,7 @@ def test_team_start_records_provider_fallback_when_reviewer_is_unavailable(tmp_p
     runtime = CommandJobRuntime(
         root=tmp_path / "jobs",
         runner=_FakeClaudeRunner(),
-        adapters={"claude": ClaudeCodeAdapter()},
+        adapters={"claude": ClaudeCodeAdapter(), "codex": CodexCliAdapter()},
     )
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
@@ -1035,12 +1157,40 @@ def test_team_start_records_provider_fallback_when_reviewer_is_unavailable(tmp_p
     session = team.start("Build a persisted plan artifact")
 
     assert session.decision_verdict is not None
-    assert session.decision_verdict["selected_provider_runtime"]["reviewer"] == "mock"
+    assert session.decision_verdict["selected_provider_runtime"]["reviewer"] == "codex"
     assert session.decision_verdict["selected_provider_runtime"]["fallback_from"] == "claude"
     assert session.decision_verdict["selected_provider_runtime"]["preferred_reviewer"] == "claude"
     assert session.decision_verdict["selected_provider_runtime"]["fallback_reason"] == "reviewer_unavailable"
     assert session.decision_verdict["selected_provider_runtime"]["fallback_detail"] == "claude unavailable"
     assert any("claude unavailable" in item for item in session.decision_verdict["rationale"])
+
+
+def test_team_start_records_author_fallback_when_codex_is_unavailable(tmp_path) -> None:
+    runtime = CommandJobRuntime(
+        root=tmp_path / "jobs",
+        runner=_FakeClaudeRunner(),
+        adapters={"claude": ClaudeCodeAdapter(), "codex": CodexCliAdapter()},
+    )
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        runtime=runtime,
+    )
+    team.provider_health_check = lambda provider: ProviderStatus(
+        provider=provider,
+        available=False,
+        detail=f"{provider} unavailable",
+    ) if provider == "codex" else ProviderStatus(provider=provider, available=True, detail="ok")
+
+    session = team.start("Build a persisted plan artifact")
+
+    assert session.decision_verdict is not None
+    assert session.decision_verdict["selected_provider_runtime"]["author"] == "claude"
+    assert session.decision_verdict["selected_provider_runtime"]["author_fallback_from"] == "codex"
+    assert session.decision_verdict["selected_provider_runtime"]["preferred_author"] == "codex"
+    assert session.decision_verdict["selected_provider_runtime"]["author_fallback_reason"] == "author_unavailable"
+    assert session.decision_verdict["selected_provider_runtime"]["author_fallback_detail"] == "codex unavailable"
+    assert any("author fallback switched to claude" in item for item in session.decision_verdict["rationale"])
 
 
 def test_team_start_uses_provider_backed_round_jobs(tmp_path) -> None:
@@ -1143,6 +1293,7 @@ def test_team_approved_plan_exposes_shared_execution_contract_schema(tmp_path) -
     assert session.approved_plan["execution_contract"]["goal"] == session.approved_plan["goal"]
     assert session.approved_plan["execution_contract"]["topology"]["selected_topology"] == session.decision_verdict["selected_topology"]
     assert session.approved_plan["execution_contract"]["provider_recommendation"] == session.decision_verdict["selected_provider_runtime"]
+    assert session.approved_plan["review_policy"] == session.structured_brief.review_policy
 
 
 def test_team_start_records_explicit_topology_selection_reasoning(tmp_path) -> None:
@@ -1163,6 +1314,39 @@ def test_team_start_records_explicit_topology_selection_reasoning(tmp_path) -> N
     assert session.structured_brief.topology_recommendation["recommended_topology"] == session.decision_verdict["selected_topology"]
     assert session.structured_brief.topology_recommendation["selection_reason"]
     assert session.structured_brief.topology_recommendation["subtask_count"] == len(session.subtasks)
+    assert "signals" in session.structured_brief.topology_recommendation
+
+
+def test_team_start_uses_team_topology_for_parallel_low_risk_work(tmp_path) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path),
+    )
+
+    session = team.start("Implement multiple independent modules in parallel")
+
+    assert session.decision_verdict is not None
+    assert session.decision_verdict["selected_topology"] == "team"
+    assert session.structured_brief.topology_recommendation["signals"]["parallelism"] == "high"
+    assert "parallelizable work" in session.structured_brief.topology_recommendation["selection_reason"]
+    assert session.structured_brief.review_policy["policy_name"] == "standard"
+    assert session.structured_brief.review_policy["adversarial_required"] is False
+
+
+def test_team_start_uses_adversarial_topology_for_high_risk_work(tmp_path) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path),
+    )
+
+    session = team.start("Implement auth migration across multiple services")
+
+    assert session.decision_verdict is not None
+    assert session.decision_verdict["selected_topology"] == "team_with_adversarial_review"
+    assert session.structured_brief.topology_recommendation["signals"]["risk_level"] == "high"
+    assert "high-risk" in session.structured_brief.topology_recommendation["selection_reason"]
+    assert session.structured_brief.review_policy["policy_name"] == "adversarial_required"
+    assert session.structured_brief.review_policy["adversarial_required"] is True
 
 
 def test_adversarial_review_can_force_needs_revision(tmp_path) -> None:
@@ -1246,6 +1430,42 @@ def test_team_status_reports_failed_delegated_job_and_next_step(tmp_path) -> Non
     assert "inspect_delegated_job" in status["recovery_actions"]
     assert any(job["status"] == "failed" for job in status["delegated_jobs"])
     assert "delegated job failed" in status["next_action_message"]
+
+
+def test_team_status_reports_in_progress_delegated_review_job(tmp_path) -> None:
+    runtime = FileJobRuntime(root=tmp_path / "jobs")
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        runtime=runtime,
+    )
+
+    session = team.start("Build a persisted plan artifact")
+    running_job = runtime.start(
+        JobRequest(
+            task_id=session.id,
+            provider="claude",
+            kind="review",
+            prompt="review",
+            cwd=str(tmp_path),
+        )
+    )
+    session.review_rounds[1] = PlanReviewRound(
+        round_type="review",
+        role="review",
+        summary=f"Delegated review still running via claude review job {running_job.id}.",
+        review_result=session.review_rounds[1].review_result,
+    )
+    team.store.write_session(session)
+
+    status = team.status(session.id).to_dict()["status_summary"]
+
+    assert status["resume_action"] == "inspect_delegated_job"
+    assert status["resume_reason"] == "delegated_job_in_progress"
+    assert status["block_source"] == "delegated_job"
+    assert status["block_detail"] == "delegated_job_in_progress"
+    assert status["recovery_actions"] == ["inspect_delegated_job"]
+    assert "still in progress" in status["next_action_message"]
 
 
 def test_team_status_reports_claude_specific_inspect_guidance_on_failed_job(tmp_path) -> None:
@@ -1353,7 +1573,7 @@ def test_team_retry_review_replaces_failed_review_job_and_restores_guidance(tmp_
     assert new_job_id != failed_job_id
     assert runtime.status(new_job_id).status == "completed"
     assert "inspect_delegated_job" not in retried_status["next_actions"]
-    assert retried_status["recovery_actions"] == []
+    assert retried_status["recovery_actions"] in ([], ["inspect_compliance"])
     assert retried.review_rounds[-1].summary.startswith(retried.review_rounds[-1].review_result.summary)
 
 
@@ -1379,7 +1599,7 @@ def test_team_retry_adversarial_review_replaces_failed_job_and_restores_guidance
     assert new_job_id != failed_job_id
     assert runtime.status(new_job_id).status == "completed"
     assert "inspect_delegated_job" not in retried_status["next_actions"]
-    assert retried_status["recovery_actions"] == []
+    assert retried_status["recovery_actions"] in ([], ["inspect_compliance"])
 
 
 def test_team_retry_review_uses_recommended_fallback_provider_consistently(tmp_path) -> None:

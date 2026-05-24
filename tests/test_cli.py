@@ -1978,9 +1978,12 @@ def test_install_hooks_command_installs_pre_commit_script(tmp_path, capsys) -> N
         cli.main()
         out = capsys.readouterr().out
         installed = git_hooks / "pre-commit"
+        marker = repo_root / ".agent_orchestrator" / "hooks.json"
         assert installed.exists()
+        assert marker.exists()
         assert installed.read_text(encoding="utf-8") == source_hook.read_text(encoding="utf-8")
         assert "Installed git hook" in out
+        assert "Recorded managed hook marker" in out
     finally:
         cli.argparse.ArgumentParser.parse_args = original
 

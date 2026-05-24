@@ -53,3 +53,23 @@ def test_capture_workflow_evidence_accepts_structured_cases_and_builds_report(tm
     assert payload["report"]["benefit_score_by_case"]["artifact"] >= 1
     assert payload["report"]["team_status_counts"]
     assert payload["report"]["direct_final_state_counts"]
+    assert payload["report"]["scenario_type_counts"]
+    assert payload["report"]["average_benefit_score_by_scenario"]
+
+
+def test_capture_workflow_evidence_reports_scenario_aggregates(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    payload = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(requirement="Build a persisted plan artifact", label="artifact", scenario_type="standard"),
+            WorkflowEvidenceCase(requirement="Implement auth migration across multiple services", label="risk", scenario_type="high_risk"),
+        ],
+        project_root=tmp_path,
+    )
+
+    assert payload["cases"][0]["scenario_type"] == "standard"
+    assert payload["cases"][1]["scenario_type"] == "high_risk"
+    assert payload["report"]["scenario_type_counts"]["standard"] == 1
+    assert payload["report"]["scenario_type_counts"]["high_risk"] == 1
+    assert "standard" in payload["report"]["average_benefit_score_by_scenario"]

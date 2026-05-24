@@ -23,6 +23,7 @@ class WorkflowEvidenceCase:
     requirement: str
     mode: OrchestrationMode = OrchestrationMode.SUCCESS_FIRST
     label: str | None = None
+    scenario_type: str | None = None
 
 
 def capture_workflow_evidence(
@@ -114,6 +115,7 @@ def _capture_case(
         "label": case.label or case.requirement,
         "requirement": case.requirement,
         "mode": case.mode.value,
+        "scenario_type": case.scenario_type or _infer_scenario_type(case.requirement),
         "direct_run": {
             "run_id": direct_run.run_id,
             "accepted": direct_run.accepted,
@@ -227,11 +229,13 @@ def _build_report(cases: list[dict[str, object]]) -> dict[str, object]:
     return {
         "team_status_counts": _status_counts(team_runs, "status"),
         "direct_final_state_counts": _status_counts(direct_runs, "final_state"),
+        "scenario_type_counts": _status_counts(cases, "scenario_type"),
         "benefit_score_by_case": {
             str(case.get("label") or case.get("requirement")): int(case.get("comparison", {}).get("benefit_score", 0))
             for case in cases
             if isinstance(case, dict)
         },
+        "average_benefit_score_by_scenario": _average_benefit_score_by_scenario(cases),
         "max_benefit_score": max(
             (int(item.get("benefit_score", 0)) for item in comparisons if isinstance(item, dict)),
             default=0,
@@ -253,3 +257,31 @@ def _status_counts(items: list[dict[str, object]], key: str) -> dict[str, int]:
         name = str(value or "unknown")
         counts[name] = counts.get(name, 0) + 1
     return counts
+
+
+def _infer_scenario_type(requirement: str) -> str:
+    lowered = requirement.lower()
+    if "followup" in lowered:
+        return "followup"
+    if "auth" in lowered or "migration" in lowered or "security" in lowered:
+        return "high_risk"
+    if "parallel" in lowered or "independent" in lowered or "multiple" in lowered:
+        return "parallel"
+    return "standard"
+
+
+def _average_benefit_score_by_scenario(cases: list[dict[str, object]]) -> dict[str, float]:
+    buckets: dict[str, list[int]] = {}
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        scenario = str(case.get("scenario_type", "unknown"))
+        comparison = case.get("comparison", {})
+        if not isinstance(comparison, dict):
+            continue
+        buckets.setdefault(scenario, []).append(int(comparison.get("benefit_score", 0)))
+    return {
+        scenario: sum(scores) / len(scores)
+        for scenario, scores in buckets.items()
+        if scores
+    }

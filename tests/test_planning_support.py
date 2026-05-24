@@ -136,6 +136,67 @@ def test_changed_files_doc_sync_flags_new_module_missing_from_manifest(tmp_path)
     ]
 
 
+def test_changed_files_header_check_blocks_missing_dependency_declaration(tmp_path) -> None:
+    _write_module(
+        tmp_path,
+        "depends_on_package.py",
+        "# DEPS: __future__\n# RESPONSIBILITY: Use package imports without declaring them.\n# MODULE: decision_core\n# ---\n\nfrom agent_orchestrator.jobs import JobRuntime",
+    )
+    _write_required_docs(tmp_path)
+
+    status = build_doc_sync_status_for_project(
+        tmp_path,
+        FileJobRuntime(root=tmp_path / "jobs"),
+        changed_files=["src/agent_orchestrator/depends_on_package.py"],
+    )
+
+    assert status["header_contract_violations"] == [
+        "header contract violation: src/agent_orchestrator/depends_on_package.py missing dependency declaration(s): agent_orchestrator"
+    ]
+
+
+def test_changed_files_doc_sync_flags_stale_manifest_summary(tmp_path) -> None:
+    _write_module(
+        tmp_path,
+        "existing.py",
+        "# DEPS: __future__\n# RESPONSIBILITY: Provide refreshed behavior summary.\n# MODULE: decision_core\n# ---",
+    )
+    _write_required_docs(tmp_path)
+    manifest_path = tmp_path / "docs" / "process" / "module-manifest.md"
+    manifest_text = manifest_path.read_text(encoding="utf-8").replace(
+        "`existing.py`: Example module.",
+        "`existing.py`: Old summary.",
+    )
+    manifest_path.write_text(manifest_text, encoding="utf-8")
+
+    status = build_doc_sync_status_for_project(
+        tmp_path,
+        FileJobRuntime(root=tmp_path / "jobs"),
+        changed_files=["src/agent_orchestrator/existing.py"],
+    )
+
+    assert "changed-file doc sync violation: src/agent_orchestrator/existing.py summary is stale in docs/process/module-manifest.md" in status["changed_file_doc_sync_violations"]
+
+
+def test_changed_files_header_check_blocks_stale_dependency_declaration(tmp_path) -> None:
+    _write_module(
+        tmp_path,
+        "stale_dep.py",
+        "# DEPS: __future__, agent_orchestrator\n# RESPONSIBILITY: Keep a stale package dependency declaration.\n# MODULE: decision_core\n# ---",
+    )
+    _write_required_docs(tmp_path)
+
+    status = build_doc_sync_status_for_project(
+        tmp_path,
+        FileJobRuntime(root=tmp_path / "jobs"),
+        changed_files=["src/agent_orchestrator/stale_dep.py"],
+    )
+
+    assert status["header_contract_violations"] == [
+        "header contract violation: src/agent_orchestrator/stale_dep.py has stale dependency declaration(s): agent_orchestrator"
+    ]
+
+
 def test_canonical_process_docs_include_module_manifest_and_root_map_entries(tmp_path) -> None:
     _write_module(
         tmp_path,
@@ -248,6 +309,35 @@ def test_session_guidance_retries_failed_fallback_reviewer_job(tmp_path) -> None
     assert guidance.resume_reason == "failed_review_job"
     assert guidance.recommended_commands[0] == "python -m agent_orchestrator.cli team retry-review plan-123"
     assert guidance.recovery_actions == ["inspect_delegated_job", "retry_review", "revise_plan"]
+
+
+def test_session_guidance_inspects_delegated_job_when_review_is_still_running(tmp_path) -> None:
+    runtime = FileJobRuntime(root=tmp_path / "jobs")
+    job = runtime.start(
+        JobRequest(
+            task_id="review",
+            provider="claude",
+            kind="review",
+            prompt="review",
+            cwd=str(tmp_path),
+        )
+    )
+    session = _session(
+        status="needs_revision",
+        review_rounds=[
+            SimpleNamespace(round_type="review", summary=f"Delegated review via claude job {job.id}."),
+        ],
+        jobs_root=runtime.root,
+    )
+
+    guidance = build_session_guidance(session)
+
+    assert guidance.primary_action == "inspect_delegated_job"
+    assert guidance.resume_action == "inspect_delegated_job"
+    assert guidance.resume_reason == "delegated_job_in_progress"
+    assert guidance.block_source == "delegated_job"
+    assert guidance.block_detail == "delegated_job_in_progress"
+    assert guidance.recovery_actions == ["inspect_delegated_job"]
 
 
 def test_session_guidance_inspects_execution_after_completion() -> None:

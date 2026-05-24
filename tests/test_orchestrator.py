@@ -399,6 +399,8 @@ def test_direct_run_persists_entrypoint_provenance_metadata(tmp_path) -> None:
     assert payload["metadata"]["entrypoint"] == "direct_run"
     assert payload["metadata"]["provenance"]["source_requirement"] == "Build dashboard"
     assert payload["metadata"]["provenance"]["selected_mode"] == "success_first"
+    assert payload["metadata"]["provenance"]["selected_topology"] == "team_with_adversarial_review"
+    assert payload["metadata"]["provenance"]["selected_provider_runtime"]["author"] == "codex"
     assert payload["metadata"]["execution_contract"]["source"] == "approved_plan_style_direct_run"
     assert payload["metadata"]["execution_contract"]["goal"] == "Build dashboard"
     assert payload["metadata"]["execution_contract"]["topology"]["selected_mode"] == "success_first"
@@ -406,12 +408,15 @@ def test_direct_run_persists_entrypoint_provenance_metadata(tmp_path) -> None:
     assert payload["metadata"]["execution_contract"]["provider_recommendation"]["author"] == "codex"
     assert payload["metadata"]["execution_contract"]["provider_recommendation"]["reviewer"] == "claude"
     assert payload["metadata"]["execution_contract"]["gating"]["contract_source"] == "direct_requirement_with_planning_contract"
+    assert payload["metadata"]["approved_plan_summary"]["session_id"] is None
+    assert payload["metadata"]["approved_plan_summary"]["selected_topology"] == "team_with_adversarial_review"
 
 
 def test_direct_run_exposes_execution_contract_on_run_object() -> None:
     run = Orchestrator().run("Build dashboard", OrchestrationMode.SUCCESS_FIRST)
 
     assert run.metadata["entrypoint"] == "direct_run"
+    assert run.metadata["approved_plan_summary"]["session_id"] is None
     assert run.metadata["execution_contract"]["source"] == "approved_plan_style_direct_run"
     assert run.metadata["execution_contract"]["acceptance_criteria"] == run.contract.acceptance_criteria
     assert run.metadata["execution_contract"]["provider_recommendation"]["author"] == "codex"

@@ -199,6 +199,7 @@ class StructuredPlanBrief:
     execution_intent: str = ""
     topology_recommendation: dict[str, object] = field(default_factory=dict)
     provider_recommendation: dict[str, object] = field(default_factory=dict)
+    review_policy: dict[str, object] = field(default_factory=dict)
     decision_rationale: list[str] = field(default_factory=list)
     review_disputes: list[str] = field(default_factory=list)
     gating_requirements: list[str] = field(default_factory=list)
@@ -215,6 +216,7 @@ class StructuredPlanBrief:
             "execution_intent": self.execution_intent,
             "topology_recommendation": self.topology_recommendation,
             "provider_recommendation": self.provider_recommendation,
+            "review_policy": self.review_policy,
             "decision_rationale": self.decision_rationale,
             "review_disputes": self.review_disputes,
             "gating_requirements": self.gating_requirements,
@@ -233,6 +235,7 @@ class StructuredPlanBrief:
             execution_intent=str(data.get("execution_intent", "")),
             topology_recommendation=dict(data.get("topology_recommendation", {})),
             provider_recommendation=dict(data.get("provider_recommendation", {})),
+            review_policy=dict(data.get("review_policy", {})),
             decision_rationale=[str(item) for item in data.get("decision_rationale", [])],
             review_disputes=[str(item) for item in data.get("review_disputes", [])],
             gating_requirements=[str(item) for item in data.get("gating_requirements", [])],
@@ -726,6 +729,7 @@ class TeamOrchestrator:
             execution_intent="Use the approved plan as the execution contract source of truth.",
             topology_recommendation=_recommend_topology(policy, requirement, session.subtasks),
             provider_recommendation=_recommend_provider_runtime(self.runtime),
+            review_policy={},
             decision_rationale=[],
             review_disputes=[],
             gating_requirements=[
@@ -739,16 +743,22 @@ class TeamOrchestrator:
             PlanChecklistItem(label="Execution approved", owner="lead", completed=False),
         ]
         research_provider = "claude" if self.runtime.__class__.__name__ == "CommandJobRuntime" else "mock"
-        preferred_review_provider = "claude"
-        review_provider_status = self._review_provider_status(preferred_review_provider)
-        verdict_review_provider = preferred_review_provider if review_provider_status.available else "mock"
-        runtime_review_provider = verdict_review_provider
+        provider_recommendation = self._build_provider_recommendation()
+        runtime_review_provider = str(provider_recommendation.get("reviewer", "mock"))
         session.structured_brief.provider_recommendation = _recommend_provider_runtime(
             self.runtime,
-            reviewer_provider=verdict_review_provider,
-            fallback_from=preferred_review_provider,
-            fallback_reason="reviewer_unavailable" if verdict_review_provider != preferred_review_provider else None,
-            fallback_detail=review_provider_status.detail if verdict_review_provider != preferred_review_provider else None,
+            author_provider=str(provider_recommendation.get("author", "codex")),
+            reviewer_provider=runtime_review_provider,
+            author_fallback_from=_string_or_none(provider_recommendation.get("author_fallback_from")),
+            author_fallback_reason=_string_or_none(provider_recommendation.get("author_fallback_reason")),
+            author_fallback_detail=_string_or_none(provider_recommendation.get("author_fallback_detail")),
+            reviewer_fallback_from=_string_or_none(provider_recommendation.get("fallback_from")),
+            reviewer_fallback_reason=_string_or_none(provider_recommendation.get("fallback_reason")),
+            reviewer_fallback_detail=_string_or_none(provider_recommendation.get("fallback_detail")),
+        )
+        session.structured_brief.review_policy = _recommend_review_policy(
+            requirement,
+            session.structured_brief.topology_recommendation,
         )
 
         lead_job = self.runtime.start(
@@ -900,6 +910,57 @@ class TeamOrchestrator:
         configured = session.structured_brief.provider_recommendation.get("reviewer")
         return configured if isinstance(configured, str) and configured else None
 
+    def _build_provider_recommendation(self) -> dict[str, object]:
+        author_provider, author_status, author_fallback_from = self._resolve_provider_choice(
+            preferred="codex",
+            fallbacks=("claude", "mock"),
+        )
+        reviewer_provider, reviewer_status, reviewer_fallback_from = self._resolve_provider_choice(
+            preferred="claude",
+            fallbacks=("codex", "mock"),
+        )
+        recommendation: dict[str, object] = {
+            "author": author_provider,
+            "reviewer": reviewer_provider,
+        }
+        if author_fallback_from is not None and author_fallback_from != author_provider:
+            recommendation["author_fallback_from"] = author_fallback_from
+            recommendation["preferred_author"] = author_fallback_from
+            recommendation["author_fallback_reason"] = "author_unavailable"
+            recommendation["author_fallback_detail"] = author_status.detail
+        if reviewer_fallback_from is not None and reviewer_fallback_from != reviewer_provider:
+            recommendation["fallback_from"] = reviewer_fallback_from
+            recommendation["preferred_reviewer"] = reviewer_fallback_from
+            recommendation["fallback_reason"] = "reviewer_unavailable"
+            recommendation["fallback_detail"] = reviewer_status.detail
+        return recommendation
+
+    def _resolve_provider_choice(
+        self,
+        *,
+        preferred: str,
+        fallbacks: tuple[str, ...],
+    ) -> tuple[str, ProviderStatus, str | None]:
+        preferred_status = self._provider_status(preferred)
+        if preferred_status.available:
+            return preferred, preferred_status, None
+        for provider in fallbacks:
+            fallback_status = self._provider_status(provider)
+            if fallback_status.available:
+                return provider, preferred_status, preferred
+        return "mock", preferred_status, preferred
+
+    def _provider_status(self, provider: str) -> ProviderStatus:
+        if provider == "mock":
+            return ProviderStatus(provider="mock", available=True, detail="mock provider is always available")
+        if not _runtime_supports_provider(self.runtime, provider):
+            return ProviderStatus(provider=provider, available=False, detail=f"{provider} runtime adapter unavailable")
+        if self.runtime.__class__.__name__ != "CommandJobRuntime":
+            return ProviderStatus(provider=provider, available=True, detail="non-command runtime accepts provider hints")
+        checker = self.provider_health_check
+        status = checker(provider) if callable(checker) else checker.check(provider)
+        return status
+
     def _selected_retry_provider(self, session: PlanSession, runtime_status: Any) -> str:
         configured = self._configured_review_provider(session)
         if configured:
@@ -949,6 +1010,15 @@ class TeamOrchestrator:
         session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime)
         if session.status == "approved_for_execution":
             session.approved_plan = _build_approved_plan(session)
+        if self._can_refresh_process_docs():
+            session.doc_sync = self.refresh_documentation_sync()
+            session.compliance = build_compliance_status_for_session(
+                project_root=self.project_root,
+                doc_sync=session.doc_sync,
+                session=session,
+                run_store=self.orchestrator.run_store,
+                plans_root=self.store.root,
+            )
         self.store.write_session(session)
         return session
 
@@ -1017,14 +1087,15 @@ class TeamOrchestrator:
         session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime)
         session.approved_plan = _build_approved_plan(session)
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
-        session.doc_sync = self.refresh_documentation_sync()
-        session.compliance = build_compliance_status_for_session(
-            project_root=self.project_root,
-            doc_sync=session.doc_sync,
-            session=session,
-            run_store=self.orchestrator.run_store,
-            plans_root=self.store.root,
-        )
+        if self._can_refresh_process_docs():
+            session.doc_sync = self.refresh_documentation_sync()
+            session.compliance = build_compliance_status_for_session(
+                project_root=self.project_root,
+                doc_sync=session.doc_sync,
+                session=session,
+                run_store=self.orchestrator.run_store,
+                plans_root=self.store.root,
+            )
         self.store.write_session(session)
         return session
 
@@ -1054,6 +1125,14 @@ class TeamOrchestrator:
         session.resume.pending_role = "lead"
         session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime)
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
+        session.doc_sync = self.refresh_documentation_sync()
+        session.compliance = build_compliance_status_for_session(
+            project_root=self.project_root,
+            doc_sync=session.doc_sync,
+            session=session,
+            run_store=self.orchestrator.run_store,
+            plans_root=self.store.root,
+        )
         self.store.write_session(session)
         return session
 
@@ -1176,6 +1255,9 @@ class TeamOrchestrator:
 
     def _build_doc_sync_status(self) -> dict[str, object]:
         return build_doc_sync_status_for_project(self.project_root, self.runtime)
+
+    def _can_refresh_process_docs(self) -> bool:
+        return (self.project_root / "docs" / "process").exists()
 
     def _build_compliance_status(
         self,
@@ -1357,6 +1439,10 @@ def _runtime_supports_provider(runtime: JobRuntime, provider: str) -> bool:
     if isinstance(adapters, dict):
         return provider in adapters
     return True
+
+
+def _string_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _reconcile_linked_execution_state(session: PlanSession, run_store: Any | None) -> PlanSession:
@@ -1807,6 +1893,7 @@ def _build_approved_plan(session: PlanSession) -> dict[str, object]:
         "goal": session.structured_brief.goal or session.requirement,
         "subtasks": [subtask.to_dict() for subtask in session.structured_brief.subtasks],
         "acceptance_criteria": list(session.structured_brief.acceptance_criteria),
+        "review_policy": dict(session.structured_brief.review_policy),
         "open_followups": [gap.to_dict() for gap in session.gaps if gap.status != "closed"],
         "decision_verdict": session.decision_verdict.to_dict() if session.decision_verdict else None,
         "execution_contract": _build_plan_execution_contract(session),
@@ -1850,12 +1937,23 @@ def _build_plan_execution_contract(session: PlanSession) -> dict[str, object]:
 
 def _recommend_topology(policy: Any, requirement: str, subtasks: list[PlanSubtask]) -> dict[str, object]:
     lowered = requirement.lower()
+    dependency_heavy = len(subtasks) >= 3
+    high_parallelism = _requirement_or_subtasks_look_parallel(lowered, subtasks)
+    high_risk = any(keyword in lowered for keyword in ("auth", "payment", "security", "migration", "database"))
+    high_complexity = len(subtasks) >= 3 or any(keyword in lowered for keyword in ("architecture", "workflow", "integration", "orchestration"))
+
     if not policy.agent_enabled:
         recommended: TopologyName = "solo"
         reason = "policy disables agent topology, so execution should stay solo."
     elif "tiny" in lowered or len(subtasks) <= 1:
         recommended = "team"
         reason = "small scope can use the standard team topology without adversarial depth."
+    elif high_parallelism and not high_risk and "migration" not in lowered and "auth" not in lowered:
+        recommended = "team"
+        reason = "parallelizable work can proceed with the standard team topology without deeper adversarial depth."
+    elif high_risk or dependency_heavy:
+        recommended = "team_with_adversarial_review"
+        reason = "high-risk or dependency-heavy work benefits from team execution with adversarial review."
     else:
         recommended = "team_with_adversarial_review"
         reason = "multi-step work benefits from team execution with adversarial review."
@@ -1865,29 +1963,75 @@ def _recommend_topology(policy: Any, requirement: str, subtasks: list[PlanSubtas
         "selection_reason": reason,
         "subtask_count": len(subtasks),
         "agent_enabled": policy.agent_enabled,
+        "signals": {
+            "risk_level": "high" if high_risk else "normal",
+            "parallelism": "high" if high_parallelism else "normal",
+            "dependency_shape": "dependency_heavy" if dependency_heavy else "light",
+            "complexity": "high" if high_complexity else "normal",
+        },
+    }
+
+
+def _requirement_or_subtasks_look_parallel(requirement: str, subtasks: list[PlanSubtask]) -> bool:
+    titles = [subtask.title.lower() for subtask in subtasks]
+    gate_conditions = [" ".join(subtask.gate_conditions).lower() for subtask in subtasks]
+    parallel_terms = ("parallel", "independent", "compatibility", "multiple", "modules")
+    haystack = " ".join([requirement, *titles, *gate_conditions])
+    return any(term in haystack for term in parallel_terms)
+
+
+def _recommend_review_policy(requirement: str, topology_recommendation: dict[str, object]) -> dict[str, object]:
+    recommended_topology = str(topology_recommendation.get("recommended_topology", "team"))
+    signals = dict(topology_recommendation.get("signals", {}))
+    risk_level = str(signals.get("risk_level", "normal"))
+    if recommended_topology == "team_with_adversarial_review" or risk_level == "high":
+        return {
+            "policy_name": "adversarial_required",
+            "author_round": "lead",
+            "review_rounds": ["review", "adversarial_review"],
+            "adversarial_required": True,
+            "selection_reason": "topology and risk signals require both standard and adversarial review rounds.",
+        }
+    return {
+        "policy_name": "standard",
+        "author_round": "lead",
+        "review_rounds": ["review"],
+        "adversarial_required": False,
+        "selection_reason": "current topology signals support the standard review loop.",
     }
 
 
 def _recommend_provider_runtime(
     runtime: JobRuntime,
     *,
+    author_provider: str = "codex",
     reviewer_provider: str = "claude",
-    fallback_from: str | None = None,
-    fallback_reason: str | None = None,
-    fallback_detail: str | None = None,
+    author_fallback_from: str | None = None,
+    author_fallback_reason: str | None = None,
+    author_fallback_detail: str | None = None,
+    reviewer_fallback_from: str | None = None,
+    reviewer_fallback_reason: str | None = None,
+    reviewer_fallback_detail: str | None = None,
 ) -> dict[str, object]:
     recommendation = {
-        "author": "codex",
+        "author": author_provider,
         "reviewer": reviewer_provider,
         "runtime": "command" if runtime.__class__.__name__ == "CommandJobRuntime" else "mock",
     }
-    if fallback_from is not None and fallback_from != reviewer_provider:
-        recommendation["fallback_from"] = fallback_from
-        recommendation["preferred_reviewer"] = fallback_from
-    if fallback_reason is not None:
-        recommendation["fallback_reason"] = fallback_reason
-    if fallback_detail is not None:
-        recommendation["fallback_detail"] = fallback_detail
+    if author_fallback_from is not None and author_fallback_from != author_provider:
+        recommendation["author_fallback_from"] = author_fallback_from
+        recommendation["preferred_author"] = author_fallback_from
+    if author_fallback_reason is not None:
+        recommendation["author_fallback_reason"] = author_fallback_reason
+    if author_fallback_detail is not None:
+        recommendation["author_fallback_detail"] = author_fallback_detail
+    if reviewer_fallback_from is not None and reviewer_fallback_from != reviewer_provider:
+        recommendation["fallback_from"] = reviewer_fallback_from
+        recommendation["preferred_reviewer"] = reviewer_fallback_from
+    if reviewer_fallback_reason is not None:
+        recommendation["fallback_reason"] = reviewer_fallback_reason
+    if reviewer_fallback_detail is not None:
+        recommendation["fallback_detail"] = reviewer_fallback_detail
     return recommendation
 
 
@@ -1914,8 +2058,25 @@ def _build_decision_rationale(requirement: str, session: PlanSession, policy: An
     if "followup" in requirement.lower():
         rationale.append("Follow-up findings are tracked without blocking execution.")
     reviewer_provider = session.structured_brief.provider_recommendation.get("reviewer")
-    if reviewer_provider == "mock" and session.structured_brief.provider_recommendation.get("runtime") == "command":
-        rationale.append("claude unavailable; reviewer fallback downgraded to mock.")
+    preferred_reviewer = session.structured_brief.provider_recommendation.get("preferred_reviewer")
+    fallback_detail = session.structured_brief.provider_recommendation.get("fallback_detail")
+    if (
+        isinstance(reviewer_provider, str)
+        and isinstance(preferred_reviewer, str)
+        and preferred_reviewer != reviewer_provider
+    ):
+        detail = f" ({fallback_detail})" if isinstance(fallback_detail, str) and fallback_detail else ""
+        rationale.append(f"{preferred_reviewer} unavailable; reviewer fallback switched to {reviewer_provider}{detail}.")
+    author_provider = session.structured_brief.provider_recommendation.get("author")
+    preferred_author = session.structured_brief.provider_recommendation.get("preferred_author")
+    author_fallback_detail = session.structured_brief.provider_recommendation.get("author_fallback_detail")
+    if (
+        isinstance(author_provider, str)
+        and isinstance(preferred_author, str)
+        and preferred_author != author_provider
+    ):
+        detail = f" ({author_fallback_detail})" if isinstance(author_fallback_detail, str) and author_fallback_detail else ""
+        rationale.append(f"{preferred_author} unavailable; author fallback switched to {author_provider}{detail}.")
     return rationale
 
 
