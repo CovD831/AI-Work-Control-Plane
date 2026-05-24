@@ -137,3 +137,112 @@ Phase 6 result:
 - `team setup --runtime command --format json` reported readiness and release_readiness as true.
 - `team check-compliance` passed with no blocking reasons.
 - Final candidate freeze changes were ready for commit.
+
+## RC1 Phase 1 Plan: Version Baseline and Tag Availability
+
+- Baseline commit is `331c783 Prepare v1.0 candidate freeze`.
+- Target package version is `1.0.0rc1`.
+- Target local annotated tag is `v1.0.0-rc.1`.
+- Confirmed the worktree was clean before starting RC1.
+- Confirmed `v1.0.0-rc.1` did not already exist before starting RC1.
+- Keep public CLI behavior unchanged in this phase.
+- Continue automatically after targeted tests pass.
+
+RC1 Phase 1 targeted test:
+
+```bash
+pytest tests/test_docs_process.py tests/test_planning_support.py -q
+```
+
+RC1 Phase 1 result:
+
+- Targeted test passed: `24 passed`.
+
+## RC1 Phase 2 Plan: Package Version Sync
+
+- Update `pyproject.toml` package version from `0.1.0` to `1.0.0rc1`.
+- Update tests that assert the release_readiness package version.
+- Update candidate checklist wording so `1.0.0rc1` package version and `v1.0.0-rc.1` tag label are both explicit.
+- Keep `docs/process/v1x-release-readiness.md` as the canonical short process document.
+
+RC1 Phase 2 targeted test:
+
+```bash
+pytest tests/test_cli.py tests/test_docs_process.py tests/test_planning_support.py -q
+```
+
+RC1 Phase 2 result:
+
+- Package version updated to `1.0.0rc1`.
+- Candidate checklist now distinguishes package version `1.0.0rc1` from tag label `v1.0.0-rc.1`.
+- Targeted test passed: `97 passed`.
+
+## RC1 Phase 3 Plan: README and Runbook Command Audit
+
+- Audit README and operator runbook for direct task examples that omit the `run` subcommand.
+- Correct release-blocking command drift only.
+- Keep the CLI command surface unchanged.
+- Run CLI docs/UX targeted tests.
+
+RC1 Phase 3 targeted test:
+
+```bash
+pytest tests/test_cli.py tests/test_cli_presenters.py tests/test_docs_process.py -q
+```
+
+RC1 Phase 3 result:
+
+- Corrected README direct task examples to use the `run` subcommand.
+- Confirmed no README/operator-runbook direct task examples still omit `run`.
+- Targeted test passed: `94 passed`.
+
+## RC1 Phase 4 Plan: Evidence and Provider Smoke
+
+- Run live provider health with `--refresh`.
+- Run `team setup --runtime command --format json`.
+- Regenerate evidence report, real-task JSON payload, and evidence trend.
+- Confirm evidence report and trend keep RC-critical conclusion fields.
+- Keep runtime limitations explicit and unchanged.
+- Run runtime/provider and evidence/CLI targeted tests.
+
+RC1 Phase 4 targeted tests:
+
+```bash
+pytest tests/test_command.py tests/test_jobs.py tests/test_tmux_runtime.py -q
+pytest tests/test_evidence.py tests/test_cli.py -q
+```
+
+RC1 Phase 4 result:
+
+- Provider health reported `codex`, `claude`, and `mock` available.
+- `team setup --runtime command --format json` reported package version `1.0.0rc1` and release_readiness true.
+- Evidence report and trend were regenerated from current committed cases and benchmark comparison.
+- Confirmed RC-critical evidence conclusion fields remain present.
+- Runtime/provider targeted test passed: `32 passed`.
+- Evidence/CLI targeted test passed: `81 passed`.
+
+## RC1 Phase 5 Plan: Final Gate, Commit, and Local Tag
+
+- Run full `pytest`.
+- Run `team setup --runtime command --format json`.
+- Run `team check-compliance`.
+- Confirm worktree status before commit.
+- Commit with `Prepare v1.0.0-rc.1`.
+- Create local annotated tag `v1.0.0-rc.1`.
+- Confirm final worktree is clean and the tag exists.
+
+RC1 Phase 5 final gate:
+
+```bash
+pytest
+PYTHONPATH=src python -m agent_orchestrator.cli team setup --runtime command --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
+git status --short
+```
+
+RC1 Phase 5 result:
+
+- Full test suite passed: `338 passed`.
+- `team setup --runtime command --format json` reported package version `1.0.0rc1`, readiness true, and release_readiness true.
+- `team check-compliance` passed with no blocking reasons.
+- Ready to commit `Prepare v1.0.0-rc.1` and create local annotated tag `v1.0.0-rc.1`.

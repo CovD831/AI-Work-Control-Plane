@@ -189,7 +189,7 @@ Check local provider availability:
 
 ```bash
 python -m agent_orchestrator.cli health
-python -m agent_orchestrator.cli "Implement multiple independent modules in parallel" --mode auto
+python -m agent_orchestrator.cli run "Implement multiple independent modules in parallel" --mode auto
 ```
 
 The health output includes `codex`, `claude`, and `mock` provider records with binary, availability, detail, and recommended fallback fields. Command-runtime runs record this health snapshot in run/session metadata.
@@ -209,8 +209,8 @@ python -m agent_orchestrator.cli health --cache-ttl 300
 Run through the command runtime:
 
 ```bash
-python -m agent_orchestrator.cli "Review this workspace" --runtime command --provider claude
-python -m agent_orchestrator.cli "Implement the task" --runtime command --provider codex
+python -m agent_orchestrator.cli run "Review this workspace" --runtime command --provider claude
+python -m agent_orchestrator.cli run "Implement the task" --runtime command --provider codex
 ```
 
 Review policy can be recorded through a controlled override:
@@ -240,13 +240,13 @@ Run results keep `attempts`, `reroute_history`, `failure_decision`, `partial_res
 ## Run
 
 ```bash
-python -m agent_orchestrator.cli "Build a dashboard with tests" --mode success_first
+python -m agent_orchestrator.cli run "Build a dashboard with tests" --mode success_first
 ```
 
 Or after installing the package:
 
 ```bash
-agent-orchestrator "Build a dashboard with tests" --mode speed_first
+agent-orchestrator run "Build a dashboard with tests" --mode speed_first
 ```
 
 ## Test

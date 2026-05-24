@@ -1,10 +1,10 @@
 # v1.0 Candidate Release Checklist
 
-Use this checklist after the v1.x hardening evidence is current and before calling a build `v1.0.0-rc.1`. The canonical release-readiness process document remains `docs/process/v1x-release-readiness.md`; this file is the detailed operator checklist.
+Use this checklist after the v1.x hardening evidence is current and before calling a build `v1.0.0-rc.1`. The Python package version for this candidate is `1.0.0rc1`; the local git tag uses the release label `v1.0.0-rc.1`. The canonical release-readiness process document remains `docs/process/v1x-release-readiness.md`; this file is the detailed operator checklist.
 
 ## Version Sync
 
-- Confirm `pyproject.toml` carries the intended candidate package version.
+- Confirm `pyproject.toml` carries `1.0.0rc1` for `v1.0.0-rc.1`.
 - Confirm README and process docs do not claim a distribution shape beyond the local package state.
 - Do not imply plugin-marketplace or external distribution support.
 
