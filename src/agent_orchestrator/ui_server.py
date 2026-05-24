@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import time
 from typing import Any
 
 from agent_orchestrator.ui_service import DashboardService, build_dashboard_service
@@ -80,16 +81,13 @@ def create_app(service: DashboardService | None = None) -> Any:
         return dashboard.list_session_messages(session_id)
 
     @app.get("/api/stream")
-    def stream_events() -> Any:
-        return StreamingResponse(_sse_frames(dashboard.list_events()["events"], dashboard.list_messages()["messages"]), media_type="text/event-stream")
+    def stream_events(once: bool = False) -> Any:
+        return StreamingResponse(_sse_stream(dashboard, once=once), media_type="text/event-stream")
 
     @app.get("/api/sessions/{session_id}/stream")
-    def stream_session_events(session_id: str) -> Any:
+    def stream_session_events(session_id: str, once: bool = False) -> Any:
         return StreamingResponse(
-            _sse_frames(
-                dashboard.list_session_events(session_id)["events"],
-                dashboard.list_session_messages(session_id)["messages"],
-            ),
+            _sse_stream(dashboard, session_id=session_id, once=once),
             media_type="text/event-stream",
         )
 
@@ -158,8 +156,64 @@ def _call(fn: Any, http_exception: Any) -> Any:
         raise http_exception(status_code=400, detail=str(exc)) from exc
 
 
-def _sse_frames(events: object, messages: object) -> Any:
-    for event in events if isinstance(events, list) else []:
-        yield f"event: orchestration_event\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-    for message in messages if isinstance(messages, list) else []:
-        yield f"event: team_message\ndata: {json.dumps(message, ensure_ascii=False)}\n\n"
+def _sse_stream(
+    dashboard: DashboardService,
+    *,
+    session_id: str | None = None,
+    once: bool = False,
+    poll_interval: float = 1.0,
+    heartbeat_interval: float = 15.0,
+) -> Any:
+    seen: set[tuple[str, str]] = set()
+    last_heartbeat = time.monotonic()
+    while True:
+        emitted = False
+        for event_name, item in _stream_records(dashboard, session_id=session_id):
+            key = _stream_key(event_name, item)
+            if key in seen:
+                continue
+            seen.add(key)
+            emitted = True
+            yield _sse_frame(event_name, item)
+        if once:
+            break
+        now = time.monotonic()
+        if not emitted and now - last_heartbeat >= heartbeat_interval:
+            last_heartbeat = now
+            yield _sse_frame("heartbeat", {"ok": True, "session_id": session_id})
+        time.sleep(poll_interval)
+
+
+def _stream_records(dashboard: DashboardService, *, session_id: str | None = None) -> list[tuple[str, dict[str, object]]]:
+    events_payload = dashboard.list_session_events(session_id) if session_id else dashboard.list_events()
+    messages_payload = dashboard.list_session_messages(session_id) if session_id else dashboard.list_messages()
+    jobs_payload = dashboard.list_jobs()
+    records: list[tuple[str, dict[str, object]]] = []
+    records.extend(("orchestration_event", event) for event in _items(events_payload.get("events")))
+    records.extend(("team_message", message) for message in _items(messages_payload.get("messages")))
+    records.extend(
+        ("job_update", job)
+        for job in _items(jobs_payload.get("jobs"))
+        if session_id is None or job.get("session_id") == session_id or str(job.get("task_id") or "").startswith(session_id)
+    )
+    return records
+
+
+def _items(value: object) -> list[dict[str, object]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _stream_key(event_name: str, item: dict[str, object]) -> tuple[str, str]:
+    if event_name == "job_update":
+        return (
+            event_name,
+            "|".join(
+                str(item.get(key) or "")
+                for key in ("id", "status", "updated_at", "last_seen_at", "last_log_excerpt")
+            ),
+        )
+    return event_name, str(item.get("id") or json.dumps(item, sort_keys=True, ensure_ascii=False))
+
+
+def _sse_frame(event_name: str, payload: dict[str, object]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"

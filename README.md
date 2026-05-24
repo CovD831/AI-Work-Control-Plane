@@ -5,6 +5,7 @@ Agent Orchestrator is a local-first agent orchestration system for personal work
 中文说明入口：
 
 - 分层说明见 [docs/architecture/决策核心-执行拓扑-运行时分层说明.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
+- 上下文地图见 [docs/process/context-map.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/context-map.md)
 - 长周期执行章程见 [docs/process/长周期主执行计划.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/长周期主执行计划.md)
 - operator 操作说明见 [docs/process/agent-team-operator-runbook.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/agent-team-operator-runbook.md)
 - 后续实现默认按 `决策核心层 + 执行拓扑层 + Provider / Runtime 层` 三层来归类
@@ -242,9 +243,21 @@ Capture built-in or real-task workflow evidence:
 python -m agent_orchestrator.cli evidence benchmark --output .agent_orchestrator/evidence/workflow.json
 python -m agent_orchestrator.cli evidence capture --case-file cases.json --output .agent_orchestrator/evidence/real-tasks.json
 python -m agent_orchestrator.cli evidence report --output docs/process/v1x-evidence-report.md
+python -m agent_orchestrator.cli evidence report --case-file docs/process/evidence-cases.json --output docs/process/v1x-evidence-report.md --json-output .agent_orchestrator/evidence/real-tasks.json
 ```
 
 Case files are JSON lists with `label`, `requirement`, `scenario_type`, and `mode`.
+
+## Release Readiness
+
+Before calling a build release-ready, check:
+
+1. version sync in `pyproject.toml`
+2. targeted tests for the touched stage
+3. evidence report/trend outputs
+4. compliance status from `team check-compliance`
+
+The CLI does not pretend to be a package marketplace or plugin installer; it only reports local readiness honestly.
 
 ## Agent Team Console
 

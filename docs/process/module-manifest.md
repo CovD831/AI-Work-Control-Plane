@@ -2,9 +2,13 @@
 
 - file-header contract
 - root map
+- context map
 - `actions.py`: Backend action registry for plan session operations.
 - `adapters.py`: Adapter interfaces and deterministic MVP implementations.
 - `cli.py`: Command line interface for the orchestration MVP.
+- `cli_common.py`: Shared helpers for command-line presenters.
+- `cli_evidence.py`: Evidence command handlers for the Agent Orchestrator CLI.
+- `cli_jobs.py`: Job command handlers for the Agent Orchestrator CLI.
 - `cli_presenters.py`: Formatting helpers for CLI session and execution output.
 - `command.py`: Command-based provider integration for real Claude/Codex runs.
 - `events.py`: Append-only event store for orchestration state changes.
@@ -30,3 +34,4 @@
 - `ui_server.py`: FastAPI app for the local Agent Team Console.
 - `ui_service.py`: Service helpers for the local Agent Team Console.
 - `work_graph.py`: Persistent work graph models for plan sessions.
+- release readiness

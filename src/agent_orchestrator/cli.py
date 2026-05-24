@@ -13,6 +13,9 @@ import shutil
 from pathlib import Path
 
 from agent_orchestrator.adapters import RuntimeProviderAdapter, RuntimeProviderReviewRescueAdapter
+from agent_orchestrator.cli_common import FORMAT_CHOICES, emit_json as _emit_json, json_only as _json_only
+from agent_orchestrator.cli_evidence import run_evidence_command
+from agent_orchestrator.cli_jobs import run_job_command
 from agent_orchestrator.cli_presenters import (
     print_team_next as _print_team_next_presenter,
     print_team_runbook as _print_team_runbook_presenter,
@@ -28,15 +31,10 @@ from agent_orchestrator.cli_presenters import (
     team_display_context as _team_display_context,
 )
 from agent_orchestrator.command import CommandJobRuntime, ProviderHealthCheck
-from agent_orchestrator.evidence import (
-    benchmark_evidence_cases,
-    capture_workflow_evidence,
-    load_workflow_evidence_cases,
-    write_workflow_evidence_markdown,
-)
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator, build_operator_runbook
+from agent_orchestrator.planning_support import repair_missing_source_headers
 from agent_orchestrator.run_store import RunStore
 
 
@@ -123,38 +121,52 @@ def main() -> None:
     status_parser = subparsers.add_parser("status", help="Show job status.")
     status_parser.add_argument("job_id", help="Job id to inspect.")
     status_parser.add_argument("--root", default=".agent_orchestrator/jobs", help="Job store root.")
+    status_parser.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     result_parser = subparsers.add_parser("result", help="Show job result.")
     result_parser.add_argument("job_id", help="Job id to inspect.")
     result_parser.add_argument("--root", default=".agent_orchestrator/jobs", help="Job store root.")
+    result_parser.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     send_parser = subparsers.add_parser("send", help="Send a follow-up message to a job.")
     send_parser.add_argument("job_id", help="Job id to update.")
     send_parser.add_argument("message", help="Follow-up message.")
     send_parser.add_argument("--root", default=".agent_orchestrator/jobs", help="Job store root.")
+    send_parser.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     cancel_parser = subparsers.add_parser("cancel", help="Cancel a job.")
     cancel_parser.add_argument("job_id", help="Job id to cancel.")
     cancel_parser.add_argument("--root", default=".agent_orchestrator/jobs", help="Job store root.")
+    cancel_parser.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     health_parser = subparsers.add_parser("health", help="Check local provider availability.")
     health_parser.add_argument("--refresh", action="store_true", help="Bypass provider health cache and refresh live status.")
     health_parser.add_argument("--cache-ttl", type=int, default=60, help="Provider health cache TTL in seconds.")
+    health_parser.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     evidence_parser = subparsers.add_parser("evidence", help="Capture workflow evidence reports.")
     evidence_subparsers = evidence_parser.add_subparsers(dest="evidence_command")
 
     evidence_benchmark = evidence_subparsers.add_parser("benchmark", help="Run the built-in workflow evidence cases.")
     evidence_benchmark.add_argument("--output", help="Optional JSON output path.")
+    evidence_benchmark.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     evidence_capture = evidence_subparsers.add_parser("capture", help="Run evidence cases from a JSON case file.")
     evidence_capture.add_argument("--case-file", required=True, help="JSON file containing real workflow evidence cases.")
     evidence_capture.add_argument("--output", required=True, help="JSON output path.")
+    evidence_capture.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     evidence_report = evidence_subparsers.add_parser("report", help="Write a markdown workflow evidence report.")
     evidence_report.add_argument("--case-file", help="Optional JSON file containing workflow evidence cases.")
     evidence_report.add_argument("--output", required=True, help="Markdown output path.")
     evidence_report.add_argument("--json-output", help="Optional JSON evidence output path.")
+    evidence_report.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    evidence_compare = evidence_subparsers.add_parser("compare", help="Compare two workflow evidence JSON captures.")
+    evidence_compare.add_argument("--baseline", required=True, help="Baseline evidence JSON path.")
+    evidence_compare.add_argument("--current", required=True, help="Current evidence JSON path.")
+    evidence_compare.add_argument("--output", required=True, help="Markdown trend output path.")
+    evidence_compare.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     ui_parser = subparsers.add_parser("ui", help="Start the local Agent Team Console dashboard.")
     ui_parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind.")
@@ -179,6 +191,7 @@ def main() -> None:
     team_start.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_start.add_argument("--provider", choices=["codex", "claude"])
     team_start.add_argument("--review-policy", choices=REVIEW_POLICY_CHOICES, default="auto")
+    team_start.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     team_status = team_subparsers.add_parser("status", help="Inspect a plan session.")
     team_status.add_argument("session_id")
@@ -186,6 +199,7 @@ def main() -> None:
     team_status.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_status.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_status.add_argument("--provider", choices=["codex", "claude"])
+    team_status.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     team_summary = team_subparsers.add_parser("summary", help="Show a human-readable plan session summary.")
     team_summary.add_argument("session_id")
@@ -193,6 +207,7 @@ def main() -> None:
     team_summary.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_summary.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_summary.add_argument("--provider", choices=["codex", "claude"])
+    team_summary.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     team_next = team_subparsers.add_parser("next", help="Show the next recommended team command.")
     team_next.add_argument("session_id")
@@ -235,6 +250,7 @@ def main() -> None:
     team_repair_compliance.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_repair_compliance.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_repair_compliance.add_argument("--provider", choices=["codex", "claude"])
+    team_repair_compliance.add_argument("--fix-headers", action="store_true")
 
     team_retry_review = team_subparsers.add_parser("retry-review", help="Retry a failed delegated review round.")
     team_retry_review.add_argument("session_id")
@@ -290,6 +306,14 @@ def main() -> None:
     team_execute.add_argument("--provider", choices=["codex", "claude"])
     team_execute.add_argument("--review-policy", choices=REVIEW_POLICY_CHOICES, default="auto")
 
+    team_setup = team_subparsers.add_parser("setup", help="Inspect provider/runtime and workflow readiness.")
+    team_setup.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_setup.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_setup.add_argument("--jobs-root", default=".agent_orchestrator/jobs")
+    team_setup.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_setup.add_argument("--provider", choices=["codex", "claude"])
+    team_setup.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
     team_inspect_execution = team_subparsers.add_parser(
         "inspect-execution",
         help="Show the linked execution run for a completed or in-progress plan session.",
@@ -299,6 +323,7 @@ def main() -> None:
     team_inspect_execution.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_inspect_execution.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_inspect_execution.add_argument("--provider", choices=["codex", "claude"])
+    team_inspect_execution.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     team_inspect_blockers = team_subparsers.add_parser(
         "inspect-blockers",
@@ -309,20 +334,15 @@ def main() -> None:
     team_inspect_blockers.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_inspect_blockers.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_inspect_blockers.add_argument("--provider", choices=["codex", "claude"])
+    team_inspect_blockers.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
     args = parser.parse_args()
 
     if args.command == "health":
-        print(
-            json.dumps(
-                _provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl),
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        _emit_json(_provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl), args)
         return
 
     if args.command == "evidence":
-        _run_evidence_command(args)
+        run_evidence_command(args)
         return
 
     if args.command == "ui":
@@ -346,23 +366,24 @@ def main() -> None:
         team = _build_team_orchestrator(args.runtime, getattr(args, "provider", None), args.plans_root, args.runs_root)
         health_snapshot = _provider_health_snapshot() if args.runtime == "command" else None
         if args.team_command == "start":
-            print(
-                json.dumps(
-                    team.start(
-                        args.requirement,
-                        review_policy_override=getattr(args, "review_policy", "auto"),
-                        provider_health_snapshot=health_snapshot,
-                    ).to_dict(),
-                    ensure_ascii=False,
-                    indent=2,
-                )
+            _emit_json(
+                team.start(
+                    args.requirement,
+                    review_policy_override=getattr(args, "review_policy", "auto"),
+                    provider_health_snapshot=health_snapshot,
+                ).to_dict(),
+                args,
             )
             return
         if args.team_command == "status":
-            print(json.dumps(team.status(args.session_id).to_dict(), ensure_ascii=False, indent=2))
+            _emit_json(team.status(args.session_id).to_dict(), args)
             return
         if args.team_command == "summary":
-            _print_team_summary(team.status(args.session_id))
+            session = team.status(args.session_id)
+            if _json_only(args):
+                _emit_json(session.to_dict(), args)
+            else:
+                _print_team_summary(session)
             return
         if args.team_command == "next":
             _print_team_next(team.status(args.session_id), args)
@@ -387,6 +408,11 @@ def main() -> None:
         if args.team_command == "repair-compliance":
             changed_files = list(getattr(args, "changed_file", []) or [])
             refresh_payload = team.refresh_documentation_sync()
+            header_repair = (
+                repair_missing_source_headers(Path.cwd(), changed_files=changed_files)
+                if getattr(args, "fix_headers", False)
+                else {"changed_files": [], "required_actions": [], "remaining_warnings": []}
+            )
             compliance = (
                 team.check_session_compliance(args.session_id, changed_files=changed_files)
                 if args.session_id
@@ -394,6 +420,7 @@ def main() -> None:
             )
             payload = {
                 "refresh_results": refresh_payload.get("refresh_results", []),
+                "header_repair": header_repair,
                 "doc_sync": refresh_payload,
                 "compliance": compliance,
                 "required_actions": compliance.get("required_actions", []),
@@ -440,44 +467,24 @@ def main() -> None:
                 )
             )
             return
+        if args.team_command == "setup":
+            print(json.dumps(_team_setup_snapshot(team, args), ensure_ascii=False, indent=2))
+            return
         if args.team_command == "inspect-execution":
             payload = team.inspect_execution(args.session_id)
-            _print_execution_session_summary(payload)
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            if not _json_only(args):
+                _print_execution_session_summary(payload)
+            _emit_json(payload, args)
             return
         if args.team_command == "inspect-blockers":
             payload = team.inspect_blockers(args.session_id)
-            _print_blocker_session_summary(payload)
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            if not _json_only(args):
+                _print_blocker_session_summary(payload)
+            _emit_json(payload, args)
             return
         parser.error("a team subcommand is required")
 
-    if args.command == "status":
-        runtime = CommandJobRuntime(root=Path(args.root))
-        payload = runtime.status(args.job_id).to_dict()
-        _print_job_cli_summary("status", payload)
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "result":
-        runtime = CommandJobRuntime(root=Path(args.root))
-        payload = runtime.result(args.job_id).to_dict()
-        _print_job_cli_summary("result", payload)
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "send":
-        runtime = CommandJobRuntime(root=Path(args.root))
-        payload = runtime.send(args.job_id, args.message).to_dict()
-        _print_job_cli_summary("send", payload)
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "cancel":
-        runtime = CommandJobRuntime(root=Path(args.root))
-        payload = runtime.cancel(args.job_id).to_dict()
-        _print_job_cli_summary("cancel", payload)
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if run_job_command(args):
         return
 
     if args.command == "start":
@@ -649,36 +656,6 @@ def _provider_health_snapshot(*, refresh: bool = False, ttl_seconds: int = 60) -
     }
 
 
-def _run_evidence_command(args: argparse.Namespace) -> None:
-    if args.evidence_command == "benchmark":
-        payload = capture_workflow_evidence(
-            benchmark_evidence_cases(),
-            project_root=Path.cwd(),
-            output_path=Path(args.output) if args.output else None,
-        )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-
-    if args.evidence_command == "capture":
-        cases = load_workflow_evidence_cases(args.case_file)
-        payload = capture_workflow_evidence(cases, project_root=Path.cwd(), output_path=Path(args.output))
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-
-    if args.evidence_command == "report":
-        cases = load_workflow_evidence_cases(args.case_file) if args.case_file else benchmark_evidence_cases()
-        payload = capture_workflow_evidence(
-            cases,
-            project_root=Path.cwd(),
-            output_path=Path(args.json_output) if args.json_output else None,
-        )
-        path = write_workflow_evidence_markdown(payload, Path(args.output))
-        print(f"Wrote evidence report: {path}")
-        return
-
-    raise SystemExit("an evidence subcommand is required")
-
-
 def _install_git_hooks(repo_root: Path) -> None:
     hooks_source_dir = repo_root / "scripts" / "git-hooks"
     git_hooks_dir = repo_root / ".git" / "hooks"
@@ -783,19 +760,6 @@ def _print_run_summary(run: object) -> None:
         )
 
 
-def _print_job_cli_summary(command: str, payload: dict[str, object]) -> None:
-    job_id = payload.get("id") or payload.get("job_id") or "unknown"
-    status = payload.get("status") or "unknown"
-    phase = payload.get("phase") or "unknown"
-    summary = payload.get("summary") or payload.get("error") or ""
-    terminal_ref = None
-    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-    if metadata:
-        terminal_ref = metadata.get("terminal_ref")
-    suffix = f" terminal={terminal_ref}" if terminal_ref else ""
-    print(f"job_{command}: id={job_id} status={status} phase={phase}{suffix} summary={summary}")
-
-
 def _print_team_summary(session: object) -> None:
     _print_team_summary_presenter(session, pick_primary_action=_pick_primary_action)
 
@@ -824,6 +788,126 @@ def _print_execution_session_summary(payload: dict[str, object]) -> None:
 
 def _print_blocker_session_summary(payload: dict[str, object]) -> None:
     _print_blocker_session_summary_presenter(payload)
+
+
+def _team_setup_snapshot(team: TeamOrchestrator, args: argparse.Namespace) -> dict[str, object]:
+    project_root = Path.cwd()
+    health_snapshot = _provider_health_snapshot(refresh=args.runtime == "command")
+    doc_sync = team.refresh_documentation_sync()
+    compliance = team.check_compliance()
+    readiness = _build_setup_readiness(project_root, health_snapshot, doc_sync, compliance)
+    return {
+        "provider_health": health_snapshot,
+        "doc_sync": doc_sync,
+        "compliance": compliance,
+        "readiness": readiness,
+        "release_readiness": _build_release_readiness(project_root, health_snapshot, doc_sync, compliance, readiness),
+        "recommended_commands": [
+            "python -m agent_orchestrator.cli team check-compliance",
+            "python -m agent_orchestrator.cli team refresh-docs",
+            "python -m agent_orchestrator.cli health --format json",
+        ],
+    }
+
+
+def _build_release_readiness(
+    project_root: Path,
+    health_snapshot: dict[str, object],
+    doc_sync: dict[str, object],
+    compliance: dict[str, object],
+    readiness: dict[str, object],
+) -> dict[str, object]:
+    warnings = list(readiness.get("compliance_status", {}).get("warnings", [])) if isinstance(readiness.get("compliance_status"), dict) else []
+    blocking_reasons = list(readiness.get("compliance_status", {}).get("blocking_reasons", [])) if isinstance(readiness.get("compliance_status"), dict) else []
+    provider_states = list(readiness.get("provider_states", [])) if isinstance(readiness.get("provider_states"), list) else []
+    version_sync = {
+        "package_version": _project_version(),
+        "version_file_present": (project_root / "pyproject.toml").exists(),
+        "version_note": "project metadata is declared in pyproject.toml; no plugin-style distribution is implied",
+    }
+    evidence_state = {
+        "benchmark_report_present": (project_root / "docs" / "process" / "v1x-evidence-report.md").exists(),
+        "trend_report_present": (project_root / "docs" / "process" / "v1x-evidence-trend.md").exists(),
+        "evidence_cases_present": (project_root / "docs" / "process" / "evidence-cases.json").exists(),
+    }
+    checklist = {
+        "version_sync": bool(version_sync["version_file_present"]),
+        "tests": "pytest" in " ".join(_release_readiness_commands()),
+        "evidence": all(evidence_state.values()),
+        "compliance": not blocking_reasons,
+    }
+    return {
+        "project_root": str(project_root),
+        "ready": bool(readiness.get("ready", False)) and not blocking_reasons,
+        "version_sync": version_sync,
+        "provider_states": provider_states,
+        "evidence_state": evidence_state,
+        "checklist": checklist,
+        "warnings": warnings,
+        "blocking_reasons": blocking_reasons,
+        "recommended_commands": _release_readiness_commands(),
+    }
+
+
+def _release_readiness_commands() -> list[str]:
+    return [
+        "python -m agent_orchestrator.cli team check-compliance",
+        "python -m agent_orchestrator.cli team refresh-docs",
+        "python -m agent_orchestrator.cli evidence report --output docs/process/v1x-evidence-report.md",
+        "pytest",
+    ]
+
+
+def _project_version() -> str:
+    pyproject = Path("pyproject.toml")
+    if not pyproject.exists():
+        return "unknown"
+    for line in pyproject.read_text(encoding="utf-8").splitlines():
+        if line.startswith("version = "):
+            return line.split("=", 1)[1].strip().strip('"')
+    return "unknown"
+
+
+def _build_setup_readiness(
+    project_root: Path,
+    health_snapshot: dict[str, object],
+    doc_sync: dict[str, object],
+    compliance: dict[str, object],
+) -> dict[str, object]:
+    providers = health_snapshot.get("providers", []) if isinstance(health_snapshot.get("providers"), list) else []
+    provider_states = []
+    for item in providers:
+        if not isinstance(item, dict):
+            continue
+        provider_states.append(
+            {
+                "provider": item.get("provider"),
+                "available": bool(item.get("available", False)),
+                "binary": item.get("binary"),
+                "recommended_fallback": item.get("recommended_fallback"),
+                "detail": item.get("detail"),
+            }
+        )
+    warnings = [str(item) for item in compliance.get("warnings", [])] if isinstance(compliance.get("warnings"), list) else []
+    blocking_reasons = [str(item) for item in compliance.get("blocking_reasons", [])] if isinstance(compliance.get("blocking_reasons"), list) else []
+    ready = not blocking_reasons and not warnings
+    return {
+        "project_root": str(project_root),
+        "ready": ready,
+        "provider_states": provider_states,
+        "doc_sync_status": {
+            "missing_docs": list(doc_sync.get("missing_docs", [])) if isinstance(doc_sync.get("missing_docs"), list) else [],
+            "stale_docs": list(doc_sync.get("stale_docs", [])) if isinstance(doc_sync.get("stale_docs"), list) else [],
+            "header_contract_violations": list(doc_sync.get("header_contract_violations", [])) if isinstance(doc_sync.get("header_contract_violations"), list) else [],
+        },
+        "compliance_status": {
+            "blocking": bool(compliance.get("blocking", False)),
+            "warnings": warnings,
+            "blocking_reasons": blocking_reasons,
+            "required_actions": list(compliance.get("required_actions", [])) if isinstance(compliance.get("required_actions"), list) else [],
+            "recommended_commands": list(compliance.get("recommended_commands", [])) if isinstance(compliance.get("recommended_commands"), list) else [],
+        },
+    }
 
 
 def _build_team_next_command(

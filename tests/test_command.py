@@ -358,7 +358,8 @@ def test_command_job_runtime_cancel_marks_terminal(tmp_path) -> None:
 
     assert cancelled.status == "cancelled"
     assert cancelled.parsed_payload is not None
-    assert cancelled.parsed_payload["cancel"]["status"] == "cancelled"
+    assert cancelled.parsed_payload["cancel"]["status"] == "accepted"
+    assert cancelled.parsed_payload["operation"]["status"] == "accepted"
     assert runtime.result(job.id).status == "cancelled"
 
 
@@ -383,8 +384,29 @@ def test_command_job_runtime_send_persists_follow_up_payload(tmp_path) -> None:
     assert sent.parsed_payload is not None
     assert sent.parsed_payload["follow_up"]["message"] == "follow up"
     assert sent.parsed_payload["follow_up"]["status"] == "accepted"
+    assert sent.parsed_payload["operation"]["status"] == "accepted"
     assert sent.session_id == "session-1"
     assert sent.thread_id == "thread-1"
+
+
+def test_command_job_runtime_terminal_send_reports_already_terminal(tmp_path) -> None:
+    runner = SessionRunner(CommandResult(command=["fake"], exit_code=0, stdout="ok", stderr=""))
+    runtime = CommandJobRuntime(root=tmp_path, runner=runner, adapters={"codex": CodexCliAdapter()})
+    job = runtime.start(
+        JobRequest(
+            task_id="work-terminal",
+            provider="codex",
+            kind="implementation",
+            prompt="Implement",
+            cwd=str(tmp_path),
+        )
+    )
+    runtime.cancel(job.id)
+
+    sent = runtime.send(job.id, "late")
+
+    assert sent.parsed_payload is not None
+    assert sent.parsed_payload["operation"]["status"] == "already_terminal"
 
 
 def test_claude_adapter_parses_json_envelope() -> None:

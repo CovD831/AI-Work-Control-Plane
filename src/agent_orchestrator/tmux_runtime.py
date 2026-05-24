@@ -11,7 +11,7 @@ import subprocess
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
-from agent_orchestrator.jobs import AgentJob, FileJobRuntime, JobRequest, JobResult, TERMINAL_STATUSES, now_iso
+from agent_orchestrator.jobs import AgentJob, FileJobRuntime, JobRequest, JobResult, TERMINAL_STATUSES, _with_operation, now_iso
 
 
 class TmuxRunner(Protocol):
@@ -127,10 +127,16 @@ class TmuxJobRuntime(FileJobRuntime):
     def send(self, job_id: str, message: str) -> AgentJob:
         job = self._read_job(job_id)
         if job.status in TERMINAL_STATUSES:
-            return job
+            return self._store_operation(
+                job,
+                action="send",
+                status="already_terminal",
+                detail="Job is already terminal.",
+            )
         session_name = str(job.metadata.get("tmux_session") or _session_name(job.id))
         self.runner.send_keys(session_name, message)
         updated = replace(job, messages=[*job.messages, message], phase="working", updated_at=now_iso())
+        updated = _with_operation(updated, action="send", status="accepted", detail="Message sent to tmux session.")
         self._write_job(updated)
         self._append_log(job_id, f"tmux send: {message}")
         return updated
@@ -138,7 +144,12 @@ class TmuxJobRuntime(FileJobRuntime):
     def cancel(self, job_id: str) -> AgentJob:
         job = self._read_job(job_id)
         if job.status in TERMINAL_STATUSES:
-            return job
+            return self._store_operation(
+                job,
+                action="cancel",
+                status="already_terminal",
+                detail="Job is already terminal.",
+            )
         session_name = str(job.metadata.get("tmux_session") or _session_name(job.id))
         try:
             self.runner.kill_session(session_name)
@@ -153,6 +164,7 @@ class TmuxJobRuntime(FileJobRuntime):
             updated_at=timestamp,
             summary=job.summary or "tmux job cancelled.",
         )
+        updated = _with_operation(updated, action="cancel", status="accepted", detail="tmux session cancellation accepted.")
         self._write_job(updated)
         self._append_log(job_id, "tmux cancelled")
         return updated

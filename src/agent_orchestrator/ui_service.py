@@ -191,10 +191,16 @@ class DashboardService:
         return {"job_id": job_id, "log": path.read_text(encoding="utf-8") if path.exists() else ""}
 
     def send_job(self, job_id: str, message: str) -> dict[str, object]:
-        return self.job_runtime.send(job_id, message).to_dict()
+        try:
+            return _job_card(self.job_runtime.send(job_id, message).to_dict(), self.jobs_root)
+        except KeyError:
+            return _missing_job_operation(job_id, "send")
 
     def cancel_job(self, job_id: str) -> dict[str, object]:
-        return self.job_runtime.cancel(job_id).to_dict()
+        try:
+            return _job_card(self.job_runtime.cancel(job_id).to_dict(), self.jobs_root)
+        except KeyError:
+            return _missing_job_operation(job_id, "cancel")
 
     def _record_action(self, action: str, session_id: str, payload: dict[str, object]) -> None:
         self.event_store.append(
@@ -849,6 +855,26 @@ def _job_card(job: dict[str, object], jobs_root: Path | None = None) -> dict[str
         "attach_available": bool(metadata.get("attach_available", False)),
         "last_log_excerpt": _log_excerpt(log_text),
         "last_seen_at": job.get("updated_at") or job.get("completed_at") or job.get("started_at"),
+        "operation": _job_operation(job),
+    }
+
+
+def _job_operation(job: dict[str, object]) -> dict[str, object] | None:
+    parsed = job.get("parsed_payload", {}) if isinstance(job.get("parsed_payload"), dict) else {}
+    operation = parsed.get("operation") if isinstance(parsed, dict) else None
+    return operation if isinstance(operation, dict) else None
+
+
+def _missing_job_operation(job_id: str, action: str) -> dict[str, object]:
+    return {
+        "id": job_id,
+        "status": "missing",
+        "operation": {
+            "action": action,
+            "status": "session_missing",
+            "reason": "session_missing",
+            "detail": f"Job {job_id} is not available.",
+        },
     }
 
 

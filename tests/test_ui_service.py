@@ -104,6 +104,28 @@ def test_dashboard_job_list_detail_and_missing_log(tmp_path) -> None:
     assert missing_log["log"] == ""
 
 
+def test_dashboard_job_send_cancel_surface_operation_status(tmp_path) -> None:
+    service = _service(tmp_path)
+    runtime = FileJobRuntime(root=tmp_path / "jobs")
+    job = runtime.start(
+        JobRequest(
+            task_id="ui-job-operation",
+            provider="codex",
+            kind="implementation",
+            prompt="Build UI",
+            cwd=str(tmp_path),
+        )
+    )
+
+    sent = service.send_job(job.id, "continue")
+    cancelled = service.cancel_job(job.id)
+    missing = service.send_job("missing-job", "continue")
+
+    assert sent["operation"]["status"] == "accepted"
+    assert cancelled["operation"]["status"] == "accepted"
+    assert missing["operation"]["status"] == "session_missing"
+
+
 def test_dashboard_job_cards_surface_terminal_metadata(tmp_path) -> None:
     service = _service(tmp_path)
     runtime = FileJobRuntime(root=tmp_path / "jobs")

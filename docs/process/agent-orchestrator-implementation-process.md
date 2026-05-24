@@ -5,7 +5,7 @@
 - Planning Governance Progress: `decision-core-first happy path established; recovery and handoff hardening in progress`
 - Execution Strategy Progress: `iteration 4 in progress`
 - Total Product Progress: `decision-core-first happy path established with planning skeleton advancing`
-- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, operator-runbook signal compliance, and a structured compliance contract with changed-file header enforcement, but still lacks fully hardened recovery semantics, richer topology policy breadth, broader documentation coverage, and stronger narrow-scope hook enforcement for the internal-default workflow
+- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, operator-runbook signal compliance, and a structured compliance contract with changed-file header enforcement, but still lacks fully hardened recovery semantics, richer topology policy breadth, broader documentation coverage, stronger narrow-scope hook enforcement for the internal-default workflow, and the newly accepted reference-informed v1.x upgrade plan is now the staged backlog for these improvements
 
 ## Purpose Of This Document
 
@@ -38,6 +38,7 @@ Update this file at the end of every implementation iteration. Do not maintain a
 
 - [决策核心-执行拓扑-运行时分层说明](/Users/abab/Desktop/Agent-Orchestratoar/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
 - [长周期主执行计划](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/长周期主执行计划.md)
+- [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-reference-upgrade-master-plan.md)
 
 特别说明：
 

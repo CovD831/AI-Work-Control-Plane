@@ -4,3 +4,4 @@
 - changed-file enforcement for source modules
 - placeholder header values are not allowed in changed files
 - module manifest linkage
+- context map linkage

@@ -13,6 +13,14 @@ Provider = Literal["claude", "codex", "mock"]
 JobKind = Literal["research", "implementation", "review", "adversarial_review", "rescue"]
 JobStatus = Literal["pending", "running", "idle", "completed", "failed", "cancelled"]
 JobPhase = Literal["starting", "working", "reviewing", "done", "failed", "cancelled"]
+ProviderOperationStatus = Literal[
+    "accepted",
+    "unsupported",
+    "session_missing",
+    "auth_required",
+    "provider_unavailable",
+    "already_terminal",
+]
 SandboxMode = Literal["read-only", "workspace-write", "danger-full-access"]
 ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 DelegationStep = tuple[Provider, JobKind]
@@ -280,7 +288,7 @@ class InMemoryJobRuntime:
     def send(self, job_id: str, message: str) -> AgentJob:
         job = self._get(job_id)
         if job.status in TERMINAL_STATUSES:
-            return job
+            return _with_operation(job, action="send", status="already_terminal", detail="Job is already terminal.")
         updated = replace(
             job,
             messages=[*job.messages, message],
@@ -288,13 +296,14 @@ class InMemoryJobRuntime:
             phase="working",
             updated_at=now_iso(),
         )
+        updated = _with_operation(updated, action="send", status="accepted", detail="Message accepted by mock runtime.")
         self.jobs[job_id] = updated
         return updated
 
     def cancel(self, job_id: str) -> AgentJob:
         job = self._get(job_id)
         if job.status in TERMINAL_STATUSES:
-            return job
+            return _with_operation(job, action="cancel", status="already_terminal", detail="Job is already terminal.")
         timestamp = now_iso()
         updated = replace(
             job,
@@ -304,6 +313,7 @@ class InMemoryJobRuntime:
             updated_at=timestamp,
             summary=job.summary or "Job cancelled.",
         )
+        updated = _with_operation(updated, action="cancel", status="accepted", detail="Job cancellation accepted.")
         self.jobs[job_id] = updated
         return updated
 
@@ -423,7 +433,12 @@ class FileJobRuntime:
     def send(self, job_id: str, message: str) -> AgentJob:
         job = self._read_job(job_id)
         if job.status in TERMINAL_STATUSES:
-            return job
+            return self._store_operation(
+                job,
+                action="send",
+                status="already_terminal",
+                detail="Job is already terminal.",
+            )
         updated = replace(
             job,
             messages=[*job.messages, message],
@@ -431,6 +446,7 @@ class FileJobRuntime:
             phase="working",
             updated_at=now_iso(),
         )
+        updated = _with_operation(updated, action="send", status="accepted", detail="Message recorded for job.")
         self._write_job(updated)
         self._append_log(job_id, f"message: {message}")
         return updated
@@ -438,7 +454,12 @@ class FileJobRuntime:
     def cancel(self, job_id: str) -> AgentJob:
         job = self._read_job(job_id)
         if job.status in TERMINAL_STATUSES:
-            return job
+            return self._store_operation(
+                job,
+                action="cancel",
+                status="already_terminal",
+                detail="Job is already terminal.",
+            )
         timestamp = now_iso()
         updated = replace(
             job,
@@ -448,6 +469,7 @@ class FileJobRuntime:
             updated_at=timestamp,
             summary=job.summary or "Job cancelled.",
         )
+        updated = _with_operation(updated, action="cancel", status="accepted", detail="Job cancellation accepted.")
         self._write_job(updated)
         self._append_log(job_id, "cancelled")
         return updated
@@ -542,6 +564,19 @@ class FileJobRuntime:
             raise KeyError(f"Unknown job id: {job_id}")
         return AgentJob.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
+    def _store_operation(
+        self,
+        job: AgentJob,
+        *,
+        action: str,
+        status: ProviderOperationStatus,
+        detail: str,
+        reason: str | None = None,
+    ) -> AgentJob:
+        updated = _with_operation(job, action=action, status=status, detail=detail, reason=reason)
+        self._write_job(updated)
+        return updated
+
     def _write_job(self, job: AgentJob) -> None:
         current_path = self._job_path(job.id)
         if current_path.exists():
@@ -588,3 +623,23 @@ def _is_unjustified_ping_pong(
         and previous_kind == kind
         and kind != "rescue"
     )
+
+
+def _with_operation(
+    job: AgentJob,
+    *,
+    action: str,
+    status: ProviderOperationStatus,
+    detail: str,
+    reason: str | None = None,
+) -> AgentJob:
+    operation = {
+        "action": action,
+        "status": status,
+        "reason": reason or status,
+        "detail": detail,
+        "updated_at": now_iso(),
+    }
+    parsed_payload = dict(job.parsed_payload or {})
+    parsed_payload["operation"] = operation
+    return replace(job, parsed_payload=parsed_payload, updated_at=str(operation["updated_at"]))

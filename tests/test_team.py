@@ -773,6 +773,20 @@ def test_team_status_surfaces_warning_only_compliance_guidance(tmp_path) -> None
     assert any("warning" in reason for reason in status["blocking_reasons"])
 
 
+
+def test_team_refresh_documentation_sync_writes_context_map_doc(tmp_path) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+
+    team.refresh_documentation_sync()
+
+    context_map = tmp_path / "docs" / "process" / "context-map.md"
+    assert context_map.exists()
+    assert "CODEBASE_MAP-style orientation" in context_map.read_text(encoding="utf-8")
+
 def test_team_check_compliance_blocks_on_placeholder_header_in_changed_file(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"

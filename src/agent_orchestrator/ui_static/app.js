@@ -3,6 +3,9 @@ const state = {
   selectedJobId: null,
   selectedPlanNodeId: null,
   selectedPlanAgentIds: [],
+  globalStream: null,
+  sessionStream: null,
+  streamRefreshTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -236,6 +239,7 @@ async function selectSession(id) {
   const payload = await api(`/api/sessions/${id}`);
   renderSession(payload);
   await refreshSessions(false);
+  connectSessionStream(id);
 }
 
 async function selectJob(id) {
@@ -250,6 +254,7 @@ async function selectJob(id) {
     <button data-job-command="send" ${isTerminalJob(detail) ? "" : "disabled"}>发送</button>
     <button data-job-command="cancel" ${isTerminalJob(detail) ? "" : "disabled"}>取消</button>
     <span class="summary">${escapeHtml(detail.terminal_ref || detail.phase || "无终端")}</span>
+    <span class="summary">${escapeHtml(operationLabel(detail.operation))}</span>
   `;
   bindJobCommands();
 }
@@ -503,6 +508,11 @@ function isTerminalJob(job) {
   return !["completed", "failed", "cancelled"].includes(String(job.status || ""));
 }
 
+function operationLabel(operation) {
+  if (!operation || typeof operation !== "object") return "操作状态：未执行";
+  return `操作状态：${operation.status || "unknown"} · ${operation.detail || operation.reason || ""}`;
+}
+
 function bindJobCommands() {
   document.querySelectorAll("[data-job-command]").forEach((node) => {
     node.addEventListener("click", async () => {
@@ -518,6 +528,52 @@ function bindJobCommands() {
       await refreshJobs();
     });
   });
+}
+
+function scheduleStreamRefresh(scope = "all") {
+  if (state.streamRefreshTimer) return;
+  state.streamRefreshTimer = window.setTimeout(async () => {
+    state.streamRefreshTimer = null;
+    if (scope === "sessions" || scope === "all") {
+      await refreshSessions(false);
+      if (state.selectedSessionId) await selectSession(state.selectedSessionId);
+    }
+    if (scope === "jobs" || scope === "all") {
+      await refreshJobs();
+      if (state.selectedJobId) await selectJob(state.selectedJobId);
+    }
+  }, 250);
+}
+
+function connectStreams() {
+  if (!window.EventSource) return;
+  connectGlobalStream();
+  if (state.selectedSessionId) connectSessionStream(state.selectedSessionId);
+}
+
+function connectGlobalStream() {
+  if (state.globalStream) state.globalStream.close();
+  state.globalStream = new EventSource("/api/stream");
+  state.globalStream.addEventListener("orchestration_event", () => scheduleStreamRefresh("sessions"));
+  state.globalStream.addEventListener("team_message", () => scheduleStreamRefresh("sessions"));
+  state.globalStream.addEventListener("job_update", () => scheduleStreamRefresh("jobs"));
+  state.globalStream.onerror = () => {
+    state.globalStream.close();
+    state.globalStream = null;
+  };
+}
+
+function connectSessionStream(id) {
+  if (!window.EventSource || !id) return;
+  if (state.sessionStream) state.sessionStream.close();
+  state.sessionStream = new EventSource(`/api/sessions/${encodeURIComponent(id)}/stream`);
+  state.sessionStream.addEventListener("orchestration_event", () => scheduleStreamRefresh("sessions"));
+  state.sessionStream.addEventListener("team_message", () => scheduleStreamRefresh("sessions"));
+  state.sessionStream.addEventListener("job_update", () => scheduleStreamRefresh("jobs"));
+  state.sessionStream.onerror = () => {
+    state.sessionStream.close();
+    state.sessionStream = null;
+  };
 }
 
 $("refresh").addEventListener("click", async () => {
@@ -537,6 +593,7 @@ $("new-session").addEventListener("submit", async (event) => {
 
 refreshSessions();
 refreshJobs();
+connectStreams();
 setInterval(() => {
   refreshSessions(false);
   refreshJobs();

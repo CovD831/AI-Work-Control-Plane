@@ -68,7 +68,12 @@ def test_tmux_runtime_send_status_and_cancel(tmp_path) -> None:
     cancelled = runtime.cancel(job.id)
 
     assert sent.messages == ["continue"]
+    assert sent.parsed_payload["operation"]["status"] == "accepted"
     assert "pane output" in status.stdout
     assert cancelled.status == "cancelled"
+    assert cancelled.parsed_payload["operation"]["status"] == "accepted"
     assert runner.messages == [(f"agent-{job.id}", "continue")]
     assert runner.killed == [f"agent-{job.id}"]
+
+    late = runtime.send(job.id, "late")
+    assert late.parsed_payload["operation"]["status"] == "already_terminal"

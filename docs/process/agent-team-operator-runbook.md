@@ -110,10 +110,13 @@ python -m agent_orchestrator.cli team runbook <session_id>
 ## v1.x 操作入口
 
 - 用 `health` 查看 `codex`、`claude`、`mock` 的 binary、available、detail 和 recommended fallback。
+- 用 `team setup` 查看 provider/runtime 就绪状态、doc sync 和 compliance 摘要，并获取推荐下一步命令。
 - 用 `--review-policy auto|standard|adversarial|required-human` 记录受控 review policy；默认 `auto` 不改变原策略。
 - 用 `evidence benchmark/capture/report` 生成 JSON evidence 和 markdown 阶段报告。
+- 用 `docs/process/evidence-cases.json` 作为可提交的真实任务样本库，并生成 `docs/process/v1x-evidence-report.md`。
 - 用 `team refresh-docs` 刷新 canonical process docs。
 - 用 `team repair-compliance` 先刷新 docs，再查看 remaining warnings、required actions 和 recommended commands。
+- 用 `team setup` 查看 release_readiness，确认 version_sync、tests、evidence 和 compliance 的收尾状态。
 - 用 `ui` 打开 Agent Team Console，检查 provenance、review policy、fallback、compliance、event/message timeline、work graph 和 job log。
 - 对运行中的 job，可用 CLI 或 Console 执行 `send` / `cancel`，并查看 terminal_ref、last log excerpt 和 last_seen_at。
 

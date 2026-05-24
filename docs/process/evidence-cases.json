@@ -1,0 +1,26 @@
+[
+  {
+    "label": "standard_plan_artifact",
+    "requirement": "Build a persisted plan artifact for a routine implementation task",
+    "scenario_type": "standard",
+    "mode": "success_first"
+  },
+  {
+    "label": "followup_checklist_recovery",
+    "requirement": "Build plan with followup checklist and recovery guidance",
+    "scenario_type": "followup",
+    "mode": "success_first"
+  },
+  {
+    "label": "high_risk_auth_migration",
+    "requirement": "Implement auth migration across multiple services with security review",
+    "scenario_type": "high_risk",
+    "mode": "success_first"
+  },
+  {
+    "label": "parallel_validation_modules",
+    "requirement": "Coordinate parallel independent validation tasks across multiple modules",
+    "scenario_type": "parallel",
+    "mode": "speed_first"
+  }
+]

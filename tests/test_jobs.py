@@ -29,8 +29,8 @@ def test_in_memory_job_runtime_lifecycle_for_running_job() -> None:
     assert completed.status == "completed"
     assert runtime.result(job.id).summary == "done"
     assert runtime.result(job.id).stdout == "ok"
-    assert runtime.send(job.id, "ignored") == completed
-    assert runtime.cancel(job.id) == completed
+    assert runtime.send(job.id, "ignored").parsed_payload["operation"]["status"] == "already_terminal"
+    assert runtime.cancel(job.id).parsed_payload["operation"]["status"] == "already_terminal"
 
 
 def test_file_job_runtime_persists_and_lists_recent_jobs(tmp_path) -> None:

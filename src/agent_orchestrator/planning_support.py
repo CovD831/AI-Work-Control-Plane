@@ -64,14 +64,18 @@ class ProcessDocumentSpec:
 @dataclass(slots=True, frozen=True)
 class ProcessDocumentationBundle:
     root_map: ProcessDocumentSpec
+    context_map: ProcessDocumentSpec
     module_manifest: ProcessDocumentSpec
     file_header_contract: ProcessDocumentSpec
+    release_readiness: ProcessDocumentSpec
 
     def iter_specs(self) -> list[tuple[str, ProcessDocumentSpec]]:
         return [
             ("root_map", self.root_map),
+            ("context_map", self.context_map),
             ("module_manifest", self.module_manifest),
             ("file_header_contract", self.file_header_contract),
+            ("release_readiness", self.release_readiness),
         ]
 
 
@@ -108,7 +112,7 @@ HEADER_PLACEHOLDER_VALUES = {"待补充", "待确定", "todo", "tbd", "unknown"}
 
 def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumentationBundle:
     module_entries = _collect_module_manifest_entries(project_root)
-    module_manifest_bullets: tuple[str, ...] = ("file-header contract", "root map")
+    module_manifest_bullets: tuple[str, ...] = ("file-header contract", "root map", "context map")
     if module_entries:
         module_manifest_bullets = (*module_manifest_bullets, *module_entries)
     root_map_entries = _collect_root_map_entries(project_root)
@@ -116,12 +120,30 @@ def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumen
         root_map=ProcessDocumentSpec(
             path="docs/process/root-map.md",
             title="Root Map",
-            bullets=("module manifests", "file-header contract", "compliance checks", *root_map_entries),
+            bullets=("module manifests", "file-header contract", "compliance checks", "context map", *root_map_entries),
+        ),
+        context_map=ProcessDocumentSpec(
+            path="docs/process/context-map.md",
+            title="Context Map",
+            bullets=(
+                "CODEBASE_MAP-style orientation for the Agent Orchestrator repository",
+                "root map",
+                "module manifest",
+                "file-header contract",
+                "compliance checks",
+                "README.md",
+                "docs/process/agent-orchestrator-implementation-process.md",
+                "docs/process/agent-team-operator-runbook.md",
+                "docs/process/长周期主执行计划.md",
+                "docs/process/v1x-release-readiness.md",
+                "src/agent_orchestrator/",
+                "tests/",
+            ),
         ),
         module_manifest=ProcessDocumentSpec(
             path="docs/process/module-manifest.md",
             title="Module Manifest",
-            bullets=module_manifest_bullets,
+            bullets=(*module_manifest_bullets, "release readiness"),
         ),
         file_header_contract=ProcessDocumentSpec(
             path="docs/process/file-header-contract.md",
@@ -131,6 +153,18 @@ def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumen
                 "changed-file enforcement for source modules",
                 "placeholder header values are not allowed in changed files",
                 "module manifest linkage",
+                "context map linkage",
+            ),
+        ),
+        release_readiness=ProcessDocumentSpec(
+            path="docs/process/v1x-release-readiness.md",
+            title="v1.x Release Readiness",
+            bullets=(
+                "version sync lives in `pyproject.toml`",
+                "`team setup` reports provider health, doc sync, compliance, and release readiness",
+                "evidence output is local markdown under `docs/process/`",
+                "full readiness still depends on targeted tests and final compliance",
+                "this repository does not promise plugin-marketplace style distribution",
             ),
         ),
     )
@@ -149,8 +183,10 @@ def build_doc_sync_status_for_project(
         "docs/process/agent-orchestrator-implementation-process.md",
         "docs/architecture/决策核心-执行拓扑-运行时分层说明.md",
         "docs/process/root-map.md",
+        "docs/process/context-map.md",
         "docs/process/module-manifest.md",
         "docs/process/file-header-contract.md",
+        "docs/process/v1x-release-readiness.md",
     ]
     missing = [relative_path for relative_path in required_docs if not (project_root / relative_path).exists()]
     jobs_root = str(getattr(runtime, "root", "")) if hasattr(runtime, "root") else ""
@@ -284,6 +320,55 @@ def scan_source_file_headers(project_root: Path, *, changed_files: list[str] | N
     return violations
 
 
+def repair_missing_source_headers(project_root: Path, *, changed_files: list[str] | None = None) -> dict[str, object]:
+    """Safely insert missing standard header blocks for selected source files."""
+    source_root = project_root / "src" / "agent_orchestrator"
+    if not source_root.exists():
+        return {"changed_files": [], "required_actions": [], "remaining_warnings": ["source root not found"]}
+
+    candidates = _selected_source_paths(project_root, changed_files=changed_files)
+    changed: list[str] = []
+    required_actions: list[str] = []
+    remaining_warnings: list[str] = []
+    for path in candidates:
+        relative = str(path.relative_to(project_root))
+        lines = path.read_text(encoding="utf-8").splitlines()
+        docstring_end_index = _find_module_docstring_end(lines)
+        if docstring_end_index is None:
+            required_actions.append(f"{relative}: add a module docstring before header repair can run")
+            continue
+        if _extract_header_fields(lines, docstring_end_index):
+            remaining_warnings.append(f"{relative}: existing header fields were left unchanged")
+            continue
+        future_index = _future_annotations_index(lines, docstring_end_index)
+        if future_index is None:
+            required_actions.append(f"{relative}: add `from __future__ import annotations` before header repair can run")
+            continue
+        module = _infer_module_bucket(path, source_root)
+        deps = _infer_header_deps("\n".join(lines))
+        responsibility = _infer_responsibility(path)
+        insert_at = future_index + 1
+        while insert_at < len(lines) and not lines[insert_at].strip():
+            insert_at += 1
+        new_lines = [
+            *lines[:insert_at],
+            f"# DEPS: {deps}",
+            f"# RESPONSIBILITY: {responsibility}",
+            f"# MODULE: {module}",
+            "# ---",
+            "",
+            *lines[insert_at:],
+        ]
+        path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+        changed.append(relative)
+
+    return {
+        "changed_files": changed,
+        "required_actions": required_actions,
+        "remaining_warnings": remaining_warnings,
+    }
+
+
 def _scan_unrelated_header_warnings(project_root: Path, *, changed_files: list[str] | None = None) -> list[str]:
     if not changed_files:
         return []
@@ -313,6 +398,23 @@ def _scan_unrelated_header_warnings(project_root: Path, *, changed_files: list[s
             )
         )
     return warnings
+
+
+def _selected_source_paths(project_root: Path, *, changed_files: list[str] | None = None) -> list[Path]:
+    source_root = project_root / "src" / "agent_orchestrator"
+    if not source_root.exists():
+        return []
+    if changed_files:
+        paths = [
+            project_root / item
+            for item in changed_files
+            if (project_root / item).suffix == ".py"
+            and (project_root / item).parent == source_root
+            and (project_root / item).name != "__init__.py"
+            and (project_root / item).exists()
+        ]
+        return sorted(paths)
+    return sorted(path for path in source_root.glob("*.py") if path.name != "__init__.py")
 
 
 def _changed_file_doc_sync_violations(
@@ -477,6 +579,17 @@ def _extract_header_fields(lines: list[str], docstring_end_index: int) -> dict[s
     return fields
 
 
+def _future_annotations_index(lines: list[str], docstring_end_index: int) -> int | None:
+    for index, raw_line in enumerate(lines[docstring_end_index + 1 :], start=docstring_end_index + 1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line == "from __future__ import annotations":
+            return index
+        return None
+    return None
+
+
 def _header_dependency_violations(path: Path, lines: list[str], fields: dict[str, str]) -> list[str]:
     declared_raw = fields.get("DEPS")
     if declared_raw is None or _is_placeholder_header_value(declared_raw):
@@ -529,6 +642,28 @@ def _module_dependency_names(source: str) -> set[str]:
             if root:
                 dependencies.add(root)
     return dependencies
+
+
+def _infer_header_deps(source: str) -> str:
+    imported = _module_dependency_names(source)
+    deps = [name for name in ("__future__", "agent_orchestrator") if name in imported]
+    return ", ".join(deps) if deps else "none"
+
+
+def _infer_module_bucket(path: Path, source_root: Path) -> str:
+    name = path.name
+    if name in {"cli.py", "ui_server.py", "ui_service.py", "events.py", "messages.py", "memory.py"}:
+        return "interface"
+    if name in {"jobs.py", "command.py", "tmux_runtime.py", "run_store.py"}:
+        return "infrastructure"
+    if path.parent == source_root:
+        return "decision_core"
+    return path.parent.name or "decision_core"
+
+
+def _infer_responsibility(path: Path) -> str:
+    stem = path.stem.replace("_", " ")
+    return f"Provide {stem} module behavior."
 
 
 def _is_placeholder_header_value(value: str) -> bool:

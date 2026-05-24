@@ -1,6 +1,15 @@
 from pathlib import Path
 
 
+def test_context_map_doc_exists_and_mentions_codebase_map_style_orientation() -> None:
+    text = Path("docs/process/context-map.md").read_text(encoding="utf-8")
+
+    assert "CODEBASE_MAP-style orientation" in text
+    assert "root map" in text
+    assert "module manifest" in text
+    assert "file-header contract" in text
+
+
 def test_long_cycle_plan_declares_auto_continue_protocol() -> None:
     text = Path("docs/process/长周期主执行计划.md").read_text(encoding="utf-8")
 

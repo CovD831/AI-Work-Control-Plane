@@ -184,6 +184,16 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
             f"scenario={case.get('scenario_type', 'unknown')}, "
             f"benefit_score={comparison.get('benefit_score', 0)}"
         )
+    lines.extend(
+        [
+            "",
+            "## Takeaways",
+            "",
+            f"- governance-first cases surfaced {summary.get('team_cases_with_execution_run', 0)} linked execution runs out of {summary.get('case_count', len(cases))} cases.",
+            f"- direct runs without plan metadata: {summary.get('direct_runs_without_plan_metadata', 0)}.",
+            "- when provenance, recovery guidance, and doc sync appear together, the workflow is easier to explain than a fixed-template run.",
+        ]
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -192,6 +202,117 @@ def write_workflow_evidence_markdown(payload: dict[str, object], output_path: Pa
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_workflow_evidence_markdown(payload), encoding="utf-8")
+    return path
+
+
+def compare_workflow_evidence(baseline: dict[str, object], current: dict[str, object]) -> dict[str, object]:
+    """Build a schema-preserving comparison layer for two evidence captures."""
+    baseline_summary = baseline.get("summary", {}) if isinstance(baseline.get("summary"), dict) else {}
+    current_summary = current.get("summary", {}) if isinstance(current.get("summary"), dict) else {}
+    baseline_report = baseline.get("report", {}) if isinstance(baseline.get("report"), dict) else {}
+    current_report = current.get("report", {}) if isinstance(current.get("report"), dict) else {}
+    baseline_cases = baseline.get("cases", []) if isinstance(baseline.get("cases"), list) else []
+    current_cases = current.get("cases", []) if isinstance(current.get("cases"), list) else []
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "reportable_format": f"{REPORTABLE_FORMAT}.trend",
+        "baseline": _comparison_snapshot(baseline_summary, baseline_report, baseline_cases),
+        "current": _comparison_snapshot(current_summary, current_report, current_cases),
+        "deltas": {
+            "case_count": _number_delta(baseline_summary.get("case_count"), current_summary.get("case_count")),
+            "average_benefit_score": _number_delta(
+                baseline_summary.get("average_benefit_score"),
+                current_summary.get("average_benefit_score"),
+            ),
+            "team_cases_with_execution_run": _number_delta(
+                baseline_summary.get("team_cases_with_execution_run"),
+                current_summary.get("team_cases_with_execution_run"),
+            ),
+            "direct_runs_without_plan_metadata": _number_delta(
+                baseline_summary.get("direct_runs_without_plan_metadata"),
+                current_summary.get("direct_runs_without_plan_metadata"),
+            ),
+            "signal_counts": _count_deltas(
+                baseline_summary.get("signal_counts", {}),
+                current_summary.get("signal_counts", {}),
+            ),
+            "scenario_aggregates": _scenario_deltas(
+                baseline_report.get("scenario_aggregates", {}),
+                current_report.get("scenario_aggregates", {}),
+            ),
+            "team_advantage_counts": _count_deltas(
+                _case_tag_counts(baseline_cases, "team_advantages"),
+                _case_tag_counts(current_cases, "team_advantages"),
+            ),
+            "direct_limitation_counts": _count_deltas(
+                _case_tag_counts(baseline_cases, "direct_limitations"),
+                _case_tag_counts(current_cases, "direct_limitations"),
+            ),
+        },
+    }
+
+
+def load_workflow_evidence_payload(path: Path | str) -> dict[str, object]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("evidence payload must be a JSON object")
+    return payload
+
+
+def render_workflow_evidence_trend_markdown(payload: dict[str, object]) -> str:
+    """Render a compact markdown trend report from a comparison payload."""
+    baseline = payload.get("baseline", {}) if isinstance(payload.get("baseline"), dict) else {}
+    current = payload.get("current", {}) if isinstance(payload.get("current"), dict) else {}
+    deltas = payload.get("deltas", {}) if isinstance(payload.get("deltas"), dict) else {}
+    lines = [
+        "# v1.x Evidence Trend",
+        "",
+        "## Summary",
+        "",
+        f"- baseline_cases: {baseline.get('case_count', 0)}",
+        f"- current_cases: {current.get('case_count', 0)}",
+        f"- average_benefit_score_delta: {_format_signed(deltas.get('average_benefit_score', 0.0))}",
+        f"- execution_run_delta: {_format_signed(deltas.get('team_cases_with_execution_run', 0))}",
+        f"- direct_without_plan_metadata_delta: {_format_signed(deltas.get('direct_runs_without_plan_metadata', 0))}",
+        "",
+        "## Scenario Aggregates",
+        "",
+    ]
+    scenario_deltas = deltas.get("scenario_aggregates", {}) if isinstance(deltas.get("scenario_aggregates"), dict) else {}
+    if scenario_deltas:
+        for scenario, aggregate in sorted(scenario_deltas.items()):
+            if not isinstance(aggregate, dict):
+                continue
+            lines.append(
+                f"- {scenario}: cases_delta={_format_signed(aggregate.get('case_count', 0))}, "
+                f"average_benefit_score_delta={_format_signed(aggregate.get('average_benefit_score', 0.0))}, "
+                f"max_benefit_score_delta={_format_signed(aggregate.get('max_benefit_score', 0))}"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Signal Deltas", ""])
+    lines.extend(_count_delta_lines(deltas.get("signal_counts", {})))
+    lines.extend(["", "## Team Advantage Deltas", ""])
+    lines.extend(_count_delta_lines(deltas.get("team_advantage_counts", {})))
+    lines.extend(["", "## Direct Limitation Deltas", ""])
+    lines.extend(_count_delta_lines(deltas.get("direct_limitation_counts", {})))
+    lines.extend(
+        [
+            "",
+            "## Interpretation",
+            "",
+            "- positive deltas favor the current capture; flat deltas mean the comparison shape stayed stable.",
+            "- treat team advantage deltas and direct limitation deltas together when judging whether governance-first orchestration is improving.",
+        ]
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_workflow_evidence_trend_markdown(payload: dict[str, object], output_path: Path | str) -> Path:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_workflow_evidence_trend_markdown(payload), encoding="utf-8")
     return path
 
 
@@ -291,6 +412,75 @@ def _capture_case(
             "team_outcome_better_documented": bool(team_advantages or direct_limitations),
         },
     }
+
+
+def _comparison_snapshot(
+    summary: dict[str, object],
+    report: dict[str, object],
+    cases: list[object],
+) -> dict[str, object]:
+    return {
+        "case_count": int(summary.get("case_count", len(cases)) or 0),
+        "average_benefit_score": float(summary.get("average_benefit_score", 0.0) or 0.0),
+        "team_cases_with_execution_run": int(summary.get("team_cases_with_execution_run", 0) or 0),
+        "direct_runs_without_plan_metadata": int(summary.get("direct_runs_without_plan_metadata", 0) or 0),
+        "signal_counts": summary.get("signal_counts", {}) if isinstance(summary.get("signal_counts"), dict) else {},
+        "scenario_aggregates": report.get("scenario_aggregates", {}) if isinstance(report.get("scenario_aggregates"), dict) else {},
+        "team_advantage_counts": _case_tag_counts(cases, "team_advantages"),
+        "direct_limitation_counts": _case_tag_counts(cases, "direct_limitations"),
+    }
+
+
+def _number_delta(baseline: object, current: object) -> float | int:
+    baseline_value = float(baseline or 0)
+    current_value = float(current or 0)
+    delta = current_value - baseline_value
+    return int(delta) if delta.is_integer() else delta
+
+
+def _count_deltas(baseline: object, current: object) -> dict[str, int]:
+    baseline_counts = baseline if isinstance(baseline, dict) else {}
+    current_counts = current if isinstance(current, dict) else {}
+    keys = sorted({str(key) for key in baseline_counts} | {str(key) for key in current_counts})
+    return {
+        key: int(current_counts.get(key, 0) or 0) - int(baseline_counts.get(key, 0) or 0)
+        for key in keys
+    }
+
+
+def _scenario_deltas(baseline: object, current: object) -> dict[str, dict[str, object]]:
+    baseline_aggregates = baseline if isinstance(baseline, dict) else {}
+    current_aggregates = current if isinstance(current, dict) else {}
+    scenarios = sorted({str(key) for key in baseline_aggregates} | {str(key) for key in current_aggregates})
+    deltas: dict[str, dict[str, object]] = {}
+    for scenario in scenarios:
+        baseline_item = baseline_aggregates.get(scenario, {}) if isinstance(baseline_aggregates.get(scenario), dict) else {}
+        current_item = current_aggregates.get(scenario, {}) if isinstance(current_aggregates.get(scenario), dict) else {}
+        deltas[scenario] = {
+            "case_count": _number_delta(baseline_item.get("case_count"), current_item.get("case_count")),
+            "average_benefit_score": _number_delta(
+                baseline_item.get("average_benefit_score"),
+                current_item.get("average_benefit_score"),
+            ),
+            "max_benefit_score": _number_delta(
+                baseline_item.get("max_benefit_score"),
+                current_item.get("max_benefit_score"),
+            ),
+            "signal_counts": _count_deltas(
+                baseline_item.get("signal_counts", {}),
+                current_item.get("signal_counts", {}),
+            ),
+        }
+    return deltas
+
+
+def _case_tag_counts(cases: list[object], key: str) -> dict[str, int]:
+    comparisons = [
+        case.get("comparison", {})
+        for case in cases
+        if isinstance(case, dict) and isinstance(case.get("comparison", {}), dict)
+    ]
+    return _tag_counts(comparisons, key)
 
 
 def _normalize_cases(requirements: list[str] | list[WorkflowEvidenceCase]) -> list[WorkflowEvidenceCase]:
@@ -598,3 +788,20 @@ def _format_score(value: object) -> str:
         return f"{float(value):.2f}"
     except (TypeError, ValueError):
         return "0.00"
+
+
+def _format_signed(value: object) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    if number.is_integer():
+        return f"{int(number):+d}"
+    return f"{number:+.2f}"
+
+
+def _count_delta_lines(value: object) -> list[str]:
+    counts = value if isinstance(value, dict) else {}
+    if not counts:
+        return ["- none"]
+    return [f"- {key}: {_format_signed(counts[key])}" for key in sorted(counts)]

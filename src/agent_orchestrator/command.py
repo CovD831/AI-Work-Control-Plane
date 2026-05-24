@@ -420,12 +420,12 @@ class CodexCliAdapter:
 
     def send_follow_up(self, job: AgentJob, message: str, session: ProviderSession | None) -> dict[str, Any]:
         if session is None:
-            return {"status": "unsupported", "message": message}
+            return {"status": "session_missing", "reason": "session_missing", "detail": "No live Codex session is attached.", "message": message}
         return session.send(message)
 
     def cancel_session(self, job: AgentJob, session: ProviderSession | None) -> dict[str, Any]:
         if session is None:
-            return {"status": "cancelled"}
+            return {"status": "session_missing", "reason": "session_missing", "detail": "No live Codex session is attached."}
         return session.cancel()
 
 
@@ -476,12 +476,12 @@ class ClaudeCodeAdapter:
 
     def send_follow_up(self, job: AgentJob, message: str, session: ProviderSession | None) -> dict[str, Any]:
         if session is None:
-            return {"status": "unsupported", "message": message}
+            return {"status": "session_missing", "reason": "session_missing", "detail": "No live Claude session is attached.", "message": message}
         return session.send(message)
 
     def cancel_session(self, job: AgentJob, session: ProviderSession | None) -> dict[str, Any]:
         if session is None:
-            return {"status": "cancelled"}
+            return {"status": "session_missing", "reason": "session_missing", "detail": "No live Claude session is attached."}
         return session.cancel()
 
 
@@ -585,20 +585,25 @@ class CommandJobRuntime(FileJobRuntime):
     def send(self, job_id: str, message: str) -> AgentJob:
         job = self._read_job(job_id)
         if job.status in {"completed", "failed", "cancelled"}:
-            return job
+            return self._store_operation(
+                job,
+                action="send",
+                status="already_terminal",
+                detail="Job is already terminal.",
+            )
         with self._lock:
             session = self._sessions.get(job_id)
             adapter = self._providers.get(job_id)
         if adapter is None:
             return FileJobRuntime.send(self, job_id, message)
 
-        payload = adapter.send_follow_up(job, message, session)
+        payload = _normalize_provider_operation(adapter.send_follow_up(job, message, session), action="send")
         updated = FileJobRuntime.send(self, job_id, message)
         refreshed = replace(
             updated,
             session_id=str(payload.get("session_id") or updated.session_id),
             thread_id=str(payload.get("thread_id") or updated.thread_id),
-            parsed_payload=_merge_payload(updated.parsed_payload, {"follow_up": payload}),
+            parsed_payload=_merge_payload(updated.parsed_payload, {"follow_up": payload, "operation": payload}),
         )
         self._write_job(refreshed)
         return refreshed
@@ -606,13 +611,21 @@ class CommandJobRuntime(FileJobRuntime):
     def cancel(self, job_id: str) -> AgentJob:
         job = self.status(job_id)
         if job.status in {"completed", "failed", "cancelled"}:
-            return job
+            return self._store_operation(
+                job,
+                action="cancel",
+                status="already_terminal",
+                detail="Job is already terminal.",
+            )
         with self._lock:
             session = self._sessions.get(job_id)
             adapter = self._providers.get(job_id)
-        payload = adapter.cancel_session(job, session) if adapter else {"status": "cancelled"}
+        payload = _normalize_provider_operation(
+            adapter.cancel_session(job, session) if adapter else {"status": "accepted", "detail": "Fallback file runtime cancellation accepted."},
+            action="cancel",
+        )
         cancelled = FileJobRuntime.cancel(self, job_id)
-        refreshed = replace(cancelled, parsed_payload=_merge_payload(cancelled.parsed_payload, {"cancel": payload}))
+        refreshed = replace(cancelled, parsed_payload=_merge_payload(cancelled.parsed_payload, {"cancel": payload, "operation": payload}))
         self._write_job(refreshed)
         return refreshed
 
@@ -849,6 +862,27 @@ def _merge_payload(current: dict[str, Any] | None, incoming: dict[str, Any] | No
     if incoming:
         merged.update(incoming)
     return merged
+
+
+def _normalize_provider_operation(payload: dict[str, Any], *, action: str) -> dict[str, Any]:
+    raw_status = str(payload.get("status") or "")
+    status_map = {
+        "accepted": "accepted",
+        "cancelled": "accepted",
+        "unsupported": "unsupported",
+        "session_missing": "session_missing",
+        "auth_required": "auth_required",
+        "provider_unavailable": "provider_unavailable",
+        "already_terminal": "already_terminal",
+    }
+    detail = str(payload.get("detail") or payload.get("error") or payload.get("message") or raw_status or "Operation completed.")
+    normalized = dict(payload)
+    normalized["action"] = action
+    normalized["status"] = status_map.get(raw_status, "accepted")
+    normalized["reason"] = str(payload.get("reason") or normalized["status"])
+    normalized["detail"] = detail
+    normalized["updated_at"] = now_iso()
+    return normalized
 
 
 def _command_result_from_exception(command: list[str], context: str, exc: Exception) -> CommandResult:

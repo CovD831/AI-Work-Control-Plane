@@ -173,3 +173,124 @@ Pass criteria:
 - Full tests pass.
 - Compliance passes.
 - Working tree only contains intended v1.x changes.
+
+## Long-Term Polish Phase 4: Console Incremental Stream
+
+Goal:
+
+- Upgrade the local Console stream routes from snapshot-style responses to continuous incremental SSE.
+- Keep polling as a browser fallback so the UI remains usable when EventSource is unavailable or interrupted.
+
+Implementation changes:
+
+- Emit `orchestration_event`, `team_message`, and `job_update` events from existing dashboard stores.
+- Deduplicate stream records by stable IDs and job `updated_at`/log-excerpt state.
+- Add heartbeat frames for long-lived connections and a `once=true` mode for tests and compatibility probes.
+- Connect the static Console to global and selected-session EventSource streams, refreshing affected panels on incoming events.
+
+Targeted test:
+
+- `pytest tests/test_ui_service.py tests/test_ui_server.py -q`
+
+Pass criteria:
+
+- Stream routes return SSE frames for events, messages, and job updates.
+- Static UI still mounts existing operator and job controls.
+- UI service/server targeted tests and compliance gate pass.
+
+## Long-Term Polish Phase 5: Evidence Trend Report
+
+Goal:
+
+- Compare two evidence JSON captures without changing the existing evidence schema.
+- Produce a markdown trend report for benefit score, scenario aggregates, key signal counts, team advantages, and direct limitations.
+
+Implementation changes:
+
+- Add evidence compare helpers to load baseline/current captures and compute deltas.
+- Add `evidence compare --baseline <json> --current <json> --output <md>`.
+- Keep `--format pretty|json` behavior consistent with other evidence commands.
+- Write an initial trend report to `docs/process/v1x-evidence-trend.md`.
+
+Targeted test:
+
+- `pytest tests/test_evidence.py tests/test_cli.py -q`
+
+Pass criteria:
+
+- Compare helpers produce stable deltas for summary, scenario aggregates, signals, advantages, and limitations.
+- CLI writes the requested markdown report and supports pure JSON output mode.
+- Evidence/CLI targeted tests and compliance gate pass.
+
+## Long-Term Polish Phase 6: Compliance Repair Header Fixes
+
+Goal:
+
+- Deepen `team repair-compliance` with an explicit, conservative `--fix-headers` option.
+- Repair only missing standard header blocks where module ownership and dependency declarations can be inferred safely.
+
+Implementation changes:
+
+- Add a planning support helper that scans selected source files for missing header blocks.
+- Insert a standard header after an existing module docstring and before `from __future__ import annotations` only when required fields are absent.
+- Infer `MODULE` from the source path and `DEPS` from AST import roots limited to the header contract vocabulary.
+- Leave existing non-placeholder responsibility text untouched and report unsafe files as required actions.
+
+Targeted test:
+
+- `pytest tests/test_planning_support.py tests/test_team.py tests/test_cli.py -q`
+
+Pass criteria:
+
+- `team repair-compliance --fix-headers` fixes safe missing header blocks.
+- Existing placeholder or ambiguous headers are not rewritten.
+- Planning/team/CLI targeted tests and compliance gate pass.
+
+## Long-Term Polish Phase 7: Provider Send/Cancel Semantics
+
+Goal:
+
+- Standardize follow-up and cancel outcomes for runtime providers.
+- Make CLI and UI show a clear status/reason/detail without changing existing job schemas.
+
+Implementation changes:
+
+- Persist operation metadata under job `parsed_payload.operation` with statuses:
+  `accepted`, `unsupported`, `session_missing`, `auth_required`, `provider_unavailable`, `already_terminal`.
+- Normalize mock/file, command, and tmux send/cancel paths.
+- Surface operation status/reason/detail in CLI summaries and UI job responses.
+- Preserve current terminal job and missing job behavior for existing callers.
+
+Targeted test:
+
+- `pytest tests/test_command.py tests/test_tmux_runtime.py tests/test_ui_service.py tests/test_cli.py -q`
+
+Pass criteria:
+
+- Send/cancel operations expose standardized statuses.
+- Terminal jobs report `already_terminal`.
+- CLI/UI targeted tests and compliance gate pass.
+
+## Long-Term Polish Phase 8: CLI File Split
+
+Goal:
+
+- Reduce `cli.py` maintenance pressure without changing public command behavior.
+- Start with low-risk command-surface extraction before touching deeper planning helpers.
+
+Implementation changes:
+
+- Add `cli_common.py` for shared format/JSON helpers.
+- Add `cli_evidence.py` for evidence benchmark/capture/report/compare handlers.
+- Add `cli_jobs.py` for job status/result/send/cancel handlers and summaries.
+- Keep argparse setup in `cli.py` and delegate execution to the extracted modules.
+
+Targeted test:
+
+- `pytest tests/test_cli.py tests/test_team.py tests/test_planning_support.py -q`
+
+Pass criteria:
+
+- CLI behavior stays byte-compatible enough for existing tests.
+- New modules carry the standard source header contract and are included in refreshed canonical docs.
+- CLI/team/planning targeted tests and final full gate pass.

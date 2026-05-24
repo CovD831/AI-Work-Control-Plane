@@ -11,9 +11,12 @@ from agent_orchestrator.evidence import (
     EVIDENCE_SCHEMA_VERSION,
     WorkflowEvidenceCase,
     benchmark_evidence_cases,
+    compare_workflow_evidence,
     capture_workflow_evidence,
     load_workflow_evidence_cases,
     render_workflow_evidence_markdown,
+    render_workflow_evidence_trend_markdown,
+    write_workflow_evidence_trend_markdown,
     write_workflow_evidence_markdown,
 )
 from test_support import write_minimal_process_docs
@@ -143,6 +146,14 @@ def test_load_workflow_evidence_cases_accepts_real_task_case_file(tmp_path) -> N
     assert cases[0].mode.value == "speed_first"
 
 
+def test_repository_evidence_cases_are_loadable() -> None:
+    cases = load_workflow_evidence_cases("docs/process/evidence-cases.json")
+
+    assert [case.scenario_type for case in cases] == ["standard", "followup", "high_risk", "parallel"]
+    assert all(case.label for case in cases)
+    assert all(case.requirement for case in cases)
+
+
 def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     payload = capture_workflow_evidence(["Build a persisted plan artifact"], project_root=tmp_path)
@@ -155,3 +166,32 @@ def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path)
     assert "# v1.x Evidence Report" in markdown
     assert "average_benefit_score" in markdown
     assert "provenance_matches_plan_session" in markdown
+    assert "## Takeaways" in markdown
+
+
+def test_compare_workflow_evidence_reports_trend_deltas(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    baseline = capture_workflow_evidence(
+        [WorkflowEvidenceCase(requirement="Build a persisted plan artifact", label="artifact", scenario_type="standard")],
+        project_root=tmp_path,
+    )
+    current = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(requirement="Build a persisted plan artifact", label="artifact", scenario_type="standard"),
+            WorkflowEvidenceCase(requirement="Build plan with followup checklist", label="followup", scenario_type="followup"),
+        ],
+        project_root=tmp_path,
+    )
+    output_path = tmp_path / "trend.md"
+
+    trend = compare_workflow_evidence(baseline, current)
+    write_workflow_evidence_trend_markdown(trend, output_path)
+    markdown = output_path.read_text(encoding="utf-8")
+
+    assert trend["deltas"]["case_count"] == 1
+    assert trend["deltas"]["scenario_aggregates"]["followup"]["case_count"] == 1
+    assert trend["deltas"]["team_advantage_counts"]["recovery_guidance"] == 1
+    assert trend["deltas"]["signal_counts"]["doc_sync_present"] == 1
+    assert "# v1.x Evidence Trend" in markdown
+    assert "average_benefit_score_delta" in render_workflow_evidence_trend_markdown(trend)
+    assert "## Interpretation" in markdown

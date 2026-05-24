@@ -14,6 +14,7 @@ from agent_orchestrator.planning_support import (
     build_doc_sync_status_for_project,
     build_session_guidance,
     canonical_process_documentation_bundle,
+    repair_missing_source_headers,
 )
 
 
@@ -61,6 +62,25 @@ def _write_required_docs(root: Path) -> None:
     )
     for _, spec in canonical_process_documentation_bundle(root).iter_specs():
         (root / spec.path).write_text(spec.render_markdown(), encoding="utf-8")
+
+
+def test_repair_missing_source_headers_adds_safe_standard_header(tmp_path) -> None:
+    package = tmp_path / "src" / "agent_orchestrator"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text('"""Package."""\n', encoding="utf-8")
+    target = package / "new_feature.py"
+    target.write_text(
+        '"""New feature module."""\n\nfrom __future__ import annotations\n\nfrom agent_orchestrator.jobs import JobRequest\n\nVALUE = JobRequest\n',
+        encoding="utf-8",
+    )
+
+    result = repair_missing_source_headers(tmp_path, changed_files=["src/agent_orchestrator/new_feature.py"])
+    text = target.read_text(encoding="utf-8")
+
+    assert result["changed_files"] == ["src/agent_orchestrator/new_feature.py"]
+    assert "# DEPS: __future__, agent_orchestrator" in text
+    assert "# RESPONSIBILITY: Provide new feature module behavior." in text
+    assert "# MODULE: decision_core" in text
 
 
 def _session(

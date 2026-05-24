@@ -206,6 +206,15 @@ The roadmap is complete when:
 - execution decisions remain explainable and plugin-driven
 - benchmark evidence shows the combined product is worth keeping in its reduced but stricter form
 
+
+## v1.x Reference-Informed Upgrade Track
+
+The current v1.x backlog is now organized by a reference-informed master plan:
+
+- [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-reference-upgrade-master-plan.md)
+
+This plan borrows targeted strengths from local reference repositories while preserving Agent Orchestrator's boundaries: it strengthens job observability, review/rescue/setup action grammar, context recovery, packaging discipline, and evidence reporting without turning the product into a bridge, session manager, or plugin marketplace.
+
 ## v1.x Convergence
 
 The repository now extends the completed v1 baseline with:
@@ -217,3 +226,13 @@ The repository now extends the completed v1 baseline with:
 - NUL-delimited hook staged-file handling for paths containing spaces
 - `team refresh-docs` and `team repair-compliance` repair commands
 - CLI/UI runtime ergonomics for terminal refs, attach availability, last log excerpts, last seen timestamps, send, and cancel
+- `team setup` release-readiness snapshots covering version sync, tests, evidence, and compliance
+
+## v1.x Release Readiness
+
+Release readiness is deliberately local and honest:
+
+- `pyproject.toml` carries the version marker for the current package build
+- `team setup` surfaces provider health, doc sync, compliance, and release readiness
+- evidence reports and trend reports are generated as local markdown artifacts
+- no plugin-marketplace or external distribution promise is implied
