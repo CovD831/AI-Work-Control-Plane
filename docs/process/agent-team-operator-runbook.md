@@ -139,6 +139,8 @@ Phase 5 发布候选收尾时，operator 不需要猜测“真实工作流证据
   - 检查平均收益、execution run、direct-run limitation 和 team advantage delta 是否退化。
 - 本地 JSON 输出默认位置：`.agent_orchestrator/evidence/real-tasks.json`
   - 这是 evidence report 命令的机器可读输出，不需要手工编辑。
+- v1.0 candidate checklist：`docs/process/v1-candidate-release-checklist.md`
+  - 这是详细发布前检查单；`docs/process/v1x-release-readiness.md` 保持 canonical 简表。
 
 推荐复现命令：
 
@@ -156,7 +158,7 @@ PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
 - runbook 只指向可提交文档和可再生成的 local evidence，不要求外部服务。
 - evidence cases 覆盖 standard、followup、high_risk、parallel 四类场景。
 - `v1x-hardening-workflow-report.md` 记录真实 friction 和修复，不只记录 happy path。
-- 发布候选判断以 `team setup` 的 release_readiness、evidence report、targeted tests 和 compliance 共同为准。
+- 发布候选判断以 `team setup` 的 release_readiness、candidate checklist、evidence report、targeted tests 和 compliance 共同为准。
 
 ## 标准验收场景
 

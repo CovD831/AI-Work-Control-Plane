@@ -62,7 +62,7 @@ PYTHONPATH=src python -m agent_orchestrator.cli team inspect-execution <session-
 For a direct smoke run, keep the same CLI entrypoint and let `auto` choose the policy profile:
 
 ```bash
-PYTHONPATH=src python -m agent_orchestrator.cli "Review this workspace and report the next hardening step" --mode auto
+PYTHONPATH=src python -m agent_orchestrator.cli run "Review this workspace and report the next hardening step" --mode auto
 ```
 
 Before calling a candidate ready, capture the local release signals:
@@ -74,6 +74,8 @@ PYTHONPATH=src python -m agent_orchestrator.cli evidence report \
   --json-output .agent_orchestrator/evidence/real-tasks.json
 PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
 ```
+
+Use `docs/process/v1-candidate-release-checklist.md` as the detailed v1.0 candidate checklist; `docs/process/v1x-release-readiness.md` stays the short canonical process document used by compliance refresh.
 
 ## Product Shape
 

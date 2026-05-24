@@ -15,9 +15,10 @@
 ## Phase 3 Runtime / Provider Validation
 
 - validation date: 2026-05-24
+- candidate smoke date: 2026-05-25
 - CLI health path: `PYTHONPATH=src python -m agent_orchestrator.cli health --refresh --format json`
   - verified live provider snapshot contains `codex`, `claude`, and `mock`
-  - current local result: `codex` available with `codex-cli 0.133.0-alpha.1`; `claude` available with `2.1.63 (Claude Code)`; `mock` always available
+  - current local result: `codex` available with `codex-cli 0.133.0-alpha.1`; `claude` available with `2.1.150 (Claude Code)`; `mock` always available
   - equivalent team readiness path: `PYTHONPATH=src python -m agent_orchestrator.cli team setup --runtime command --format json` refreshes command-runtime health and reports provider states, doc sync, compliance, and release readiness
 - unavailable-provider behavior: controlled PATH validation with `env PATH=/usr/bin:/bin PYTHONPATH=src /opt/anaconda3/bin/python -m agent_orchestrator.cli health --refresh --format json` returned `codex not found` with recommended fallback `claude`, `claude not found` with recommended fallback `codex`, and `mock` available
 - command-runtime result handling: existing `tests/test_command.py` coverage verifies successful stdout/raw output/exit code capture, non-zero exit failure with stderr/error preservation, missing command and spawn/poll/finalize exceptions, Claude JSON envelope parsing, auth-prompt detection, and Codex command generation

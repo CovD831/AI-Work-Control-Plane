@@ -1,0 +1,139 @@
+# v1.0 Candidate Freeze Plan
+
+## Summary
+
+This document records the continuous v1.0 candidate freeze run. Each phase starts by adding its phase plan here, runs only targeted tests during the phase, and automatically proceeds when the targeted tests pass. Full `pytest`, final `team setup`, final compliance, and commit happen only at the final gate.
+
+## Execution Rules
+
+- Continue automatically between phases when targeted tests pass.
+- Pause only for network access, privilege escalation, destructive actions, product-direction changes, or a test failure whose fix would expand the release-candidate scope.
+- Keep v1.x CLI-first and local-first.
+- Do not expand v1.x into a provider bridge, persistent session manager, or plugin marketplace.
+- Keep `docs/process/v1x-release-readiness.md` as the canonical short process document; put detailed candidate checklist material in a separate non-canonical document.
+
+## Final Acceptance
+
+- Phase-targeted tests pass at the end of each phase.
+- Evidence report and trend are regenerated from committed cases.
+- `team setup --runtime command --format json` reports honest readiness and release readiness.
+- Full `pytest` passes.
+- `team check-compliance` passes.
+- `git status --short` is clean after the final commit.
+
+## Phase 1 Plan: Candidate Audit and Stage Plan Mechanism
+
+- Establish this freeze plan as the running phase log.
+- Confirm the baseline is `f0a3ada Complete v1.x hardening candidate prep` with a clean worktree.
+- Preserve existing public CLI behavior.
+- Run docs/process targeted tests only.
+
+Phase 1 targeted test:
+
+```bash
+pytest tests/test_docs_process.py tests/test_planning_support.py -q
+```
+
+Phase 1 result:
+
+- Targeted test passed: `24 passed`.
+
+## Phase 2 Plan: Release Readiness Checklist Placement
+
+- Keep `docs/process/v1x-release-readiness.md` as the canonical short process document.
+- Add `docs/process/v1-candidate-release-checklist.md` for detailed pre-release checks.
+- Link README, operator runbook, and roadmap to the detailed candidate checklist.
+- Preserve local-only release claims and avoid bridge/session-manager/plugin-marketplace promises.
+
+Phase 2 targeted test:
+
+```bash
+pytest tests/test_docs_process.py tests/test_planning_support.py tests/test_team.py -q
+```
+
+Phase 2 result:
+
+- Targeted test passed: `125 passed`.
+
+## Phase 3 Plan: Provider Smoke and Runtime Limits
+
+- Run provider health with `--refresh` to capture current local `codex`, `claude`, and `mock` states.
+- Run `team setup --runtime command --format json` to confirm readiness remains honest.
+- Keep runtime limitation language explicit: local command runtime and job controls, not a provider-native session bridge.
+- Run runtime/provider targeted tests only.
+
+Phase 3 targeted test:
+
+```bash
+pytest tests/test_command.py tests/test_jobs.py tests/test_tmux_runtime.py -q
+```
+
+Phase 3 result:
+
+- `health --refresh --format json` reported `codex` available as `codex-cli 0.133.0-alpha.1`, `claude` available as `2.1.150 (Claude Code)`, and `mock` available.
+- `team setup --runtime command --format json` reported readiness and release_readiness as true.
+- Targeted test passed: `32 passed`.
+
+## Phase 4 Plan: Evidence Freeze
+
+- Regenerate evidence report and machine-readable evidence from `docs/process/evidence-cases.json`.
+- Regenerate the evidence trend from a current benchmark baseline and the real-task evidence payload.
+- Confirm the report keeps planning, rescue, runtime limitation, and fixed-template advantage conclusions.
+- Confirm the trend keeps `current_version_assessment`, `current_is_better`, improvement signals, and limitation signals.
+- Run evidence/CLI targeted tests only.
+
+Phase 4 targeted test:
+
+```bash
+pytest tests/test_evidence.py tests/test_cli.py -q
+```
+
+Phase 4 result:
+
+- Regenerated `docs/process/v1x-evidence-report.md`.
+- Regenerated `.agent_orchestrator/evidence/real-tasks.json`.
+- Regenerated `docs/process/v1x-evidence-trend.md`.
+- Confirmed report includes planning, rescue, runtime limitation, and fixed-template advantage conclusions.
+- Confirmed trend includes current-version assessment, current-is-better verdict, improvement signals, and limitation signals.
+- Targeted test passed: `81 passed`.
+
+## Phase 5 Plan: CLI Quickstart Dry Run
+
+- Run the README quickstart commands from an operator perspective.
+- Validate that setup/readiness output, evidence command paths, and next-step guidance are understandable.
+- Make only release-blocking CLI or docs corrections if the dry run exposes friction.
+- Run CLI UX and docs/process targeted tests.
+
+Phase 5 targeted tests:
+
+```bash
+pytest tests/test_cli.py tests/test_cli_presenters.py -q
+pytest tests/test_docs_process.py tests/test_planning_support.py -q
+```
+
+Phase 5 dry-run notes:
+
+- `health` and `team setup` ran successfully and showed readable readiness summaries.
+- README direct smoke command initially missed the required `run` subcommand; corrected the quickstart command.
+- Corrected direct smoke command completed successfully with `mode=cost_first`.
+- Governed workflow quickstart ran through `team start`, `summary`, `next`, `runbook`, `execute`, and `inspect-execution` with clear next-step guidance.
+
+Phase 5 result:
+
+- CLI UX targeted test passed: `84 passed`.
+- Docs/process targeted test passed: `24 passed`.
+
+## Phase 6 Plan: Final Candidate Gate
+
+- Run full `pytest`.
+- Run `team setup --runtime command --format json` and confirm readiness/release_readiness stay true.
+- Run `team check-compliance`.
+- Check `git status --short`.
+- If all gates pass, commit with `Prepare v1.0 candidate freeze`.
+
+Phase 6 result:
+
+- Full test suite passed: `338 passed`.
+- `team setup --runtime command --format json` reported readiness and release_readiness as true.
+- `team check-compliance` passed with no blocking reasons.
+- Final candidate freeze changes were ready for commit.

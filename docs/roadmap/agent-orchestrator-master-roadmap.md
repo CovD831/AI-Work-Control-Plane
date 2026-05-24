@@ -241,7 +241,8 @@ Release readiness is deliberately local and honest:
 
 Pre-release checklist source of truth:
 
-- [v1.x Release Readiness](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-release-readiness.md)
+- [v1.0 Candidate Release Checklist](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1-candidate-release-checklist.md)
+- [v1.x Release Readiness](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-release-readiness.md) remains the short canonical process document.
 
 ## v1.0 Candidate Remaining Hardening
 
