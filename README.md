@@ -150,12 +150,35 @@ python -m agent_orchestrator.cli health
 python -m agent_orchestrator.cli "Implement multiple independent modules in parallel" --mode auto
 ```
 
+The health output includes `codex`, `claude`, and `mock` provider records with binary, availability, detail, and recommended fallback fields. Command-runtime runs record this health snapshot in run/session metadata.
+
+Provider health uses a two-tier cache:
+
+- L1 in-process memory cache for repeated checks in the same CLI/server process.
+- L2 local JSON cache at `.agent_orchestrator/cache/provider-health.json` for repeated CLI invocations.
+
+Refresh live status when needed:
+
+```bash
+python -m agent_orchestrator.cli health --refresh
+python -m agent_orchestrator.cli health --cache-ttl 300
+```
+
 Run through the command runtime:
 
 ```bash
 python -m agent_orchestrator.cli "Review this workspace" --runtime command --provider claude
 python -m agent_orchestrator.cli "Implement the task" --runtime command --provider codex
 ```
+
+Review policy can be recorded through a controlled override:
+
+```bash
+python -m agent_orchestrator.cli run "Build with strict review" --review-policy adversarial
+python -m agent_orchestrator.cli team execute <session-id> --review-policy required-human
+```
+
+Allowed values are `auto`, `standard`, `adversarial`, and `required-human`; `auto` preserves default policy behavior.
 
 The command runtime records stdout, stderr, exit code, command arguments, and error details in job records. It is intentionally not the main product value and does not aim to replace specialized background session managers, bridge plugins, or provider-native continuation systems.
 
@@ -203,6 +226,35 @@ The installed `pre-commit` hook runs:
 ```bash
 PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
 ```
+
+Repair canonical process docs and inspect remaining compliance actions:
+
+```bash
+PYTHONPATH=src python -m agent_orchestrator.cli team refresh-docs
+PYTHONPATH=src python -m agent_orchestrator.cli team repair-compliance
+```
+
+## Evidence Reports
+
+Capture built-in or real-task workflow evidence:
+
+```bash
+python -m agent_orchestrator.cli evidence benchmark --output .agent_orchestrator/evidence/workflow.json
+python -m agent_orchestrator.cli evidence capture --case-file cases.json --output .agent_orchestrator/evidence/real-tasks.json
+python -m agent_orchestrator.cli evidence report --output docs/process/v1x-evidence-report.md
+```
+
+Case files are JSON lists with `label`, `requirement`, `scenario_type`, and `mode`.
+
+## Agent Team Console
+
+Start the local operator console:
+
+```bash
+python -m agent_orchestrator.cli ui
+```
+
+The console surfaces session status, governance signals, execution provenance, review policy, fallback snapshots, compliance snapshots, event/message timelines, work graph state, job logs, follow-up send, and cancel controls.
 
 ## Real Integrations
 

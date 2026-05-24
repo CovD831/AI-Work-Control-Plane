@@ -205,3 +205,15 @@ The roadmap is complete when:
 - documentation and code synchronization are enforced, not merely suggested
 - execution decisions remain explainable and plugin-driven
 - benchmark evidence shows the combined product is worth keeping in its reduced but stricter form
+
+## v1.x Convergence
+
+The repository now extends the completed v1 baseline with:
+
+- fallback-aware provider health snapshots for `codex`, `claude`, and `mock`
+- controlled review policy CLI overrides that preserve `auto` defaults
+- evidence CLI commands for built-in benchmarks, real task case files, and markdown phase reports
+- an expanded Agent Team Console for provenance, governance, review policy, fallback, compliance, events, messages, work graph, and job controls
+- NUL-delimited hook staged-file handling for paths containing spaces
+- `team refresh-docs` and `team repair-compliance` repair commands
+- CLI/UI runtime ergonomics for terminal refs, attach availability, last log excerpts, last seen timestamps, send, and cancel

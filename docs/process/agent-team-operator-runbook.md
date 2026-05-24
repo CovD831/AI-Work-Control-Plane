@@ -96,6 +96,8 @@ python -m agent_orchestrator.cli team runbook <session_id>
 - `team resume`
 - `team inspect-blockers`
 - `team check-compliance`
+- `team refresh-docs`
+- `team repair-compliance`
 
 推荐顺序：
 
@@ -104,6 +106,16 @@ python -m agent_orchestrator.cli team runbook <session_id>
 3. 再看 `team runbook`，确认是临时故障还是计划本身要修。
 4. 如果是临时失败，用 `retry-review` 或 `retry-adversarial-review`。
 5. 如果失败暴露的是计划缺口，回到 `team revise`。
+
+## v1.x 操作入口
+
+- 用 `health` 查看 `codex`、`claude`、`mock` 的 binary、available、detail 和 recommended fallback。
+- 用 `--review-policy auto|standard|adversarial|required-human` 记录受控 review policy；默认 `auto` 不改变原策略。
+- 用 `evidence benchmark/capture/report` 生成 JSON evidence 和 markdown 阶段报告。
+- 用 `team refresh-docs` 刷新 canonical process docs。
+- 用 `team repair-compliance` 先刷新 docs，再查看 remaining warnings、required actions 和 recommended commands。
+- 用 `ui` 打开 Agent Team Console，检查 provenance、review policy、fallback、compliance、event/message timeline、work graph 和 job log。
+- 对运行中的 job，可用 CLI 或 Console 执行 `send` / `cancel`，并查看 terminal_ref、last log excerpt 和 last_seen_at。
 
 ## 标准验收场景
 

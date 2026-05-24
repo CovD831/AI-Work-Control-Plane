@@ -56,6 +56,36 @@ def benchmark_evidence_cases() -> list[WorkflowEvidenceCase]:
     ]
 
 
+def load_workflow_evidence_cases(path: Path | str) -> list[WorkflowEvidenceCase]:
+    """Load workflow evidence cases from a JSON file."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = payload.get("cases", payload) if isinstance(payload, dict) else payload
+    if not isinstance(raw_cases, list):
+        raise ValueError("evidence case file must contain a list or an object with a cases list")
+
+    cases: list[WorkflowEvidenceCase] = []
+    for index, item in enumerate(raw_cases, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"evidence case #{index} must be an object")
+        requirement = str(item.get("requirement", "")).strip()
+        if not requirement:
+            raise ValueError(f"evidence case #{index} is missing requirement")
+        mode_value = str(item.get("mode") or OrchestrationMode.SUCCESS_FIRST.value)
+        try:
+            mode = OrchestrationMode(mode_value)
+        except ValueError as exc:
+            raise ValueError(f"evidence case #{index} has unsupported mode: {mode_value}") from exc
+        cases.append(
+            WorkflowEvidenceCase(
+                requirement=requirement,
+                mode=mode,
+                label=str(item.get("label") or requirement),
+                scenario_type=str(item.get("scenario_type") or _infer_scenario_type(requirement)),
+            )
+        )
+    return cases
+
+
 def capture_workflow_evidence(
     requirements: list[str] | list[WorkflowEvidenceCase],
     *,
@@ -93,6 +123,76 @@ def capture_workflow_evidence(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload
+
+
+def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
+    """Render a compact markdown report from a workflow evidence payload."""
+    summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
+    report = payload.get("report", {}) if isinstance(payload.get("report"), dict) else {}
+    cases = payload.get("cases", []) if isinstance(payload.get("cases"), list) else []
+    scenario_aggregates = (
+        report.get("scenario_aggregates", {}) if isinstance(report.get("scenario_aggregates"), dict) else {}
+    )
+    signal_counts = summary.get("signal_counts", {}) if isinstance(summary.get("signal_counts"), dict) else {}
+
+    lines = [
+        "# v1.x Evidence Report",
+        "",
+        "## Summary",
+        "",
+        f"- schema_version: {payload.get('schema_version', 'unknown')}",
+        f"- reportable_format: {payload.get('reportable_format', 'unknown')}",
+        f"- case_count: {summary.get('case_count', len(cases))}",
+        f"- average_benefit_score: {_format_score(summary.get('average_benefit_score', 0.0))}",
+        f"- team_cases_with_execution_run: {summary.get('team_cases_with_execution_run', 0)}",
+        f"- direct_runs_without_plan_metadata: {summary.get('direct_runs_without_plan_metadata', 0)}",
+        "",
+        "## Scenario Aggregates",
+        "",
+    ]
+    if scenario_aggregates:
+        for scenario, aggregate in sorted(scenario_aggregates.items()):
+            if not isinstance(aggregate, dict):
+                continue
+            lines.extend(
+                [
+                    f"- {scenario}: cases={aggregate.get('case_count', 0)}, "
+                    f"average_benefit_score={_format_score(aggregate.get('average_benefit_score', 0.0))}, "
+                    f"max_benefit_score={aggregate.get('max_benefit_score', 0)}",
+                ]
+            )
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Signal Counts", ""])
+    for key in [
+        "provenance_present",
+        "provenance_matches_plan_session",
+        "recovery_guidance_present",
+        "doc_sync_present",
+        "fallback_present",
+    ]:
+        lines.append(f"- {key}: {signal_counts.get(key, 0)}")
+
+    lines.extend(["", "## Cases", ""])
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        comparison = case.get("comparison", {}) if isinstance(case.get("comparison"), dict) else {}
+        lines.append(
+            f"- {case.get('label') or case.get('requirement')}: "
+            f"scenario={case.get('scenario_type', 'unknown')}, "
+            f"benefit_score={comparison.get('benefit_score', 0)}"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_workflow_evidence_markdown(payload: dict[str, object], output_path: Path | str) -> Path:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_workflow_evidence_markdown(payload), encoding="utf-8")
+    return path
 
 
 def _capture_case(
@@ -491,3 +591,10 @@ def _average_benefit_score_by_scenario(cases: list[dict[str, object]]) -> dict[s
         for scenario, scores in buckets.items()
         if scores
     }
+
+
+def _format_score(value: object) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "0.00"

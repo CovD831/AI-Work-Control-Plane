@@ -62,7 +62,7 @@ class DashboardService:
         self.event_store = EventStore(root=self.plans_root.parent / "events")
         self.memory_store = MemoryStore(root=self.plans_root.parent / "memory")
         self.message_store = MessageStore(root=self.plans_root.parent / "messages")
-        self.health_check = health_check or ProviderHealthCheck()
+        self.health_check = health_check or ProviderHealthCheck(use_cache=True)
 
     def health(self) -> dict[str, object]:
         providers = [self.health_check.check(provider).to_dict() for provider in ("codex", "claude")]
@@ -101,6 +101,7 @@ class DashboardService:
             "agent_cards": _build_agent_cards(payload),
             "role_groups": _build_role_groups(payload, graph, messages),
             "governance_summary": _build_governance_summary(payload),
+            "operator_summary": _build_operator_summary(payload, linked_run, graph, messages),
             "linked_execution": linked_run,
         }
 
@@ -691,6 +692,84 @@ def _build_evidence_summary(
     }
 
 
+def _build_operator_summary(
+    payload: dict[str, object],
+    linked_run: dict[str, object] | None,
+    graph: WorkUnitGraph | None,
+    messages: list[dict[str, object]],
+) -> dict[str, object]:
+    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    verdict = payload.get("decision_verdict", {}) if isinstance(payload.get("decision_verdict"), dict) else {}
+    compliance = payload.get("compliance", {}) if isinstance(payload.get("compliance"), dict) else {}
+    approved_plan = payload.get("approved_plan", {}) if isinstance(payload.get("approved_plan"), dict) else {}
+    execution_contract = (
+        approved_plan.get("execution_contract", {}) if isinstance(approved_plan.get("execution_contract"), dict) else {}
+    )
+    linked_metadata = linked_run.get("metadata", {}) if isinstance(linked_run, dict) and isinstance(linked_run.get("metadata"), dict) else {}
+    provenance = linked_metadata.get("provenance", {}) if isinstance(linked_metadata.get("provenance"), dict) else {}
+    provider_runtime = verdict.get("selected_provider_runtime", {}) if isinstance(verdict.get("selected_provider_runtime"), dict) else {}
+    fallback_policy = execution_contract.get("fallback_policy", {}) if isinstance(execution_contract.get("fallback_policy"), dict) else {}
+    review_policy = execution_contract.get("review_policy", {}) if isinstance(execution_contract.get("review_policy"), dict) else {}
+    events = payload.get("events", []) if isinstance(payload.get("events"), list) else []
+    return {
+        "session": {
+            "id": payload.get("id"),
+            "status": payload.get("status"),
+            "phase": summary.get("phase") or payload.get("resume", {}).get("current_phase")
+            if isinstance(payload.get("resume"), dict)
+            else None,
+            "primary_action": summary.get("primary_action"),
+            "linked_execution_run_id": provenance.get("linked_execution_run_id")
+            or (linked_run.get("run_id") if isinstance(linked_run, dict) else None),
+        },
+        "execution_provenance": {
+            "plan_session_id": provenance.get("plan_session_id"),
+            "approved_plan_goal": provenance.get("approved_plan_goal"),
+            "source_requirement": provenance.get("source_requirement"),
+            "selected_topology": provenance.get("selected_topology") or verdict.get("selected_topology"),
+            "selected_provider_runtime": provenance.get("selected_provider_runtime") or provider_runtime,
+            "linked_run_status": linked_run.get("status") if isinstance(linked_run, dict) else None,
+        },
+        "review_policy": review_policy or payload.get("structured_brief", {}).get("review_policy", {})
+        if isinstance(payload.get("structured_brief"), dict)
+        else {},
+        "fallback_snapshot": {
+            "provider_runtime": provider_runtime,
+            "fallback_policy": fallback_policy,
+            "recovery_provider": summary.get("recovery_provider"),
+            "recovery_provider_fallback_from": summary.get("recovery_provider_fallback_from"),
+            "recovery_provider_fallback_reason": summary.get("recovery_provider_fallback_reason"),
+            "recovery_provider_fallback_detail": summary.get("recovery_provider_fallback_detail"),
+        },
+        "compliance_snapshot": {
+            "status": compliance.get("status", "unknown"),
+            "blocking": bool(compliance.get("blocking", False)),
+            "blocking_reasons": list(compliance.get("blocking_reasons", []))
+            if isinstance(compliance.get("blocking_reasons"), list)
+            else [],
+            "warnings": list(compliance.get("warnings", [])) if isinstance(compliance.get("warnings"), list) else [],
+            "required_actions": list(compliance.get("required_actions", []))
+            if isinstance(compliance.get("required_actions"), list)
+            else [],
+        },
+        "event_timeline": events[:10],
+        "message_timeline": [
+            {
+                "from_role": message.get("from_role"),
+                "to_role": message.get("to_role"),
+                "message_type": message.get("message_type"),
+                "content": message.get("content"),
+            }
+            for message in messages[:10]
+        ],
+        "work_graph_summary": {
+            "node_count": len(graph.nodes) if graph else 0,
+            "edge_count": len(graph.edges) if graph else 0,
+            "schedulable_nodes": schedulable_nodes(graph) if graph else [],
+        },
+    }
+
+
 def _review_intensity(payload: dict[str, object]) -> str:
     verdict = payload.get("decision_verdict", {}) if isinstance(payload.get("decision_verdict"), dict) else {}
     selected = verdict.get("selected_provider_runtime", {}) if isinstance(verdict.get("selected_provider_runtime"), dict) else {}
@@ -742,6 +821,9 @@ def _job_card(job: dict[str, object], jobs_root: Path | None = None) -> dict[str
     stdout = str(job.get("stdout") or "")
     stderr = str(job.get("stderr") or "")
     error = str(job.get("error") or "")
+    log_text = ""
+    if job_id and jobs_root and (jobs_root / f"{job_id}.log").exists():
+        log_text = (jobs_root / f"{job_id}.log").read_text(encoding="utf-8")
     return {
         "id": job_id,
         "task_id": job.get("task_id"),
@@ -761,16 +843,25 @@ def _job_card(job: dict[str, object], jobs_root: Path | None = None) -> dict[str
         "started_at": job.get("started_at"),
         "completed_at": job.get("completed_at"),
         "updated_at": job.get("updated_at"),
-        "log_available": bool(job_id and jobs_root and (jobs_root / f"{job_id}.log").exists()),
+        "log_available": bool(log_text),
         "output_preview": _output_preview(stdout=stdout, stderr=stderr, error=error),
         "terminal_ref": metadata.get("terminal_ref"),
         "attach_available": bool(metadata.get("attach_available", False)),
+        "last_log_excerpt": _log_excerpt(log_text),
+        "last_seen_at": job.get("updated_at") or job.get("completed_at") or job.get("started_at"),
     }
 
 
 def _output_preview(*, stdout: str, stderr: str, error: str) -> str:
     text = error or stderr or stdout
     return text.strip().replace("\n", " ")[:180]
+
+
+def _log_excerpt(text: str) -> str:
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return " ".join(lines[-3:])[:240]
 
 
 def build_dashboard_service(

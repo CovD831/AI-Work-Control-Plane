@@ -66,6 +66,7 @@ function renderSession(payload) {
     linked_execution: payload.linked_execution,
   }, null, 2);
   $("evidence-summary").innerHTML = renderEvidenceSummary(payload.evidence_summary || {});
+  $("operator-summary").innerHTML = renderOperatorSummary(payload.operator_summary || {});
   renderPlanTree(payload.plan_tree);
   $("agent-cards").innerHTML = (payload.agent_cards || []).length
     ? renderRoleGroups(payload)
@@ -220,7 +221,8 @@ function renderJobs(payload) {
       <button class="job-item" data-job="${job.id}">
         <div class="card-head"><strong>${escapeHtml(job.provider)} · ${escapeHtml(job.kind)}</strong>${badge(job.status)}</div>
         <span class="summary">${escapeHtml(job.output_preview || job.summary || job.id)}</span>
-        <span class="summary">pid:${escapeHtml(job.pid || "-")} · exit:${escapeHtml(job.exit_code ?? "-")} · ${job.log_available ? "有日志" : "无日志"}</span>
+        <span class="summary">pid:${escapeHtml(job.pid || "-")} · exit:${escapeHtml(job.exit_code ?? "-")} · ${job.terminal_ref ? escapeHtml(job.terminal_ref) : job.log_available ? "有日志" : "无日志"}</span>
+        <span class="summary">${escapeHtml(job.last_log_excerpt || job.last_seen_at || "")}</span>
       </button>
     `).join("")
     : `<div class="job-item"><strong>暂无最近任务</strong><span class="summary">任务活动会显示在这里。</span></div>`;
@@ -238,9 +240,18 @@ async function selectSession(id) {
 
 async function selectJob(id) {
   state.selectedJobId = id;
-  const payload = await api(`/api/jobs/${id}/log`);
+  const [detail, payload] = await Promise.all([
+    api(`/api/jobs/${id}`),
+    api(`/api/jobs/${id}/log`),
+  ]);
   $("log-title").textContent = `任务日志 · ${id}`;
   $("log").textContent = payload.log || "这个任务暂无日志。";
+  $("job-actions").innerHTML = `
+    <button data-job-command="send" ${isTerminalJob(detail) ? "" : "disabled"}>发送</button>
+    <button data-job-command="cancel" ${isTerminalJob(detail) ? "" : "disabled"}>取消</button>
+    <span class="summary">${escapeHtml(detail.terminal_ref || detail.phase || "无终端")}</span>
+  `;
+  bindJobCommands();
 }
 
 async function refreshSessions(autoselect = true) {
@@ -317,6 +328,30 @@ function renderEvidenceSummary(summary) {
   ].map(([label, value]) => `
     <div class="evidence-item"><span>${escapeHtml(label)}</span>${escapeHtml(value)}</div>
   `).join("");
+}
+
+function renderOperatorSummary(summary) {
+  const provenance = summary.execution_provenance || {};
+  const reviewPolicy = summary.review_policy || {};
+  const fallback = summary.fallback_snapshot || {};
+  const compliance = summary.compliance_snapshot || {};
+  const graph = summary.work_graph_summary || {};
+  const messages = summary.message_timeline || [];
+  const events = summary.event_timeline || [];
+  return `
+    <div class="operator-grid">
+      <div class="operator-item"><span>执行</span>${escapeHtml(provenance.linked_run_status || provenance.approved_plan_goal || "未执行")}</div>
+      <div class="operator-item"><span>审查策略</span>${escapeHtml(reviewPolicy.policy_name || "未知")}</div>
+      <div class="operator-item"><span>Fallback</span>${escapeHtml(fallback.recovery_provider_fallback_reason || compactProvider(fallback.provider_runtime || {}) || "无")}</div>
+      <div class="operator-item"><span>合规</span>${escapeHtml(complianceLabel(compliance.status))}</div>
+      <div class="operator-item"><span>工作图</span>${escapeHtml(`${graph.node_count || 0} 节点 / ${graph.edge_count || 0} 边`)}</div>
+      <div class="operator-item"><span>消息</span>${escapeHtml(`${messages.length} 条`)}</div>
+    </div>
+    <div class="operator-timeline">
+      ${events.slice(0, 3).map((event) => `<span>${escapeHtml(event.message || event.type || "event")}</span>`).join("")}
+      ${messages.slice(0, 3).map((message) => `<span>${escapeHtml(message.content || message.message_type || "message")}</span>`).join("")}
+    </div>
+  `;
 }
 
 function statusLabel(status) {
@@ -462,6 +497,27 @@ function governanceMessage(summary) {
     return `Provider fallback：${summary.recovery_provider_fallback_reason}`;
   }
   return "";
+}
+
+function isTerminalJob(job) {
+  return !["completed", "failed", "cancelled"].includes(String(job.status || ""));
+}
+
+function bindJobCommands() {
+  document.querySelectorAll("[data-job-command]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      if (!state.selectedJobId) return;
+      if (node.dataset.jobCommand === "send") {
+        const message = window.prompt("发送给任务的消息");
+        if (!message) return;
+        await api(`/api/jobs/${state.selectedJobId}/send`, { method: "POST", body: JSON.stringify({ message }) });
+      } else if (node.dataset.jobCommand === "cancel") {
+        await api(`/api/jobs/${state.selectedJobId}/cancel`, { method: "POST" });
+      }
+      await selectJob(state.selectedJobId);
+      await refreshJobs();
+    });
+  });
 }
 
 $("refresh").addEventListener("click", async () => {

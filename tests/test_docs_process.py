@@ -98,4 +98,6 @@ def test_hook_script_scopes_changed_file_checks_to_compliance_inputs() -> None:
     assert "README.md" in text
     assert "*)" in text
     assert "continue" in text
-    assert " --changed-file=\"$file\"" in text
+    assert "git diff --cached --name-only -z" in text
+    assert "changed_args+=(--changed-file=\"$file\")" in text
+    assert '"${changed_args[@]}"' in text

@@ -45,6 +45,20 @@ def test_auto_mode_high_risk_routes_to_success_first() -> None:
     assert run.routing_decision.mode.value == "success_first"
 
 
+def test_provider_health_snapshot_includes_mock_binary_and_fallback_fields() -> None:
+    from agent_orchestrator import cli
+
+    payload = cli._provider_health_snapshot()
+    providers = {item["provider"]: item for item in payload["providers"]}
+
+    assert payload["cache"]["tiers"] == ["memory", "disk", "live"]
+    assert {"codex", "claude", "mock"} <= set(providers)
+    assert "binary" in providers["codex"]
+    assert "recommended_fallback" in providers["claude"]
+    assert "cache_tier" in providers["codex"]
+    assert providers["mock"]["available"] is True
+
+
 def test_print_run_summary_reports_reroute(capsys) -> None:
     run = Orchestrator().run("Fail the auth migration", OrchestrationMode.SPEED_FIRST)
 
@@ -109,7 +123,9 @@ def test_job_status_and_result_commands_round_trip(tmp_path, capsys) -> None:
             command="status", job_id=job.id, root=str(Path(tmp_path))
         )
         cli.main()
-        status_payload = json.loads(capsys.readouterr().out)
+        status_out = capsys.readouterr().out
+        assert status_out.startswith("job_status:")
+        status_payload = json.loads("\n".join(status_out.splitlines()[1:]))
         assert status_payload["id"] == job.id
         assert "session_id" in status_payload
         assert "thread_id" in status_payload
@@ -118,7 +134,9 @@ def test_job_status_and_result_commands_round_trip(tmp_path, capsys) -> None:
             command="result", job_id=job.id, root=str(Path(tmp_path))
         )
         cli.main()
-        result_payload = json.loads(capsys.readouterr().out)
+        result_out = capsys.readouterr().out
+        assert result_out.startswith("job_result:")
+        result_payload = json.loads("\n".join(result_out.splitlines()[1:]))
         assert result_payload["job_id"] == job.id
         assert result_payload["summary"] == "cli done"
     finally:
@@ -2215,4 +2233,119 @@ def test_team_execute_command_rejects_unapproved_session(tmp_path) -> None:
         with pytest.raises(ValueError, match="approved plan"):
             cli.main()
     finally:
+        cli.argparse.ArgumentParser.parse_args = original
+
+
+def test_evidence_capture_command_writes_case_file_output(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    write_minimal_process_docs(tmp_path)
+    case_file = tmp_path / "cases.json"
+    output_path = tmp_path / "evidence.json"
+    case_file.write_text(
+        json.dumps([{"label": "artifact", "requirement": "Build a persisted plan artifact"}]),
+        encoding="utf-8",
+    )
+
+    original = cli.argparse.ArgumentParser.parse_args
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="evidence",
+            evidence_command="capture",
+            case_file=str(case_file),
+            output=str(output_path),
+        )
+        cli.main()
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        printed = json.loads(capsys.readouterr().out)
+        assert printed["summary"]["case_count"] == 1
+        assert payload["cases"][0]["label"] == "artifact"
+    finally:
+        os.chdir(original_cwd)
+        cli.argparse.ArgumentParser.parse_args = original
+
+
+def test_evidence_report_command_writes_markdown(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    write_minimal_process_docs(tmp_path)
+    report_path = tmp_path / "report.md"
+
+    original = cli.argparse.ArgumentParser.parse_args
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="evidence",
+            evidence_command="report",
+            case_file=None,
+            output=str(report_path),
+            json_output=None,
+        )
+        cli.main()
+        out = capsys.readouterr().out
+        assert "Wrote evidence report" in out
+        assert "# v1.x Evidence Report" in report_path.read_text(encoding="utf-8")
+    finally:
+        os.chdir(original_cwd)
+        cli.argparse.ArgumentParser.parse_args = original
+
+
+def test_team_refresh_docs_command_writes_canonical_docs(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    (tmp_path / "src" / "agent_orchestrator").mkdir(parents=True)
+    (tmp_path / "src" / "agent_orchestrator" / "demo.py").write_text(
+        '"""Demo module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Demo module.\n# MODULE: tests\n# ---\n',
+        encoding="utf-8",
+    )
+    original = cli.argparse.ArgumentParser.parse_args
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="refresh-docs",
+            runtime="mock",
+            provider=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["documents"]["module_manifest"]["status"] == "passed"
+        assert (tmp_path / "docs" / "process" / "module-manifest.md").exists()
+    finally:
+        os.chdir(original_cwd)
+        cli.argparse.ArgumentParser.parse_args = original
+
+
+def test_team_repair_compliance_command_reports_remaining_actions(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    write_minimal_process_docs(tmp_path)
+    original = cli.argparse.ArgumentParser.parse_args
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="repair-compliance",
+            session_id=None,
+            changed_file=[],
+            runtime="mock",
+            provider=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert "refresh_results" in payload
+        assert "required_actions" in payload
+        assert "recommended_commands" in payload
+        assert payload["compliance"]["status"] in {"passed", "warning"}
+    finally:
+        os.chdir(original_cwd)
         cli.argparse.ArgumentParser.parse_args = original

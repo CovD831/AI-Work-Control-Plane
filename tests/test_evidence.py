@@ -12,6 +12,9 @@ from agent_orchestrator.evidence import (
     WorkflowEvidenceCase,
     benchmark_evidence_cases,
     capture_workflow_evidence,
+    load_workflow_evidence_cases,
+    render_workflow_evidence_markdown,
+    write_workflow_evidence_markdown,
 )
 from test_support import write_minimal_process_docs
 
@@ -115,3 +118,40 @@ def test_benchmark_evidence_cases_are_stable_and_reportable(tmp_path) -> None:
     assert [case.scenario_type for case in cases] == ["standard", "followup", "high_risk", "parallel"]
     assert payload["report"]["format"] == "agent_orchestrator.workflow_evidence.v1"
     assert sorted(payload["report"]["scenario_aggregates"]) == ["followup", "standard"]
+
+
+def test_load_workflow_evidence_cases_accepts_real_task_case_file(tmp_path) -> None:
+    case_file = tmp_path / "cases.json"
+    case_file.write_text(
+        json.dumps(
+            [
+                {
+                    "label": "real-task",
+                    "requirement": "Implement auth migration across multiple services",
+                    "scenario_type": "high_risk",
+                    "mode": "speed_first",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cases = load_workflow_evidence_cases(case_file)
+
+    assert cases[0].label == "real-task"
+    assert cases[0].scenario_type == "high_risk"
+    assert cases[0].mode.value == "speed_first"
+
+
+def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    payload = capture_workflow_evidence(["Build a persisted plan artifact"], project_root=tmp_path)
+    output_path = tmp_path / "report.md"
+
+    write_workflow_evidence_markdown(payload, output_path)
+    markdown = output_path.read_text(encoding="utf-8")
+
+    assert markdown == render_workflow_evidence_markdown(payload)
+    assert "# v1.x Evidence Report" in markdown
+    assert "average_benefit_score" in markdown
+    assert "provenance_matches_plan_session" in markdown

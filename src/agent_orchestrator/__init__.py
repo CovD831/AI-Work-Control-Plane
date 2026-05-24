@@ -27,7 +27,12 @@ from agent_orchestrator.command import (
     PromptRenderer,
     SubprocessCommandRunner,
 )
-from agent_orchestrator.evidence import capture_workflow_evidence
+from agent_orchestrator.evidence import (
+    capture_workflow_evidence,
+    load_workflow_evidence_cases,
+    render_workflow_evidence_markdown,
+    write_workflow_evidence_markdown,
+)
 from agent_orchestrator.topology import ExecutionTopology, build_execution_topology
 from agent_orchestrator.adapters import RuntimeProviderAdapter, RuntimeProviderReviewRescueAdapter
 from agent_orchestrator.planning import (
@@ -65,6 +70,7 @@ __all__ = [
     "InMemoryJobRuntime",
     "JobRequest",
     "JobResult",
+    "load_workflow_evidence_cases",
     "OrchestrationMode",
     "OrchestrationAttempt",
     "OrchestrationAttemptHandle",
@@ -89,6 +95,7 @@ __all__ = [
     "PromptRenderer",
     "ProviderHealthCheck",
     "ReviewResult",
+    "render_workflow_evidence_markdown",
     "RuntimeProviderAdapter",
     "RuntimeProviderReviewRescueAdapter",
     "SubprocessCommandRunner",
@@ -97,4 +104,5 @@ __all__ = [
     "build_execution_topology",
     "GateVerdict",
     "get_policy",
+    "write_workflow_evidence_markdown",
 ]

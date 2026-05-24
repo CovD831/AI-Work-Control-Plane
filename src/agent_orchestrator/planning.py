@@ -758,7 +758,13 @@ class TeamOrchestrator:
     def __post_init__(self) -> None:
         self.project_root = Path(self.project_root)
 
-    def start(self, requirement: str) -> PlanSession:
+    def start(
+        self,
+        requirement: str,
+        *,
+        review_policy_override: str | None = None,
+        provider_health_snapshot: dict[str, object] | None = None,
+    ) -> PlanSession:
         policy = get_policy(OrchestrationMode.SUCCESS_FIRST)
         contract = self.orchestrator.planner.clarify(requirement, policy)
         work_units = self.orchestrator.decomposer.decompose(contract, policy)
@@ -822,9 +828,15 @@ class TeamOrchestrator:
             reviewer_fallback_reason=_string_or_none(provider_recommendation.get("fallback_reason")),
             reviewer_fallback_detail=_string_or_none(provider_recommendation.get("fallback_detail")),
         )
+        if provider_health_snapshot:
+            session.structured_brief.provider_recommendation["provider_health_snapshot"] = provider_health_snapshot
         session.structured_brief.review_policy = _recommend_review_policy(
             requirement,
             session.structured_brief.topology_recommendation,
+        )
+        session.structured_brief.review_policy = _apply_team_review_policy_override(
+            session.structured_brief.review_policy,
+            review_policy_override,
         )
         message_router = MessageRouter(self.store.message_store())
 
@@ -1325,7 +1337,14 @@ class TeamOrchestrator:
         self.store.write_session(session)
         return session
 
-    def execute(self, session_id: str, mode: OrchestrationMode | None = OrchestrationMode.SUCCESS_FIRST) -> PlanSession:
+    def execute(
+        self,
+        session_id: str,
+        mode: OrchestrationMode | None = OrchestrationMode.SUCCESS_FIRST,
+        *,
+        review_policy_override: str | None = None,
+        provider_health_snapshot: dict[str, object] | None = None,
+    ) -> PlanSession:
         session = self.store.read_session(session_id)
         session.doc_sync = self._build_doc_sync_status()
         session.compliance = build_compliance_status_for_session(
@@ -1339,6 +1358,15 @@ class TeamOrchestrator:
         self.round_controller.validate_execute(session)
         if session.approved_plan is None:
             raise ValueError("team execute requires an approved plan artifact before execution")
+        if review_policy_override not in {None, "", "auto"} or provider_health_snapshot:
+            session.structured_brief.review_policy = _apply_team_review_policy_override(
+                session.structured_brief.review_policy,
+                review_policy_override,
+            )
+            if provider_health_snapshot:
+                session.structured_brief.provider_recommendation["provider_health_snapshot"] = provider_health_snapshot
+            session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime, approval_status="approved")
+            session.approved_plan = _build_approved_plan(session)
 
         self.orchestrator.run_store.__post_init__()
         session.status = "executing"
@@ -1347,7 +1375,12 @@ class TeamOrchestrator:
         self.store.write_session(session)
 
         execution_requirement = session.approved_plan["goal"] if session.approved_plan else session.requirement
-        run = self.orchestrator.run(execution_requirement, mode)
+        run = self.orchestrator.run(
+            execution_requirement,
+            mode,
+            review_policy_override=review_policy_override,
+            provider_health_snapshot=provider_health_snapshot,
+        )
         payload = run.to_dict()
         metadata = dict(payload.get("metadata", {}))
         provenance = dict(metadata.get("provenance", {}))
@@ -1369,7 +1402,10 @@ class TeamOrchestrator:
                     "goal": session.approved_plan.get("goal") if session.approved_plan else execution_requirement,
                     "selected_topology": session.decision_verdict.selected_topology if session.decision_verdict else None,
                     "selected_provider_runtime": session.decision_verdict.selected_provider_runtime if session.decision_verdict else {},
+                    "review_policy": session.approved_plan.get("review_policy", {}) if session.approved_plan else {},
+                    "fallback_policy": session.approved_plan.get("execution_contract", {}).get("fallback_policy", {}) if session.approved_plan else {},
                 },
+                "provider_health_snapshot": provider_health_snapshot or metadata.get("provider_health_snapshot"),
                 "provenance": provenance,
             }
         )
@@ -2322,6 +2358,60 @@ def _recommend_review_policy(requirement: str, topology_recommendation: dict[str
             "retryable_rounds": ["review"],
         },
     }
+
+
+def _apply_team_review_policy_override(policy: dict[str, object], override: str | None) -> dict[str, object]:
+    if override in {None, "", "auto"}:
+        return {**policy, "override_source": "auto", "override_requested": False}
+    if override == "standard":
+        return {
+            **policy,
+            "policy_name": "standard",
+            "review_rounds": ["review"],
+            "adversarial_required": False,
+            "requires_human_escalation": False,
+            "selection_reason": "CLI override selected the standard review loop.",
+            "override_source": "cli",
+            "override_requested": True,
+            "execution_config": {
+                "round_sequence": ["lead", "review"],
+                "minimum_approval": "required_gaps_closed",
+                "retryable_rounds": ["review"],
+            },
+        }
+    if override == "adversarial":
+        return {
+            **policy,
+            "policy_name": "adversarial_required",
+            "review_rounds": ["review", "adversarial_review"],
+            "adversarial_required": True,
+            "requires_human_escalation": False,
+            "selection_reason": "CLI override selected adversarial review.",
+            "override_source": "cli",
+            "override_requested": True,
+            "execution_config": {
+                "round_sequence": ["lead", "review", "adversarial_review"],
+                "minimum_approval": "all_required_gaps_closed",
+                "retryable_rounds": ["review", "adversarial_review"],
+            },
+        }
+    if override == "required-human":
+        return {
+            **policy,
+            "policy_name": "human_escalation_required",
+            "review_rounds": ["review", "adversarial_review"],
+            "adversarial_required": True,
+            "requires_human_escalation": True,
+            "selection_reason": "CLI override requires human escalation before execution is considered approved.",
+            "override_source": "cli",
+            "override_requested": True,
+            "execution_config": {
+                "round_sequence": ["lead", "review", "adversarial_review", "human_decision"],
+                "minimum_approval": "human_decision",
+                "retryable_rounds": ["review", "adversarial_review"],
+            },
+        }
+    return {**policy, "override_source": "unknown", "override_requested": True, "override_value": override}
 
 
 def _recommend_provider_runtime(

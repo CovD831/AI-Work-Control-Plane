@@ -6,6 +6,8 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from threading import Lock, Thread
 from time import sleep
 from typing import Any, Protocol
@@ -172,34 +174,176 @@ class ProviderStatus:
     provider: Provider
     available: bool
     detail: str
+    binary: str | None = None
+    recommended_fallback: Provider | None = None
+    cache_tier: str = "live"
+    cached_at: str | None = None
+    expires_at: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "provider": self.provider,
             "available": self.available,
             "detail": self.detail,
+            "binary": self.binary,
+            "recommended_fallback": self.recommended_fallback,
+            "cache_tier": self.cache_tier,
+            "cached_at": self.cached_at,
+            "expires_at": self.expires_at,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object], *, cache_tier: str) -> "ProviderStatus":
+        return cls(
+            provider=str(data.get("provider", "mock")),  # type: ignore[arg-type]
+            available=bool(data.get("available", False)),
+            detail=str(data.get("detail", "")),
+            binary=str(data["binary"]) if data.get("binary") is not None else None,
+            recommended_fallback=str(data["recommended_fallback"]) if data.get("recommended_fallback") is not None else None,  # type: ignore[arg-type]
+            cache_tier=cache_tier,
+            cached_at=str(data["cached_at"]) if data.get("cached_at") is not None else None,
+            expires_at=str(data["expires_at"]) if data.get("expires_at") is not None else None,
+        )
+
+
+_MEMORY_PROVIDER_HEALTH_CACHE: dict[tuple[str, Provider], dict[str, object]] = {}
 
 
 @dataclass(slots=True)
 class ProviderHealthCheck:
     runner: CommandRunner = field(default_factory=SubprocessCommandRunner)
+    cache_path: Path | None = None
+    ttl_seconds: int = 60
+    use_cache: bool = False
 
-    def check(self, provider: Provider) -> ProviderStatus:
+    def check(self, provider: Provider, *, refresh: bool = False) -> ProviderStatus:
+        if self.use_cache and not refresh:
+            cached = self._read_cached(provider)
+            if cached is not None:
+                return cached
+
+        status = self._check_live(provider)
+        if self.use_cache:
+            status = self._write_cached(status)
+        return status
+
+    def _check_live(self, provider: Provider) -> ProviderStatus:
         if provider == "mock":
-            return ProviderStatus(provider=provider, available=True, detail="mock provider is always available")
+            return ProviderStatus(
+                provider=provider,
+                available=True,
+                detail="mock provider is always available",
+                binary=None,
+                recommended_fallback=None,
+            )
 
         binary = _provider_binary(provider)
+        fallback = _recommended_provider_fallback(provider)
         if shutil.which(binary) is None:
-            return ProviderStatus(provider=provider, available=False, detail=f"{binary} not found")
+            return ProviderStatus(
+                provider=provider,
+                available=False,
+                detail=f"{binary} not found",
+                binary=binary,
+                recommended_fallback=fallback,
+            )
 
         result = self.runner.run([binary, "--version"], cwd=".")
         if result.error:
-            return ProviderStatus(provider=provider, available=False, detail=result.error)
+            return ProviderStatus(
+                provider=provider,
+                available=False,
+                detail=result.error,
+                binary=binary,
+                recommended_fallback=fallback,
+            )
         if result.exit_code != 0:
             detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.exit_code}"
-            return ProviderStatus(provider=provider, available=False, detail=detail)
-        return ProviderStatus(provider=provider, available=True, detail=result.stdout.strip() or "ok")
+            return ProviderStatus(
+                provider=provider,
+                available=False,
+                detail=detail,
+                binary=binary,
+                recommended_fallback=fallback,
+            )
+        return ProviderStatus(
+            provider=provider,
+            available=True,
+            detail=result.stdout.strip() or "ok",
+            binary=binary,
+            recommended_fallback=None,
+        )
+
+    def _read_cached(self, provider: Provider) -> ProviderStatus | None:
+        cache_key = self._cache_key(provider)
+        cached = _MEMORY_PROVIDER_HEALTH_CACHE.get(cache_key)
+        if _cache_entry_valid(cached):
+            status = cached.get("status", {}) if isinstance(cached, dict) else {}
+            return ProviderStatus.from_dict(status, cache_tier="memory") if isinstance(status, dict) else None
+
+        path = self._resolved_cache_path()
+        if path is None or not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        entries = payload.get("entries", {}) if isinstance(payload, dict) else {}
+        entry = entries.get(provider) if isinstance(entries, dict) else None
+        if not _cache_entry_valid(entry):
+            return None
+        _MEMORY_PROVIDER_HEALTH_CACHE[cache_key] = dict(entry)
+        status = entry.get("status", {}) if isinstance(entry, dict) else {}
+        return ProviderStatus.from_dict(status, cache_tier="disk") if isinstance(status, dict) else None
+
+    def _write_cached(self, status: ProviderStatus) -> ProviderStatus:
+        now = datetime.now(UTC)
+        expires = now + timedelta(seconds=max(1, int(self.ttl_seconds)))
+        cached_status = ProviderStatus(
+            provider=status.provider,
+            available=status.available,
+            detail=status.detail,
+            binary=status.binary,
+            recommended_fallback=status.recommended_fallback,
+            cache_tier="live",
+            cached_at=now.isoformat(),
+            expires_at=expires.isoformat(),
+        )
+        entry = {
+            "expires_at_epoch": expires.timestamp(),
+            "status": cached_status.to_dict(),
+        }
+        _MEMORY_PROVIDER_HEALTH_CACHE[self._cache_key(status.provider)] = entry
+        path = self._resolved_cache_path()
+        if path is None:
+            return cached_status
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"schema_version": "1.0", "entries": {}}
+        if path.exists():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict):
+                    payload.update(existing)
+            except Exception:
+                payload = {"schema_version": "1.0", "entries": {}}
+        entries = payload.get("entries", {})
+        if not isinstance(entries, dict):
+            entries = {}
+        entries[status.provider] = entry
+        payload["entries"] = entries
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_path.replace(path)
+        return cached_status
+
+    def _resolved_cache_path(self) -> Path | None:
+        if not self.use_cache:
+            return None
+        return self.cache_path or Path(".agent_orchestrator") / "cache" / "provider-health.json"
+
+    def _cache_key(self, provider: Provider) -> tuple[str, Provider]:
+        path = self._resolved_cache_path()
+        return (str(path.resolve()) if path else "memory-only", provider)
 
 
 @dataclass(slots=True)
@@ -666,6 +810,23 @@ def _provider_binary(provider: Provider) -> str:
     if provider == "codex":
         return "codex"
     return provider
+
+
+def _recommended_provider_fallback(provider: Provider) -> Provider | None:
+    if provider == "codex":
+        return "claude"
+    if provider == "claude":
+        return "codex"
+    return "mock"
+
+
+def _cache_entry_valid(entry: object) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    expires = entry.get("expires_at_epoch")
+    if not isinstance(expires, int | float):
+        return False
+    return expires > datetime.now(UTC).timestamp()
 
 
 def _format_list(value: object) -> str:

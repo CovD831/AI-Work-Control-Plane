@@ -65,6 +65,8 @@ class Orchestrator:
         parent_run_id: str | None = None,
         agent_enabled: bool | None = None,
         depth: int | None = None,
+        review_policy_override: str | None = None,
+        provider_health_snapshot: dict[str, object] | None = None,
     ) -> OrchestrationRunHandle:
         routing_decision: RoutingDecision | None = None
         if mode is None:
@@ -99,7 +101,10 @@ class Orchestrator:
             job_status_summary={},
             active_attempt_id=None,
             lineage=[],
-            metadata={},
+            metadata=_initial_run_metadata(
+                review_policy_override=review_policy_override,
+                provider_health_snapshot=provider_health_snapshot,
+            ),
         )
         self._store_run(run)
 
@@ -123,6 +128,8 @@ class Orchestrator:
                 "parent_run_id": parent_run_id,
                 "agent_enabled": agent_enabled,
                 "depth": depth,
+                "review_policy_override": review_policy_override,
+                "provider_health_snapshot": provider_health_snapshot,
             },
             daemon=True,
             name=f"orchestrator-run-{run_id}",
@@ -165,6 +172,8 @@ class Orchestrator:
                     "parent_run_id": run.parent_run_id,
                     "agent_enabled": run.policy.agent_enabled if run.policy else None,
                     "depth": run.policy.topology_depth if run.policy else None,
+                    "review_policy_override": _metadata_review_policy_override(run.metadata),
+                    "provider_health_snapshot": _metadata_provider_health_snapshot(run.metadata),
                 },
                 daemon=True,
                 name=f"orchestrator-resume-{run_id}",
@@ -192,6 +201,8 @@ class Orchestrator:
             parent_run_id=run.run_id,
             agent_enabled=run.policy.agent_enabled if run.policy else None,
             depth=run.policy.topology_depth if run.policy else None,
+            review_policy_override=_metadata_review_policy_override(run.metadata),
+            provider_health_snapshot=_metadata_provider_health_snapshot(run.metadata),
         )
 
     def run(
@@ -201,8 +212,18 @@ class Orchestrator:
         reroute: bool = True,
         agent_enabled: bool | None = None,
         depth: int | None = None,
+        review_policy_override: str | None = None,
+        provider_health_snapshot: dict[str, object] | None = None,
     ) -> OrchestrationRun:
-        handle = self.start_run(requirement, mode, reroute=reroute, agent_enabled=agent_enabled, depth=depth)
+        handle = self.start_run(
+            requirement,
+            mode,
+            reroute=reroute,
+            agent_enabled=agent_enabled,
+            depth=depth,
+            review_policy_override=review_policy_override,
+            provider_health_snapshot=provider_health_snapshot,
+        )
         return self._wait_for_run(handle.run_id)
 
     def _background_run(
@@ -215,6 +236,8 @@ class Orchestrator:
         parent_run_id: str | None,
         agent_enabled: bool | None,
         depth: int | None,
+        review_policy_override: str | None,
+        provider_health_snapshot: dict[str, object] | None,
     ) -> None:
         heartbeat_stop = threading.Event()
         heartbeat_thread = threading.Thread(
@@ -234,6 +257,8 @@ class Orchestrator:
                 run_id=run_id,
                 agent_enabled=agent_enabled,
                 depth=depth,
+                review_policy_override=review_policy_override,
+                provider_health_snapshot=provider_health_snapshot,
             )
             self._store_run(run)
         except Exception as exc:  # pragma: no cover - background safety net
@@ -282,6 +307,8 @@ class Orchestrator:
         run_id: str | None = None,
         agent_enabled: bool | None = None,
         depth: int | None = None,
+        review_policy_override: str | None = None,
+        provider_health_snapshot: dict[str, object] | None = None,
     ) -> OrchestrationRun:
         routing_decision: RoutingDecision | None = None
         if mode is None:
@@ -510,6 +537,8 @@ class Orchestrator:
                 contract=final_attempt.contract,
                 work_units=final_attempt.work_units,
                 routing_decision=routing_decision,
+                review_policy_override=review_policy_override,
+                provider_health_snapshot=provider_health_snapshot,
             ),
         )
 
@@ -541,8 +570,13 @@ class Orchestrator:
                 policy_mode=run.final_mode.value,
                 contract=run.contract,
                 work_units=run.work_units,
+                review_policy_override=_metadata_review_policy_override(metadata),
             ),
         )
+        if "provider_health_snapshot" not in metadata:
+            provider_health_snapshot = _metadata_provider_health_snapshot(run.metadata)
+            if provider_health_snapshot:
+                metadata["provider_health_snapshot"] = provider_health_snapshot
         payload["metadata"] = metadata
         self.run_store.write(run.run_id, payload)
 
@@ -868,6 +902,7 @@ def _build_execution_contract_payload(
     policy_mode: str,
     contract: TaskContract | None,
     work_units: list[WorkUnit],
+    review_policy_override: str | None = None,
 ) -> dict[str, object]:
     goal = contract.goal if contract else requirement
     acceptance_criteria = list(contract.acceptance_criteria) if contract else []
@@ -912,7 +947,10 @@ def _build_execution_contract_payload(
     ).to_dict()
     execution_contract.update(
         {
-            "review_policy": _direct_review_policy_payload(policy_mode, topology, contract),
+            "review_policy": _apply_review_policy_override(
+                _direct_review_policy_payload(policy_mode, topology, contract),
+                review_policy_override,
+            ),
             "fallback_policy": _direct_fallback_policy_payload(provider_recommendation),
             "compliance_snapshot": {
                 "status": "not_applicable",
@@ -945,6 +983,51 @@ def _direct_review_policy_payload(
             "minimum_approval": "accepted_run",
         },
     }
+
+
+def _apply_review_policy_override(policy: dict[str, object], override: str | None) -> dict[str, object]:
+    if override in {None, "", "auto"}:
+        return {**policy, "override_source": "auto", "override_requested": False}
+    if override == "standard":
+        return {
+            **policy,
+            "policy_name": "standard",
+            "adversarial_required": False,
+            "requires_human_escalation": False,
+            "override_source": "cli",
+            "override_requested": True,
+            "execution_config": {
+                "round_sequence": ["implementation", "review"],
+                "minimum_approval": "accepted_run",
+            },
+        }
+    if override == "adversarial":
+        return {
+            **policy,
+            "policy_name": "adversarial_required",
+            "adversarial_required": True,
+            "requires_human_escalation": False,
+            "override_source": "cli",
+            "override_requested": True,
+            "execution_config": {
+                "round_sequence": ["implementation", "review", "adversarial_review"],
+                "minimum_approval": "accepted_run",
+            },
+        }
+    if override == "required-human":
+        return {
+            **policy,
+            "policy_name": "human_escalation_required",
+            "adversarial_required": True,
+            "requires_human_escalation": True,
+            "override_source": "cli",
+            "override_requested": True,
+            "execution_config": {
+                "round_sequence": ["implementation", "review", "adversarial_review", "human_decision"],
+                "minimum_approval": "human_decision",
+            },
+        }
+    return {**policy, "override_source": "unknown", "override_requested": True, "override_value": override}
 
 
 def _direct_fallback_policy_payload(provider_recommendation: dict[str, object]) -> dict[str, object]:
@@ -980,12 +1063,15 @@ def _build_run_metadata(
     contract: TaskContract,
     work_units: list[WorkUnit],
     routing_decision: RoutingDecision | None,
+    review_policy_override: str | None = None,
+    provider_health_snapshot: dict[str, object] | None = None,
 ) -> dict[str, object]:
     execution_contract = _build_execution_contract_payload(
         requirement=requirement,
         policy_mode=mode,
         contract=contract,
         work_units=work_units,
+        review_policy_override=review_policy_override,
     )
     topology = execution_contract.get("topology", {}) if isinstance(execution_contract, dict) else {}
     provider_recommendation = (
@@ -1011,4 +1097,33 @@ def _build_run_metadata(
         },
         "execution_contract": execution_contract,
     }
+    if provider_health_snapshot:
+        metadata["provider_health_snapshot"] = provider_health_snapshot
     return metadata
+
+
+def _initial_run_metadata(
+    *,
+    review_policy_override: str | None,
+    provider_health_snapshot: dict[str, object] | None,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if review_policy_override not in {None, "", "auto"}:
+        metadata["review_policy_override"] = review_policy_override
+    if provider_health_snapshot:
+        metadata["provider_health_snapshot"] = provider_health_snapshot
+    return metadata
+
+
+def _metadata_review_policy_override(metadata: dict[str, object] | None) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("review_policy_override")
+    return str(value) if value else None
+
+
+def _metadata_provider_health_snapshot(metadata: dict[str, object] | None) -> dict[str, object] | None:
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("provider_health_snapshot")
+    return dict(value) if isinstance(value, dict) else None

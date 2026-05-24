@@ -56,3 +56,13 @@ def test_memory_search_endpoint_returns_records(tmp_path) -> None:
 
     assert response.status_code == 200
     assert response.json()["records"]
+
+
+def test_index_contains_operator_and_job_control_mounts(tmp_path) -> None:
+    client, _service = _client(tmp_path)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="operator-summary"' in response.text
+    assert 'id="job-actions"' in response.text

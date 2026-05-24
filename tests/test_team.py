@@ -1370,6 +1370,25 @@ def test_team_start_uses_adversarial_topology_for_high_risk_work(tmp_path) -> No
     assert session.structured_brief.review_policy["adversarial_required"] is True
 
 
+def test_team_start_records_review_policy_override_and_provider_health_snapshot(tmp_path) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path),
+    )
+    health_snapshot = {"providers": [{"provider": "claude", "available": False, "recommended_fallback": "codex"}]}
+
+    session = team.start(
+        "Build a persisted plan artifact",
+        review_policy_override="adversarial",
+        provider_health_snapshot=health_snapshot,
+    )
+
+    assert session.structured_brief.review_policy["policy_name"] == "adversarial_required"
+    assert session.structured_brief.review_policy["override_source"] == "cli"
+    assert session.decision_verdict is not None
+    assert session.decision_verdict.selected_provider_runtime["provider_health_snapshot"] == health_snapshot
+
+
 def test_adversarial_review_can_force_needs_revision(tmp_path) -> None:
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),

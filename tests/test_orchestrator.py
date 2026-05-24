@@ -597,6 +597,22 @@ def test_direct_run_persists_entrypoint_provenance_metadata(tmp_path) -> None:
     assert payload["metadata"]["approved_plan_summary"]["review_policy"]["policy_name"] == "adversarial_required"
 
 
+def test_direct_run_records_review_policy_override_and_provider_health_snapshot() -> None:
+    health_snapshot = {"providers": [{"provider": "codex", "available": False, "recommended_fallback": "claude"}]}
+
+    run = Orchestrator().run(
+        "Build a persisted plan artifact",
+        OrchestrationMode.SUCCESS_FIRST,
+        review_policy_override="required-human",
+        provider_health_snapshot=health_snapshot,
+    )
+
+    review_policy = run.metadata["execution_contract"]["review_policy"]
+    assert review_policy["policy_name"] == "human_escalation_required"
+    assert review_policy["override_source"] == "cli"
+    assert run.metadata["provider_health_snapshot"] == health_snapshot
+
+
 def test_direct_run_exposes_execution_contract_on_run_object() -> None:
     run = Orchestrator().run("Build dashboard", OrchestrationMode.SUCCESS_FIRST)
 

@@ -465,10 +465,62 @@ textarea {
   text-transform: uppercase;
 }
 
+.operator-summary {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.operator-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.operator-item {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+  background: #fff;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operator-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.operator-timeline {
+  display: grid;
+  gap: 4px;
+  max-height: 74px;
+  overflow: hidden;
+}
+
+.operator-timeline span {
+  border-left: 2px solid var(--work);
+  color: var(--muted);
+  font-size: 12px;
+  padding-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.compact-actions {
+  align-items: center;
+  margin-bottom: 8px;
 }
 
 .runbook {

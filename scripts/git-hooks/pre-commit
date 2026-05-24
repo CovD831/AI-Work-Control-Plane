@@ -1,22 +1,22 @@
-#!/bin/sh
-set -eu
+#!/bin/bash
+set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$repo_root"
 
-set --
+changed_args=()
 has_compliance_input=0
-for file in $(git diff --cached --name-only --diff-filter=ACMR); do
+while IFS= read -r -d '' file; do
     case "$file" in
         README.md|docs/process/*.md|docs/architecture/*.md|src/agent_orchestrator/*.py)
             has_compliance_input=1
-            set -- "$@" --changed-file="$file"
+            changed_args+=(--changed-file="$file")
             ;;
         *)
             continue
             ;;
     esac
-done
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
 
 if [ "$has_compliance_input" -eq 0 ]; then
     exit 0
@@ -26,4 +26,4 @@ if [ ! -f ".agent_orchestrator/hooks.json" ]; then
     echo "agent-orchestrator: managed hook marker missing; run python -m agent_orchestrator.cli install-hooks --root \"$repo_root\"" >&2
 fi
 
-PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance "$@"
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance "${changed_args[@]}"

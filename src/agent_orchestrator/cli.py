@@ -28,10 +28,19 @@ from agent_orchestrator.cli_presenters import (
     team_display_context as _team_display_context,
 )
 from agent_orchestrator.command import CommandJobRuntime, ProviderHealthCheck
+from agent_orchestrator.evidence import (
+    benchmark_evidence_cases,
+    capture_workflow_evidence,
+    load_workflow_evidence_cases,
+    write_workflow_evidence_markdown,
+)
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator, build_operator_runbook
 from agent_orchestrator.run_store import RunStore
+
+
+REVIEW_POLICY_CHOICES = ["auto", "standard", "adversarial", "required-human"]
 
 
 def main() -> None:
@@ -63,6 +72,12 @@ def main() -> None:
         choices=["codex", "claude"],
         help="Provider to use with --runtime command.",
     )
+    run_parser.add_argument(
+        "--review-policy",
+        choices=REVIEW_POLICY_CHOICES,
+        default="auto",
+        help="Override the structured review policy recorded in the execution contract.",
+    )
     run_parser.add_argument("--agent", choices=["on", "off"], default=None, help="Enable or disable agent topology.")
     run_parser.add_argument("--depth", type=int, choices=[0, 1, 2, 3], default=None, help="Override agent topology depth.")
     run_parser.add_argument(
@@ -83,6 +98,7 @@ def main() -> None:
     start_parser.add_argument("--reroute", choices=["on", "off"], default="on", help="Enable automatic failure rerouting.")
     start_parser.add_argument("--runtime", choices=["mock", "command"], default="mock")
     start_parser.add_argument("--provider", choices=["codex", "claude"])
+    start_parser.add_argument("--review-policy", choices=REVIEW_POLICY_CHOICES, default="auto")
     start_parser.add_argument("--agent", choices=["on", "off"], default=None)
     start_parser.add_argument("--depth", type=int, choices=[0, 1, 2, 3], default=None)
 
@@ -122,6 +138,23 @@ def main() -> None:
     cancel_parser.add_argument("--root", default=".agent_orchestrator/jobs", help="Job store root.")
 
     health_parser = subparsers.add_parser("health", help="Check local provider availability.")
+    health_parser.add_argument("--refresh", action="store_true", help="Bypass provider health cache and refresh live status.")
+    health_parser.add_argument("--cache-ttl", type=int, default=60, help="Provider health cache TTL in seconds.")
+
+    evidence_parser = subparsers.add_parser("evidence", help="Capture workflow evidence reports.")
+    evidence_subparsers = evidence_parser.add_subparsers(dest="evidence_command")
+
+    evidence_benchmark = evidence_subparsers.add_parser("benchmark", help="Run the built-in workflow evidence cases.")
+    evidence_benchmark.add_argument("--output", help="Optional JSON output path.")
+
+    evidence_capture = evidence_subparsers.add_parser("capture", help="Run evidence cases from a JSON case file.")
+    evidence_capture.add_argument("--case-file", required=True, help="JSON file containing real workflow evidence cases.")
+    evidence_capture.add_argument("--output", required=True, help="JSON output path.")
+
+    evidence_report = evidence_subparsers.add_parser("report", help="Write a markdown workflow evidence report.")
+    evidence_report.add_argument("--case-file", help="Optional JSON file containing workflow evidence cases.")
+    evidence_report.add_argument("--output", required=True, help="Markdown output path.")
+    evidence_report.add_argument("--json-output", help="Optional JSON evidence output path.")
 
     ui_parser = subparsers.add_parser("ui", help="Start the local Agent Team Console dashboard.")
     ui_parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind.")
@@ -145,6 +178,7 @@ def main() -> None:
     team_start.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_start.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_start.add_argument("--provider", choices=["codex", "claude"])
+    team_start.add_argument("--review-policy", choices=REVIEW_POLICY_CHOICES, default="auto")
 
     team_status = team_subparsers.add_parser("status", help="Inspect a plan session.")
     team_status.add_argument("session_id")
@@ -184,6 +218,23 @@ def main() -> None:
     team_check_compliance.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_check_compliance.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_check_compliance.add_argument("--provider", choices=["codex", "claude"])
+
+    team_refresh_docs = team_subparsers.add_parser("refresh-docs", help="Refresh canonical process documentation.")
+    team_refresh_docs.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_refresh_docs.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_refresh_docs.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_refresh_docs.add_argument("--provider", choices=["codex", "claude"])
+
+    team_repair_compliance = team_subparsers.add_parser(
+        "repair-compliance",
+        help="Refresh canonical docs and show the remaining compliance status.",
+    )
+    team_repair_compliance.add_argument("session_id", nargs="?")
+    team_repair_compliance.add_argument("--changed-file", action="append", default=[])
+    team_repair_compliance.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_repair_compliance.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_repair_compliance.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_repair_compliance.add_argument("--provider", choices=["codex", "claude"])
 
     team_retry_review = team_subparsers.add_parser("retry-review", help="Retry a failed delegated review round.")
     team_retry_review.add_argument("session_id")
@@ -237,6 +288,7 @@ def main() -> None:
     team_execute.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_execute.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_execute.add_argument("--provider", choices=["codex", "claude"])
+    team_execute.add_argument("--review-policy", choices=REVIEW_POLICY_CHOICES, default="auto")
 
     team_inspect_execution = team_subparsers.add_parser(
         "inspect-execution",
@@ -260,19 +312,17 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "health":
-        health = ProviderHealthCheck()
         print(
             json.dumps(
-                {
-                    "providers": [
-                        health.check("codex").to_dict(),
-                        health.check("claude").to_dict(),
-                    ]
-                },
+                _provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl),
                 ensure_ascii=False,
                 indent=2,
             )
         )
+        return
+
+    if args.command == "evidence":
+        _run_evidence_command(args)
         return
 
     if args.command == "ui":
@@ -294,8 +344,19 @@ def main() -> None:
 
     if args.command == "team":
         team = _build_team_orchestrator(args.runtime, getattr(args, "provider", None), args.plans_root, args.runs_root)
+        health_snapshot = _provider_health_snapshot() if args.runtime == "command" else None
         if args.team_command == "start":
-            print(json.dumps(team.start(args.requirement).to_dict(), ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    team.start(
+                        args.requirement,
+                        review_policy_override=getattr(args, "review_policy", "auto"),
+                        provider_health_snapshot=health_snapshot,
+                    ).to_dict(),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return
         if args.team_command == "status":
             print(json.dumps(team.status(args.session_id).to_dict(), ensure_ascii=False, indent=2))
@@ -318,6 +379,29 @@ def main() -> None:
             )
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             if payload.get("blocking"):
+                raise SystemExit(1)
+            return
+        if args.team_command == "refresh-docs":
+            print(json.dumps(team.refresh_documentation_sync(), ensure_ascii=False, indent=2))
+            return
+        if args.team_command == "repair-compliance":
+            changed_files = list(getattr(args, "changed_file", []) or [])
+            refresh_payload = team.refresh_documentation_sync()
+            compliance = (
+                team.check_session_compliance(args.session_id, changed_files=changed_files)
+                if args.session_id
+                else team.check_compliance(changed_files=changed_files)
+            )
+            payload = {
+                "refresh_results": refresh_payload.get("refresh_results", []),
+                "doc_sync": refresh_payload,
+                "compliance": compliance,
+                "required_actions": compliance.get("required_actions", []),
+                "remaining_warnings": compliance.get("warnings", []),
+                "recommended_commands": compliance.get("recommended_commands", []),
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            if compliance.get("blocking"):
                 raise SystemExit(1)
             return
         if args.team_command == "retry-review":
@@ -343,7 +427,18 @@ def main() -> None:
             return
         if args.team_command == "execute":
             mode = None if args.mode == "auto" else OrchestrationMode(args.mode)
-            print(json.dumps(team.execute(args.session_id, mode).to_dict(), ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    team.execute(
+                        args.session_id,
+                        mode,
+                        review_policy_override=getattr(args, "review_policy", "auto"),
+                        provider_health_snapshot=health_snapshot,
+                    ).to_dict(),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return
         if args.team_command == "inspect-execution":
             payload = team.inspect_execution(args.session_id)
@@ -359,22 +454,30 @@ def main() -> None:
 
     if args.command == "status":
         runtime = CommandJobRuntime(root=Path(args.root))
-        print(json.dumps(runtime.status(args.job_id).to_dict(), ensure_ascii=False, indent=2))
+        payload = runtime.status(args.job_id).to_dict()
+        _print_job_cli_summary("status", payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if args.command == "result":
         runtime = CommandJobRuntime(root=Path(args.root))
-        print(json.dumps(runtime.result(args.job_id).to_dict(), ensure_ascii=False, indent=2))
+        payload = runtime.result(args.job_id).to_dict()
+        _print_job_cli_summary("result", payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if args.command == "send":
         runtime = CommandJobRuntime(root=Path(args.root))
-        print(json.dumps(runtime.send(args.job_id, args.message).to_dict(), ensure_ascii=False, indent=2))
+        payload = runtime.send(args.job_id, args.message).to_dict()
+        _print_job_cli_summary("send", payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if args.command == "cancel":
         runtime = CommandJobRuntime(root=Path(args.root))
-        print(json.dumps(runtime.cancel(args.job_id).to_dict(), ensure_ascii=False, indent=2))
+        payload = runtime.cancel(args.job_id).to_dict()
+        _print_job_cli_summary("cancel", payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if args.command == "start":
@@ -386,6 +489,8 @@ def main() -> None:
             reroute=args.reroute == "on",
             agent_enabled=_parse_agent_flag(args.agent),
             depth=args.depth,
+            review_policy_override=getattr(args, "review_policy", "auto"),
+            provider_health_snapshot=_provider_health_snapshot() if args.runtime == "command" else None,
         )
         print(json.dumps(handle.to_dict(), ensure_ascii=False, indent=2))
         return
@@ -428,6 +533,8 @@ def main() -> None:
             reroute=args.reroute == "on",
             agent_enabled=_parse_agent_flag(args.agent),
             depth=args.depth,
+            review_policy_override=getattr(args, "review_policy", "auto"),
+            provider_health_snapshot=_provider_health_snapshot() if args.runtime == "command" else None,
         )
         print(json.dumps(handle.to_dict(), ensure_ascii=False, indent=2))
     else:
@@ -437,6 +544,8 @@ def main() -> None:
             reroute=args.reroute == "on",
             agent_enabled=_parse_agent_flag(args.agent),
             depth=args.depth,
+            review_policy_override=getattr(args, "review_policy", "auto"),
+            provider_health_snapshot=_provider_health_snapshot() if args.runtime == "command" else None,
         )
         _print_run_summary(run)
         print(json.dumps(run.to_dict(), ensure_ascii=False, indent=2))
@@ -511,6 +620,63 @@ def _run_ui_server(
     )
     print(f"Agent Team Console: http://{host}:{port}")
     uvicorn.run(create_app(service), host=host, port=port)
+
+
+def _provider_health_snapshot(*, refresh: bool = False, ttl_seconds: int = 60) -> dict[str, object]:
+    health = ProviderHealthCheck(use_cache=True, ttl_seconds=ttl_seconds)
+    providers = [
+        health.check("codex", refresh=refresh).to_dict(),
+        health.check("claude", refresh=refresh).to_dict(),
+        {
+            "provider": "mock",
+            "available": True,
+            "detail": "mock provider is always available",
+            "binary": None,
+            "recommended_fallback": None,
+            "cache_tier": "live",
+            "cached_at": None,
+            "expires_at": None,
+        },
+    ]
+    return {
+        "cache": {
+            "enabled": True,
+            "tiers": ["memory", "disk", "live"],
+            "ttl_seconds": ttl_seconds,
+            "path": ".agent_orchestrator/cache/provider-health.json",
+        },
+        "providers": providers,
+    }
+
+
+def _run_evidence_command(args: argparse.Namespace) -> None:
+    if args.evidence_command == "benchmark":
+        payload = capture_workflow_evidence(
+            benchmark_evidence_cases(),
+            project_root=Path.cwd(),
+            output_path=Path(args.output) if args.output else None,
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    if args.evidence_command == "capture":
+        cases = load_workflow_evidence_cases(args.case_file)
+        payload = capture_workflow_evidence(cases, project_root=Path.cwd(), output_path=Path(args.output))
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    if args.evidence_command == "report":
+        cases = load_workflow_evidence_cases(args.case_file) if args.case_file else benchmark_evidence_cases()
+        payload = capture_workflow_evidence(
+            cases,
+            project_root=Path.cwd(),
+            output_path=Path(args.json_output) if args.json_output else None,
+        )
+        path = write_workflow_evidence_markdown(payload, Path(args.output))
+        print(f"Wrote evidence report: {path}")
+        return
+
+    raise SystemExit("an evidence subcommand is required")
 
 
 def _install_git_hooks(repo_root: Path) -> None:
@@ -615,6 +781,19 @@ def _print_run_summary(run: object) -> None:
             f"source={execution_contract.get('source', 'unknown')} "
             f"goal={execution_contract.get('goal', 'unknown')}"
         )
+
+
+def _print_job_cli_summary(command: str, payload: dict[str, object]) -> None:
+    job_id = payload.get("id") or payload.get("job_id") or "unknown"
+    status = payload.get("status") or "unknown"
+    phase = payload.get("phase") or "unknown"
+    summary = payload.get("summary") or payload.get("error") or ""
+    terminal_ref = None
+    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+    if metadata:
+        terminal_ref = metadata.get("terminal_ref")
+    suffix = f" terminal={terminal_ref}" if terminal_ref else ""
+    print(f"job_{command}: id={job_id} status={status} phase={phase}{suffix} summary={summary}")
 
 
 def _print_team_summary(session: object) -> None:

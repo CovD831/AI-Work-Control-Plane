@@ -7,6 +7,8 @@ from agent_orchestrator.command import (
     CommandJobRuntime,
     CommandResult,
     PromptRenderer,
+    ProviderHealthCheck,
+    _MEMORY_PROVIDER_HEALTH_CACHE,
 )
 from agent_orchestrator.jobs import JobRequest
 
@@ -19,6 +21,43 @@ class FakeRunner:
     def run(self, command: list[str], *, cwd: str, env: dict[str, str] | None = None) -> CommandResult:
         self.commands.append(command)
         return self.result
+
+
+def test_provider_health_check_uses_memory_and_disk_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("agent_orchestrator.command.shutil.which", lambda binary: binary)
+    cache_path = tmp_path / "provider-health.json"
+    runner = FakeRunner(CommandResult(command=["codex", "--version"], exit_code=0, stdout="codex 1.0", stderr=""))
+    checker = ProviderHealthCheck(runner=runner, use_cache=True, cache_path=cache_path, ttl_seconds=60)
+
+    live = checker.check("codex")
+    memory = checker.check("codex")
+
+    assert live.cache_tier == "live"
+    assert memory.cache_tier == "memory"
+    assert len(runner.commands) == 1
+    assert cache_path.exists()
+
+    _MEMORY_PROVIDER_HEALTH_CACHE.clear()
+    disk_runner = FakeRunner(CommandResult(command=["codex", "--version"], exit_code=0, stdout="codex 2.0", stderr=""))
+    disk_checker = ProviderHealthCheck(runner=disk_runner, use_cache=True, cache_path=cache_path, ttl_seconds=60)
+    disk = disk_checker.check("codex")
+
+    assert disk.cache_tier == "disk"
+    assert disk.detail == "codex 1.0"
+    assert disk_runner.commands == []
+
+
+def test_provider_health_check_refresh_bypasses_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("agent_orchestrator.command.shutil.which", lambda binary: binary)
+    cache_path = tmp_path / "provider-health.json"
+    runner = FakeRunner(CommandResult(command=["claude", "--version"], exit_code=0, stdout="claude 1.0", stderr=""))
+    checker = ProviderHealthCheck(runner=runner, use_cache=True, cache_path=cache_path, ttl_seconds=60)
+
+    checker.check("claude")
+    refreshed = checker.check("claude", refresh=True)
+
+    assert refreshed.cache_tier == "live"
+    assert len(runner.commands) == 2
 
 
 class SlowRunner(FakeRunner):

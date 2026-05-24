@@ -51,6 +51,11 @@ def test_dashboard_lists_sessions_and_builds_detail(tmp_path) -> None:
     assert detail["agent_cards"][0]["terminal_ref"] is None
     assert detail["role_groups"]
     assert detail["governance_summary"]["primary_action"] == "execute"
+    assert detail["operator_summary"]["session"]["id"] == session["id"]
+    assert detail["operator_summary"]["review_policy"]["policy_name"]
+    assert "fallback_snapshot" in detail["operator_summary"]
+    assert detail["operator_summary"]["compliance_snapshot"]["status"] in {"passed", "warning", "blocked", "unknown"}
+    assert detail["operator_summary"]["message_timeline"]
     assert detail["plan_tree"]["kind"] == "session"
     assert detail["plan_tree"]["children"]
     assert detail["evidence_summary"]["review_round_count"] >= 1
@@ -93,6 +98,8 @@ def test_dashboard_job_list_detail_and_missing_log(tmp_path) -> None:
     assert detail["attach_available"] is False
     assert detail["log_available"] is True
     assert detail["output_preview"] == "ok"
+    assert detail["last_log_excerpt"]
+    assert detail["last_seen_at"]
     assert "ok" in service.get_job_log(job.id)["log"]
     assert missing_log["log"] == ""
 
@@ -146,6 +153,12 @@ def test_dashboard_actions_execute_and_read_run(tmp_path) -> None:
     assert service.list_memory()["records"]
     assert service.search_memory("Build persisted")["records"]
     assert service.list_session_messages(str(session["id"]))["messages"]
+
+    detail = service.get_session(str(session["id"]))
+    operator = detail["operator_summary"]
+    assert operator["execution_provenance"]["plan_session_id"] == session["id"]
+    assert operator["execution_provenance"]["linked_run_status"] in {"completed", "blocked"}
+    assert operator["work_graph_summary"]["node_count"] >= 1
     assert service.list_messages()["messages"]
 
 
