@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+# DEPS: __future__, json, typing
+# RESPONSIBILITY: Format operator-facing CLI summaries without mutating orchestration state.
+# MODULE: interface
+# ---
+
 import json
 from typing import Any
 
@@ -169,6 +174,57 @@ def print_recovery_details(
             print(f"recovery_commands: {' | '.join(str(command) for command in commands)}")
 
 
+def print_recovery_timeline(status_summary: dict[str, object], *, prefix: str = "recovery_timeline") -> None:
+    timeline = summary_dict(status_summary, "recovery_timeline")
+    if not timeline:
+        return
+    current = summary_text(timeline, "current_status")
+    entry_count = timeline.get("entry_count", 0)
+    if current:
+        print(f"{prefix}: current={current} entries={entry_count}")
+    resume_hint = summary_text(timeline, "resume_hint")
+    if resume_hint:
+        print(f"{prefix}_resume_hint: {resume_hint}")
+    blocking = summary_dict(timeline, "blocking_summary")
+    if blocking:
+        print(
+            f"{prefix}_blocking: "
+            f"{'yes' if summary_bool(blocking, 'blocking') else 'no'}"
+        )
+
+
+def print_strategy_decision(status: dict[str, object], *, prefix: str = "strategy") -> None:
+    strategy = summary_dict(status, "strategy_decision")
+    if not strategy:
+        return
+    print(f"{prefix}: {summary_text(strategy, 'next_goal', 'unknown')}")
+    focus = summary_text(strategy, "control_plane_focus")
+    if focus:
+        print(f"{prefix}_focus: {focus}")
+    action = summary_text(strategy, "recommended_action")
+    if action:
+        print(f"{prefix}_action: {action}")
+    topology_policy = summary_dict(strategy, "topology_policy")
+    if topology_policy:
+        reason = summary_text(topology_policy, "selection_reason") or summary_text(strategy, "topology_reason")
+        if reason:
+            print(f"{prefix}_topology_policy: {reason}")
+    recovery_policy = summary_dict(strategy, "recovery_policy")
+    if recovery_policy:
+        recovery_actions = summary_list(recovery_policy, "recovery_actions")
+        if recovery_actions:
+            print(f"{prefix}_recovery_policy: {' -> '.join(str(item) for item in recovery_actions)}")
+    rationale = summary_list(strategy, "rationale")
+    if rationale:
+        print(f"{prefix}_rationale: {' | '.join(str(item) for item in rationale)}")
+    risks = summary_list(strategy, "risks")
+    if risks:
+        print(f"{prefix}_risks: {' | '.join(str(item) for item in risks)}")
+    validation = summary_list(strategy, "validation_plan")
+    if validation:
+        print(f"{prefix}_validation: {' | '.join(str(item) for item in validation)}")
+
+
 def team_display_context(payload: dict[str, object], *, pick_primary_action: Any) -> dict[str, object]:
     summary = status_summary(payload)
     delegated_jobs = summary_list(summary, "delegated_jobs")
@@ -292,6 +348,226 @@ def print_blocker_session_summary(payload: dict[str, object]) -> None:
         print(f"recommended_commands: {' | '.join(str(command) for command in recommended_commands)}")
 
 
+def print_docs_context_summary(payload: dict[str, object]) -> None:
+    print(f"docs_context: {payload.get('format', 'unknown')}")
+    query = payload.get("query")
+    if query:
+        print(f"query: {query}")
+    selected = payload.get("selected_doc_ids", [])
+    if isinstance(selected, list):
+        print(f"selected_docs: {', '.join(str(item) for item in selected) if selected else 'none'}")
+    documents = payload.get("documents", [])
+    if isinstance(documents, list):
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            print(
+                "doc: "
+                f"{document.get('id')} "
+                f"status={document.get('status')} "
+                f"fresh={str(bool(document.get('fresh'))).lower()} "
+                f"path={document.get('path')} "
+                f"relevance={document.get('relevance')}"
+            )
+    doc_sync = payload.get("doc_sync")
+    if isinstance(doc_sync, dict):
+        missing = doc_sync.get("missing_docs", [])
+        stale = doc_sync.get("stale_docs", [])
+        if missing:
+            print(f"missing_docs: {'; '.join(str(item) for item in missing)}")
+        if stale:
+            print(f"stale_docs: {len(stale)}")
+    commands = payload.get("recommended_commands", [])
+    if isinstance(commands, list) and commands:
+        print(f"recommended_commands: {' | '.join(str(command) for command in commands)}")
+
+
+def print_handoff_summary(payload: dict[str, object]) -> None:
+    print(f"handoff: {payload.get('session_id')}")
+    print(f"packet_count: {payload.get('packet_count', 0)}")
+    latest = payload.get("latest_packet")
+    if not isinstance(latest, dict):
+        return
+    packet = latest.get("packet")
+    if not isinstance(packet, dict):
+        return
+    print(
+        "latest_packet: "
+        f"{packet.get('from_role')}->{packet.get('to_role')} "
+        f"snapshot={packet.get('docs_context_snapshot_id') or 'none'}"
+    )
+    summary = packet.get("summary")
+    if summary:
+        print(f"summary: {summary}")
+    commands = packet.get("recommended_commands", [])
+    if isinstance(commands, list) and commands:
+        print(f"recommended_commands: {' | '.join(str(command) for command in commands)}")
+
+
+def print_docs_index_summary(payload: dict[str, object]) -> None:
+    print(f"docs_index: {payload.get('format', 'unknown')}")
+    query = payload.get("query")
+    if query:
+        print(f"query: {query}")
+    docs = payload.get("matched_docs", [])
+    decisions = payload.get("matched_decisions", [])
+    tests = payload.get("matched_tests", [])
+    print(
+        "matches: "
+        f"docs={len(docs) if isinstance(docs, list) else 0} "
+        f"decisions={len(decisions) if isinstance(decisions, list) else 0} "
+        f"tests={len(tests) if isinstance(tests, list) else 0}"
+    )
+    command = payload.get("recommended_context_command")
+    if command:
+        print(f"recommended_context_command: {command}")
+
+
+def print_workspace_state_summary(payload: dict[str, object]) -> None:
+    workspace_state = payload.get("workspace_state") if isinstance(payload.get("workspace_state"), dict) else payload
+    print(f"workspace_state: {workspace_state.get('format', payload.get('format', 'unknown'))}")
+    if payload.get("format") == "agent_orchestrator.workspace_index.v1":
+        print(f"workspace_index: {payload.get('format')}")
+    print(f"project_root: {workspace_state.get('project_root')}")
+    plans = workspace_state.get("plans", [])
+    runs = workspace_state.get("runs", [])
+    jobs = workspace_state.get("jobs", [])
+    approvals = workspace_state.get("approvals", [])
+    print(
+        "counts: "
+        f"plans={len(plans) if isinstance(plans, list) else 0} "
+        f"runs={len(runs) if isinstance(runs, list) else 0} "
+        f"jobs={len(jobs) if isinstance(jobs, list) else 0} "
+        f"approvals={len(approvals) if isinstance(approvals, list) else 0}"
+    )
+    dirty = workspace_state.get("dirty_state", {}) if isinstance(workspace_state.get("dirty_state"), dict) else {}
+    print(f"dirty: {'yes' if dirty.get('dirty') else 'no'} count={dirty.get('count', 0)}")
+    cache = workspace_state.get("external_cache", {}) if isinstance(workspace_state.get("external_cache"), dict) else {}
+    print(f"external_cache: {cache.get('status', 'unknown')}")
+    program = payload.get("program", {}) if isinstance(payload.get("program"), dict) else {}
+    if program:
+        print(
+            "program: "
+            f"name={program.get('name')} active_plans={program.get('active_plan_count', 0)} "
+            f"open_approvals={program.get('open_approval_count', 0)}"
+        )
+
+
+def print_context_packet_summary(payload: dict[str, object]) -> None:
+    print(f"context_packet: {payload.get('format', 'unknown')}")
+    query = payload.get("query")
+    if query:
+        print(f"query: {query}")
+    docs_context = payload.get("docs_context", {}) if isinstance(payload.get("docs_context"), dict) else {}
+    selected = docs_context.get("selected_doc_ids", [])
+    print(f"selected_docs: {', '.join(str(item) for item in selected) if isinstance(selected, list) and selected else 'none'}")
+    memories = payload.get("memory_records", [])
+    print(f"memory_records: {len(memories) if isinstance(memories, list) else 0}")
+    warnings = payload.get("stale_warnings", [])
+    if isinstance(warnings, list) and warnings:
+        print(f"stale_warnings: {'; '.join(str(item) for item in warnings)}")
+
+
+def print_provider_session_snapshot_summary(payload: dict[str, object]) -> None:
+    print(f"provider_session_snapshot: {payload.get('format', 'unknown')}")
+    print(f"job: {payload.get('job_id')} status={payload.get('status')} provider={payload.get('provider')}")
+    liveness = payload.get("liveness", {}) if isinstance(payload.get("liveness"), dict) else {}
+    print(
+        "liveness: "
+        f"state={liveness.get('state', 'unknown')} "
+        f"terminal={liveness.get('terminal', False)} "
+        f"last_seen={liveness.get('last_seen_at')}"
+    )
+    support = payload.get("operation_support", {}) if isinstance(payload.get("operation_support"), dict) else {}
+    if support:
+        print(
+            "operation_support: "
+            f"send={support.get('send')} cancel={support.get('cancel')} "
+            f"attach={support.get('attach')} continue={support.get('continue')}"
+        )
+    receipt = payload.get("last_operation_receipt") if isinstance(payload.get("last_operation_receipt"), dict) else None
+    if receipt:
+        print(
+            "last_receipt: "
+            f"action={receipt.get('action')} status={receipt.get('status')} reason={receipt.get('reason')}"
+        )
+    command = payload.get("recommended_recovery_command")
+    if command:
+        print(f"recommended_recovery_command: {command}")
+
+
+def print_topology_snapshot_summary(payload: dict[str, object]) -> None:
+    print(f"topology_snapshot: {payload.get('format', 'unknown')}")
+    print(f"session: {payload.get('session_id')}")
+    nodes = payload.get("nodes", [])
+    edges = payload.get("edges", [])
+    print(f"graph: nodes={len(nodes) if isinstance(nodes, list) else 0} edges={len(edges) if isinstance(edges, list) else 0}")
+    strategy = payload.get("strategy_decision", {}) if isinstance(payload.get("strategy_decision"), dict) else {}
+    next_goal = strategy.get("next_goal")
+    if next_goal:
+        print(f"next_goal: {next_goal}")
+    approvals = payload.get("approval_queue", {}) if isinstance(payload.get("approval_queue"), dict) else {}
+    counts = approvals.get("counts", {}) if isinstance(approvals.get("counts"), dict) else {}
+    print(f"pending_approvals: {counts.get('pending', 0)}")
+
+
+def print_approval_queue_summary(payload: dict[str, object]) -> None:
+    print(f"approval_queue: {payload.get('format', 'unknown')}")
+    counts = payload.get("counts", {}) if isinstance(payload.get("counts"), dict) else {}
+    print(
+        "counts: "
+        f"pending={counts.get('pending', 0)} "
+        f"approved={counts.get('approved', 0)} "
+        f"rejected={counts.get('rejected', 0)} "
+        f"resolved={counts.get('resolved', 0)}"
+        )
+    inbox = payload.get("inbox_summary", {}) if isinstance(payload.get("inbox_summary"), dict) else {}
+    if inbox:
+        print(
+            "inbox: "
+            f"pending={inbox.get('pending_count', 0)} "
+            f"resolved={inbox.get('resolved_count', 0)} "
+            f"blocking={inbox.get('blocking_count', 0)}"
+        )
+        command = inbox.get("recommended_next_command")
+        if command:
+            print(f"recommended_next_command: {command}")
+    for item in payload.get("items", [])[:10]:
+        if isinstance(item, dict):
+            print(
+                "approval: "
+                f"{item.get('id')} code={item.get('reason_code')} status={item.get('status')} "
+                f"scope={item.get('scope')} action={item.get('recommended_action')} "
+                f"reason={item.get('reason')}"
+            )
+    grouped: dict[str, int] = {}
+    for item in payload.get("items", []):
+        if isinstance(item, dict):
+            code = str(item.get("reason_code") or "unknown")
+            grouped[code] = grouped.get(code, 0) + 1
+    if grouped:
+        print("reason_codes: " + " ".join(f"{code}={count}" for code, count in sorted(grouped.items())))
+
+
+def print_approval_resolution_summary(payload: dict[str, object]) -> None:
+    item = payload.get("resolved_item", {}) if isinstance(payload.get("resolved_item"), dict) else {}
+    print(f"approval_resolved: {item.get('id')} status={item.get('status')}")
+    reason = item.get("resolution_reason")
+    if reason:
+        print(f"reason: {reason}")
+    print(f"mutation_policy: {payload.get('mutation_policy')}")
+
+
+def print_evidence_bundle_summary(payload: dict[str, object]) -> None:
+    print(f"evidence_bundle: {payload.get('format', 'unknown')}")
+    print(f"status: {payload.get('status')}")
+    gate = payload.get("gate_evidence", {}) if isinstance(payload.get("gate_evidence"), dict) else {}
+    gates = gate.get("gates", []) if isinstance(gate.get("gates"), list) else []
+    for item in gates:
+        if isinstance(item, dict):
+            print(f"gate: {item.get('name')} status={item.get('status')} command={item.get('command')}")
+
+
 def print_team_summary(session: object, *, pick_primary_action: Any) -> None:
     payload = session.to_dict()
     context = team_display_context(payload, pick_primary_action=pick_primary_action)
@@ -310,6 +586,7 @@ def print_team_summary(session: object, *, pick_primary_action: Any) -> None:
     topology_reason = summary_text(status, "topology_reason")
     if topology_reason:
         print(f"topology_reason: {topology_reason}")
+    print_strategy_decision(status)
 
     blocking_reasons = summary_list(status, "blocking_reasons")
     if blocking_reasons:
@@ -320,6 +597,9 @@ def print_team_summary(session: object, *, pick_primary_action: Any) -> None:
     baseline_warnings = summary_list(status, "baseline_warnings")
     if baseline_warnings:
         print(f"baseline_warnings: {'; '.join(str(reason) for reason in baseline_warnings)}")
+    diagnostics = summary_dict(status, "diagnostics")
+    if diagnostics:
+        print(f"diagnostics: {summary_text(diagnostics, 'summary', 'none')}")
 
     recovery_actions = summary_list(status, "recovery_actions")
     if recovery_actions:
@@ -343,6 +623,7 @@ def print_team_summary(session: object, *, pick_primary_action: Any) -> None:
         detail += ")"
         print(detail)
     print_recovery_details(status, include_commands=True)
+    print_recovery_timeline(status)
 
     if failed_jobs:
         first_failed = failed_jobs[0]
@@ -372,6 +653,9 @@ def print_team_next(
     print(f"session: {payload.get('id')}")
     print(f"action: {primary_action}")
     print(f"reason: {context['primary_reason']}")
+    strategy = summary_dict(status, "strategy_decision")
+    if strategy:
+        print(f"strategy_next_goal: {summary_text(strategy, 'next_goal', context['primary_reason'])}")
     print(f"next_command: {command}")
     next_task = status.get("next_executable_task")
     if isinstance(next_task, dict):
@@ -380,6 +664,7 @@ def print_team_next(
             f"{next_task.get('id')} action={next_task.get('next_action')} title={next_task.get('title')}"
         )
     print_recovery_details(status, include_commands=True)
+    print_recovery_timeline(status)
     if alternatives:
         print(f"alternatives: {', '.join(alternatives)}")
     else:
@@ -402,6 +687,7 @@ def print_team_next(
     topology_reason = summary_text(status, "topology_reason")
     if topology_reason:
         print(f"topology_reason: {topology_reason}")
+    print_strategy_decision(status)
 
 
 def print_team_runbook(
@@ -440,6 +726,8 @@ def print_team_runbook(
     decision_rationale = summary_list(status, "decision_rationale")
     if decision_rationale:
         print(f"decision_rationale: {' | '.join(str(item) for item in decision_rationale)}")
+    print_strategy_decision(status, prefix="control_plane_strategy")
+    print_recovery_timeline(status)
     print("operator_runbook:")
     for index, step in enumerate(runbook, start=1):
         print(f"{index}. {step}")

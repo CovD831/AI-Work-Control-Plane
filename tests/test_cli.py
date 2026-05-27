@@ -894,6 +894,7 @@ def test_team_summary_command_prioritizes_failed_claude_job(tmp_path, capsys) ->
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
+@pytest.mark.slow_integration
 def test_team_summary_command_reports_execute_for_approved_session(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -958,6 +959,7 @@ def test_team_summary_command_reports_human_decision_for_awaiting_human_session(
         out = capsys.readouterr().out
         assert "status: awaiting_human" in out
         assert "next: human_decision" in out
+        assert "recovery_timeline: current=awaiting_human" in out
     finally:
         cli.argparse.ArgumentParser.parse_args = original
 
@@ -997,6 +999,46 @@ def test_team_next_command_reports_revise_command(tmp_path, capsys) -> None:
         cli.argparse.ArgumentParser.parse_args = original
 
 
+def test_team_next_json_outputs_recovery_recommendation(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    session = _cli_session(team, "Build plan with recoverable next step")
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="next",
+            session_id=session.id,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["recovery_recommendation"]["format"] == "agent_orchestrator.recovery_recommendation.v1"
+        assert payload["recovery_recommendation"]["read_only"] is True
+        assert payload["recovery_recommendation"]["safest_next_operator_command"]
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+@pytest.mark.slow_integration
 def test_team_next_command_reports_execute_command(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -1032,6 +1074,7 @@ def test_team_next_command_reports_execute_command(tmp_path, capsys) -> None:
         cli.argparse.ArgumentParser.parse_args = original
 
 
+@pytest.mark.slow_integration
 def test_team_next_command_reports_next_task_for_intake_session(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -1067,6 +1110,7 @@ def test_team_next_command_reports_next_task_for_intake_session(tmp_path, capsys
         cli.argparse.ArgumentParser.parse_args = original
 
 
+@pytest.mark.slow_integration
 def test_team_task_commands_list_next_and_done(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -1173,6 +1217,8 @@ def test_team_roles_command_reports_role_contracts(tmp_path, capsys) -> None:
         assert roles["reviewer"]["runtime_mode"] == "direct_api"
         assert "execute_work_unit" in roles["reviewer"]["forbidden_actions"]
         assert "implementation_result" in roles["builder"]["required_outputs"]
+        assert roles["context_compressor"]["runtime_mode"] == "local_artifact"
+        assert "ContextPacket" in roles["context_compressor"]["required_outputs"]
     finally:
         cli.argparse.ArgumentParser.parse_args = original
 
@@ -1605,6 +1651,7 @@ def test_team_resume_command_reconciles_completed_linked_run_from_executing_sess
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
+@pytest.mark.slow_integration
 def test_team_next_command_reports_runbook_for_revision_session(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -1728,6 +1775,7 @@ def test_team_next_command_reports_retry_adversarial_review_command_for_failed_c
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
+@pytest.mark.slow_integration
 def test_team_runbook_command_reports_revision_workflow(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -2265,6 +2313,7 @@ def test_team_runbook_command_reports_warning_only_compliance_guidance(tmp_path,
     assert "warning: src/agent_orchestrator/legacy.py" in out or "legacy.py has placeholder" in out
 
 
+@pytest.mark.slow_integration
 def test_team_summary_command_preserves_warning_only_compliance_guidance(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -2683,6 +2732,427 @@ def test_team_inspect_knowledge_command_reports_records(tmp_path, capsys) -> Non
         payload = json.loads(capsys.readouterr().out)
         assert payload["counts"]["decisions"] >= 1
         assert payload["counts"]["lessons"] >= 1
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_inspect_handoff_json_format_outputs_packets(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    captured: dict[str, object] = {}
+
+    class _FakeTeam:
+        def inspect_handoff(self, session_id, *, limit=10):
+            captured["session_id"] = session_id
+            captured["limit"] = limit
+            return {
+                "format": "agent_orchestrator.handoff_inspection.v1",
+                "session_id": session_id,
+                "packet_count": 1,
+                "latest_packet": {
+                    "message_id": "msg-1",
+                    "thread": "main",
+                    "created_at": "now",
+                    "packet": {
+                        "format": "agent_orchestrator.handoff_packet.v1",
+                        "session_id": session_id,
+                        "from_role": "lead",
+                        "to_role": "runtime",
+                        "summary": "Execute approved plan",
+                        "changes": [],
+                        "evidence": [],
+                        "risks": [],
+                        "blockers": [],
+                        "docs_context_snapshot_id": "docsctx-123",
+                        "recommended_commands": ["python -m agent_orchestrator.cli team inspect-execution plan-1"],
+                        "created_at": "now",
+                    },
+                },
+                "packets": [],
+            }
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: _FakeTeam()
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="inspect-handoff",
+            session_id="plan-1",
+            limit=5,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["format"] == "agent_orchestrator.handoff_inspection.v1"
+        assert payload["latest_packet"]["packet"]["docs_context_snapshot_id"] == "docsctx-123"
+        assert captured == {"session_id": "plan-1", "limit": 5}
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_inspect_docs_json_format_outputs_context_package(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    captured: dict[str, object] = {}
+
+    class _FakeTeam:
+        def inspect_docs(self, *, query="", changed_files=None, include_all=False):
+            captured["query"] = query
+            captured["changed_files"] = changed_files
+            captured["include_all"] = include_all
+            return {
+                "format": "agent_orchestrator.docs_context.v1",
+                "query": query,
+                "changed_files": changed_files or [],
+                "selection_policy": "query_and_changed_files",
+                "doc_sync": {"missing_docs": [], "stale_docs": [], "header_contract_violations": []},
+                "documents": [
+                    {
+                        "id": "process/context-map",
+                        "path": "docs/process/context-map.md",
+                        "status": "passed",
+                        "fresh": True,
+                        "relevance": "matched query keywords",
+                        "content": "# Context Map\n",
+                    }
+                ],
+                "selected_doc_ids": ["process/context-map"],
+                "injection_markdown": "## process/context-map\n\n# Context Map",
+                "recommended_commands": ["python -m agent_orchestrator.cli team inspect-docs --query <task>"],
+            }
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: _FakeTeam()
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="inspect-docs",
+            query="docs context",
+            changed_file=["src/agent_orchestrator/planning_support.py"],
+            all=False,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["format"] == "agent_orchestrator.docs_context.v1"
+        assert payload["selected_doc_ids"] == ["process/context-map"]
+        assert captured == {
+            "query": "docs context",
+            "changed_files": ["src/agent_orchestrator/planning_support.py"],
+            "include_all": False,
+        }
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_docs_index_json_format_outputs_reverse_lookup(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    captured: dict[str, object] = {}
+
+    class _FakeTeam:
+        def docs_index(self, *, query="", changed_files=None):
+            captured["query"] = query
+            captured["changed_files"] = changed_files
+            return {
+                "format": "agent_orchestrator.docs_index.v1",
+                "query": query,
+                "changed_files": changed_files or [],
+                "matched_docs": [{"id": "process/context-map", "path": "docs/process/context-map.md"}],
+                "matched_decisions": [{"path": "docs/decisions/0001-documentation-as-runtime-context.md"}],
+                "matched_tests": ["tests/test_planning_support.py"],
+                "matched_commands": ["python -m agent_orchestrator.cli team inspect-docs --query docs"],
+                "recommended_context_command": "python -m agent_orchestrator.cli team inspect-docs --query docs",
+            }
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: _FakeTeam()
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="docs-index",
+            query="docs",
+            changed_file=["src/agent_orchestrator/planning_support.py"],
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["format"] == "agent_orchestrator.docs_index.v1"
+        assert payload["matched_tests"] == ["tests/test_planning_support.py"]
+        assert captured == {
+            "query": "docs",
+            "changed_files": ["src/agent_orchestrator/planning_support.py"],
+        }
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_workspace_status_json_outputs_control_plane_snapshot(tmp_path, capsys, monkeypatch) -> None:
+    from agent_orchestrator import cli
+
+    write_minimal_process_docs(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="workspace-status",
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            jobs_root=str(tmp_path / "jobs"),
+            approvals_root=str(tmp_path / "approvals"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["format"] == "agent_orchestrator.workspace_index.v1"
+        assert payload["workspace_state"]["format"] == "agent_orchestrator.workspace_state.v1"
+        assert payload["program"]["kind"] == "workspace_program"
+        assert "active_artifacts" in payload
+        assert payload["recovery_timeline"]["format"] == "agent_orchestrator.recovery_timeline.v1"
+        assert payload["runtime_events"]["format"] == "agent_orchestrator.runtime_event_stream.v1"
+        assert "blocking_summary" in payload
+        assert "resume_hint" in payload
+        assert (tmp_path / ".agent_orchestrator" / "workspace" / "index.json").exists()
+    finally:
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_runtime_inspect_json_outputs_provider_session_snapshot(tmp_path, capsys, monkeypatch) -> None:
+    from agent_orchestrator import cli
+
+    runtime = FileJobRuntime(tmp_path / "jobs")
+    job = runtime.start(
+        JobRequest(
+            task_id="runtime-inspect",
+            provider="codex",
+            kind="implementation",
+            prompt="Inspect runtime",
+            cwd=str(tmp_path),
+        )
+    )
+    runtime.send(job.id, "follow up")
+    monkeypatch.chdir(tmp_path)
+
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="runtime",
+            runtime_command="inspect",
+            job_id=job.id,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            jobs_root=str(tmp_path / "jobs"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["format"] == "agent_orchestrator.provider_session_snapshot.v1"
+        assert payload["job_id"] == job.id
+        assert payload["last_operation_receipt"]["format"] == "agent_orchestrator.runtime_operation_receipt.v1"
+        assert payload["recommended_recovery_command"]
+    finally:
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_context_packet_json_outputs_control_plane_packet(tmp_path, capsys, monkeypatch) -> None:
+    from agent_orchestrator import cli
+
+    write_minimal_process_docs(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="context-packet",
+            query="docs control plane",
+            changed_file=["src/agent_orchestrator/control_plane.py"],
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            jobs_root=str(tmp_path / "jobs"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["format"] == "agent_orchestrator.context_packet.v1"
+        assert payload["docs_context"]["format"] == "agent_orchestrator.docs_context.v1"
+    finally:
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_topology_inspect_json_outputs_snapshot(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    session = start_reviewed_session(team, "Build a persisted plan artifact")
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="topology",
+            topology_command="inspect",
+            session_id=session.id,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            approvals_root=str(tmp_path / "approvals"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["format"] == "agent_orchestrator.execution_topology_snapshot.v1"
+        assert payload["strategy_decision"]["format"] == "agent_orchestrator.strategy_decision.v1"
+        assert payload["blueprint"]["read_only"] is True
+        assert payload["runtime_boundaries"]
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_approvals_list_and_resolve_json_outputs_contracts(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    session = start_reviewed_session(team, "Need architecture direction before implementation")
+    session.status = "awaiting_human"
+    team.store.write_session(session)
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="approvals",
+            approvals_command="list",
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            approvals_root=str(tmp_path / "approvals"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        queue = json.loads(capsys.readouterr().out)
+        approval_id = queue["items"][0]["id"]
+        assert queue["items"][0]["reason_code"] == "awaiting_human_decision"
+        assert queue["inbox_summary"]["pending_count"] == 1
+        assert "recommended_next_command" in queue["inbox_summary"]
+        assert queue["items"][0]["plan_ref"]
+
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="approvals",
+            approvals_command="resolve",
+            approval_id=approval_id,
+            status="resolved",
+            reason="Human decided to continue",
+            actor="human",
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            approvals_root=str(tmp_path / "approvals"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        resolved = json.loads(capsys.readouterr().out)
+        assert resolved["resolved_item"]["id"] == approval_id
+        assert resolved["resolved_item"]["status"] == "resolved"
+        assert resolved["resolved_item"]["reason_code"] == "awaiting_human_decision"
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_evidence_gates_json_outputs_bundle(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    class _FakeTeam:
+        def check_compliance(self):
+            return {"blocking": False, "blocking_reasons": [], "warnings": []}
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: _FakeTeam()
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="evidence-gates",
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["format"] == "agent_orchestrator.evidence_bundle.v1"
+        assert payload["gate_evidence"]["format"] == "agent_orchestrator.gate_evidence.v1"
+        assert payload["runtime_health"]["records_only"] is True
+        assert payload["tool_inventory"]["mutation_policy"].startswith("inventory only")
+        assert payload["memory_recommendation"]["auto_write"] is False
+        assert payload["memory_recommendation"]["candidate_count"] == 9
+        assert "recovery_refs" in payload["memory_recommendation"]
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args

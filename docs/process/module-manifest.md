@@ -12,6 +12,7 @@
 - `cli_jobs.py`: Job command handlers for the Agent Orchestrator CLI.
 - `cli_presenters.py`: Formatting helpers for CLI session and execution output.
 - `command.py`: Command-based provider integration for real Claude/Codex runs.
+- `control_plane.py`: AI Work Control Plane artifact models and snapshot builders.
 - `events.py`: Append-only event store for orchestration state changes.
 - `evidence.py`: Versioned evidence harness and benchmark reports for team workflow comparisons.
 - `failure.py`: Failure detection and reroute decisions for whole-run upgrades.  This router only supports full-run escalation between modes. It does not attempt partial DAG rollback, branch splitting, or multi-path replay.

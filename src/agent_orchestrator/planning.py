@@ -32,9 +32,13 @@ from agent_orchestrator.planning_support import (
     ProcessDocumentationBundle,
     ProcessDocumentSpec,
     SessionGuidance,
+    build_docs_index,
     build_compliance_status_for_session,
     build_doc_sync_status_for_project,
+    build_document_context_package,
+    build_document_context_snapshot,
     build_session_guidance as _build_session_guidance_support,
+    build_task_timeline_for_session as _build_task_timeline_for_session_support,
     checklist_item_completed as _checklist_item_completed_support,
     collect_delegated_jobs as _collect_delegated_jobs_support,
     compliance_blocking_reasons as _compliance_blocking_reasons_support,
@@ -47,6 +51,7 @@ from agent_orchestrator.planning_support import (
     latest_round as _latest_round_support,
     read_delegated_job_status as _read_delegated_job_status_support,
     resume_guidance_command as _resume_guidance_command_support,
+    summarize_document_context_snapshot,
 )
 from agent_orchestrator.review import Finding, ReviewResult
 from agent_orchestrator.tasks import ExecutionContract
@@ -128,6 +133,7 @@ class PlanStatusSummary(TypedDict):
     approved_plan_ready: bool
     approved_plan_source: str | None
     execution_context_policy: dict[str, object]
+    docs_context_snapshot: dict[str, object] | None
 
 
 class BlockerEvidenceFailedJob(TypedDict):
@@ -554,6 +560,7 @@ class PlanSession:
     gate_verdict: GateVerdict | None
     decision_verdict: DecisionVerdict | None = None
     doc_sync: dict[str, object] | None = None
+    docs_context_snapshot: dict[str, object] | None = None
     compliance: dict[str, object] | None = None
 
     @classmethod
@@ -582,6 +589,7 @@ class PlanSession:
             gate_verdict=None,
             decision_verdict=None,
             doc_sync=None,
+            docs_context_snapshot=None,
             compliance=None,
         )
 
@@ -603,6 +611,8 @@ class PlanSession:
             "decision_verdict": self.decision_verdict.to_dict() if self.decision_verdict else None,
             "status_summary": _build_status_summary(self),
             "doc_sync": self.doc_sync,
+            "docs_context_snapshot": self.docs_context_snapshot,
+            "docs_context_snapshot_summary": summarize_document_context_snapshot(self.docs_context_snapshot),
             "compliance": self.compliance,
         }
 
@@ -632,6 +642,9 @@ class PlanSession:
             gate_verdict=data.get("gate_verdict"),
             decision_verdict=DecisionVerdict.from_dict(data["decision_verdict"]) if data.get("decision_verdict") else None,
             doc_sync=data.get("doc_sync"),
+            docs_context_snapshot=data.get("docs_context_snapshot")
+            if isinstance(data.get("docs_context_snapshot"), dict)
+            else None,
             compliance=data.get("compliance"),
         )
 
@@ -805,6 +818,7 @@ class TeamOrchestrator:
         session.resume.current_phase = "intake_chat"
         session.resume.pending_role = "lead"
         session.doc_sync = self._build_doc_sync_status()
+        session.docs_context_snapshot = self._build_docs_context_snapshot(session)
         session.compliance = build_compliance_status_for_session(
             project_root=self.project_root,
             doc_sync=session.doc_sync,
@@ -932,7 +946,13 @@ class TeamOrchestrator:
             to_role="lead",
             content=requirement,
             work_unit_id=session.id,
-            payload={"artifact_kind": "user_requirement", "stage": "intake_chat"},
+            payload={
+                "artifact_kind": "user_requirement",
+                "stage": "intake_chat",
+                "docs_context_snapshot_id": session.docs_context_snapshot.get("id")
+                if session.docs_context_snapshot
+                else None,
+            },
         )
         message_router.build_handoff(
             session_id=session.id,
@@ -946,6 +966,9 @@ class TeamOrchestrator:
                 "goal": session.structured_brief.goal,
                 "subtask_ids": [subtask.id for subtask in session.subtasks],
                 "next_stage": "draft_ready",
+                "docs_context_snapshot_id": session.docs_context_snapshot.get("id")
+                if session.docs_context_snapshot
+                else None,
             },
         )
         session.structured_brief.risks = []
@@ -1558,13 +1581,21 @@ class TeamOrchestrator:
             to_role="runtime",
             content="Plan approved for execution.",
             work_unit_id=session.id,
-            payload={"artifact_kind": "approved_plan", "status": session.status, "gate_verdict": session.gate_verdict},
+            payload={
+                "artifact_kind": "approved_plan",
+                "status": session.status,
+                "gate_verdict": session.gate_verdict,
+                "docs_context_snapshot_id": session.docs_context_snapshot.get("id")
+                if session.docs_context_snapshot
+                else None,
+            },
         )
         return session
 
     def revise(self, session_id: str, *, summary: str, closed_gap_ids: list[str]) -> PlanSession:
         session = self.store.read_session(session_id)
         session.doc_sync = self._build_doc_sync_status()
+        session.docs_context_snapshot = self._build_docs_context_snapshot(session, query=summary)
         session.compliance = build_compliance_status_for_session(
             project_root=self.project_root,
             doc_sync=session.doc_sync,
@@ -1589,6 +1620,7 @@ class TeamOrchestrator:
         session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime)
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         session.doc_sync = self.refresh_documentation_sync()
+        session.docs_context_snapshot = self._build_docs_context_snapshot(session, query=summary)
         self.store.write_session(session)
         MessageRouter(self.store.message_store()).build_handoff(
             session_id=session.id,
@@ -1596,7 +1628,13 @@ class TeamOrchestrator:
             to_role="reviewer",
             content=summary,
             work_unit_id=revision_round.id,
-            payload={"closed_gap_ids": closed_gap_ids, "round_type": "revision"},
+            payload={
+                "closed_gap_ids": closed_gap_ids,
+                "round_type": "revision",
+                "docs_context_snapshot_id": session.docs_context_snapshot.get("id")
+                if session.docs_context_snapshot
+                else None,
+            },
             requires_response=True,
         )
         session.compliance = build_compliance_status_for_session(
@@ -1620,6 +1658,7 @@ class TeamOrchestrator:
     ) -> PlanSession:
         session = self.store.read_session(session_id)
         session.doc_sync = self._build_doc_sync_status()
+        session.docs_context_snapshot = self._build_docs_context_snapshot(session)
         session.compliance = build_compliance_status_for_session(
             project_root=self.project_root,
             doc_sync=session.doc_sync,
@@ -1709,6 +1748,7 @@ class TeamOrchestrator:
         )
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         session.doc_sync = self.refresh_documentation_sync()
+        session.docs_context_snapshot = self._build_docs_context_snapshot(session, query=execution_requirement)
         self.store.write_session(session)
         MessageRouter(self.store.message_store()).build_handoff(
             session_id=session.id,
@@ -1716,7 +1756,18 @@ class TeamOrchestrator:
             to_role="runtime",
             content=f"Execution started from approved plan via run {run.run_id}.",
             work_unit_id=run.run_id,
-            payload={"run_id": run.run_id, "status": session.status, "execution_context_policy": context_policy_payload},
+            payload={
+                "run_id": run.run_id,
+                "status": session.status,
+                "execution_context_policy": context_policy_payload,
+                "docs_context_snapshot_id": session.docs_context_snapshot.get("id")
+                if session.docs_context_snapshot
+                else None,
+                "recommended_commands": [
+                    f"python -m agent_orchestrator.cli team inspect-execution {session.id}",
+                    f"python -m agent_orchestrator.cli team inspect-handoff {session.id}",
+                ],
+            },
         )
         session.compliance = build_compliance_status_for_session(
             project_root=self.project_root,
@@ -1739,6 +1790,52 @@ class TeamOrchestrator:
                 "workflow_notes": sum(1 for record in records if record.get("artifact_type") == "workflow_notes"),
             },
         }
+
+    def inspect_handoff(self, session_id: str, *, limit: int = 10) -> dict[str, object]:
+        messages = self.store.message_store().query(session_id=session_id, message_type="handoff", limit=limit)
+        packets: list[dict[str, object]] = []
+        for message in messages:
+            payload = message.get("payload", {})
+            packet = payload.get("handoff_packet") if isinstance(payload, dict) else None
+            if isinstance(packet, dict):
+                packets.append(
+                    {
+                        "message_id": message.get("id"),
+                        "thread": message.get("thread"),
+                        "created_at": message.get("created_at"),
+                        "packet": packet,
+                    }
+                )
+        return {
+            "format": "agent_orchestrator.handoff_inspection.v1",
+            "session_id": session_id,
+            "packet_count": len(packets),
+            "latest_packet": packets[0] if packets else None,
+            "packets": packets,
+        }
+
+    def inspect_docs(
+        self,
+        *,
+        query: str = "",
+        changed_files: list[str] | None = None,
+        include_all: bool = False,
+    ) -> dict[str, object]:
+        return build_document_context_package(
+            self.project_root,
+            self.runtime,
+            query=query,
+            changed_files=changed_files,
+            include_all=include_all,
+        )
+
+    def docs_index(self, *, query: str = "", changed_files: list[str] | None = None) -> dict[str, object]:
+        return build_docs_index(
+            self.project_root,
+            self.runtime,
+            query=query,
+            changed_files=changed_files,
+        )
 
     def inspect_execution(self, session_id: str) -> dict[str, object]:
         session = self.store.read_session(session_id)
@@ -1789,6 +1886,23 @@ class TeamOrchestrator:
 
     def _build_doc_sync_status(self) -> dict[str, object]:
         return build_doc_sync_status_for_project(self.project_root, self.runtime)
+
+    def _build_docs_context_snapshot(
+        self,
+        session: PlanSession,
+        *,
+        query: str | None = None,
+        changed_files: list[str] | None = None,
+        include_all: bool = False,
+    ) -> dict[str, object]:
+        package = build_document_context_package(
+            self.project_root,
+            self.runtime,
+            query=query or session.requirement,
+            changed_files=changed_files,
+            include_all=include_all,
+        )
+        return build_document_context_snapshot(package, session_id=session.id)
 
     def _can_refresh_process_docs(self) -> bool:
         return (self.project_root / "docs" / "process").exists()
@@ -3126,6 +3240,7 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
     blocking_reasons: list[str] = []
     compliance_blocking_reasons = _compliance_blocking_reasons_support(session)
     compliance_warnings = _compliance_warnings_support(session)
+    compliance_diagnostics = session.compliance.get("diagnostics", {}) if isinstance(session.compliance, dict) else {}
     baseline_warnings = [
         str(item) for item in session.compliance.get("baseline_warnings", [])
     ] if isinstance(session.compliance, dict) else []
@@ -3190,6 +3305,7 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
         "blocking_reasons": blocking_reasons,
         "warnings": compliance_warnings,
         "baseline_warnings": baseline_warnings,
+        "diagnostics": compliance_diagnostics,
         "block_source": guidance.block_source,
         "block_detail": guidance.block_detail,
         "resume_action": guidance.resume_action,
@@ -3198,10 +3314,19 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
         "selected_topology": session.decision_verdict.selected_topology if session.decision_verdict else None,
         "topology_reason": session.structured_brief.topology_recommendation.get("selection_reason"),
         "decision_rationale": session.decision_verdict.rationale if session.decision_verdict else [],
+        "strategy_decision": _status_strategy_decision(session, guidance, next_task),
         "approved_plan_ready": bool(session.approved_plan),
         "approved_plan_source": session.approved_plan.get("execution_contract", {}).get("source") if session.approved_plan else None,
         "execution_context_policy": execution_context_policy,
+        "docs_context_snapshot": summarize_document_context_snapshot(session.docs_context_snapshot),
         "approval_state": approval_state,
+        "task_timeline": _build_task_timeline_for_session_support(session),
+        "recovery_timeline": _status_recovery_timeline_summary(
+            session,
+            guidance,
+            blocking_reasons=blocking_reasons,
+            delegated_jobs=delegated_jobs,
+        ),
         "human_intervention_reason": _human_intervention_reason(session, guidance, blocking_reasons),
         "runtime_health": {
             "job_count": len(delegated_jobs),
@@ -3216,6 +3341,158 @@ def _build_status_summary(session: PlanSession) -> PlanStatusSummary:
             "source": "placeholder",
         },
     }
+
+
+def _status_recovery_timeline_summary(
+    session: PlanSession,
+    guidance: SessionGuidance,
+    *,
+    blocking_reasons: list[str],
+    delegated_jobs: list[dict[str, object]],
+) -> dict[str, object]:
+    current_status = _status_recovery_current_status(session, guidance, blocking_reasons, delegated_jobs)
+    entries = [
+        {
+            "status": "started",
+            "kind": "plan_session",
+            "message": "Plan session exists in the control plane.",
+            "artifact_refs": [f"plans/{session.id}/session.json"],
+        },
+        {
+            "status": "checkpointed",
+            "kind": "plan_session",
+            "message": f"Checkpoint at phase {session.resume.current_phase}.",
+            "artifact_refs": [f"plans/{session.id}/session.json"],
+            "checkpoint": {
+                "phase": session.resume.current_phase,
+                "pending_role": session.resume.pending_role,
+                "linked_execution_run_id": session.resume.linked_execution_run_id,
+            },
+        },
+        {
+            "status": current_status,
+            "kind": "recovery_state",
+            "message": guidance.primary_reason,
+            "resume_action": guidance.resume_action or guidance.primary_action,
+            "resume_reason": guidance.resume_reason,
+            "blocking_reasons": list(blocking_reasons),
+            "artifact_refs": [f"plans/{session.id}/session.json"],
+        },
+    ]
+    counts: dict[str, int] = {}
+    for entry in entries:
+        status = str(entry.get("status") or "interrupted")
+        counts[status] = counts.get(status, 0) + 1
+    return {
+        "format": "agent_orchestrator.recovery_timeline.v1",
+        "current_status": current_status,
+        "status_counts": counts,
+        "entry_count": len(entries),
+        "blocking_summary": {
+            "blocking": current_status
+            in {
+                "awaiting_human",
+                "approval_blocked",
+                "evidence_blocked",
+                "compliance_blocked",
+                "provider_degraded",
+                "runtime_failed",
+                "interrupted",
+            },
+            "reasons": list(blocking_reasons),
+        },
+        "resume_hint": guidance.resume_action or guidance.primary_action,
+        "last_checkpoint": entries[1],
+        "entries": entries,
+        "read_only": True,
+    }
+
+
+def _status_recovery_current_status(
+    session: PlanSession,
+    guidance: SessionGuidance,
+    blocking_reasons: list[str],
+    delegated_jobs: list[dict[str, object]],
+) -> str:
+    compliance = session.compliance if isinstance(session.compliance, dict) else {}
+    if compliance.get("blocking"):
+        return "compliance_blocked"
+    if session.status in {"awaiting_human", "awaiting_human_confirmation"}:
+        return "awaiting_human"
+    if guidance.primary_action == "approve":
+        return "approval_blocked"
+    if any(job.get("status") == "failed" for job in delegated_jobs):
+        return "runtime_failed"
+    if _strategy_provider_fallback(session):
+        return "provider_degraded"
+    if session.status in {"accepted", "completed"}:
+        return "completed"
+    if guidance.resume_action or guidance.recovery_actions:
+        return "recovery_ready"
+    if blocking_reasons:
+        return "interrupted"
+    return "checkpointed"
+
+
+def _status_strategy_decision(
+    session: PlanSession,
+    guidance: SessionGuidance,
+    next_task: dict[str, object] | None,
+) -> dict[str, object]:
+    next_goal = (
+        str(next_task.get("title"))
+        if isinstance(next_task, dict) and next_task.get("title")
+        else guidance.primary_reason or session.requirement
+    )
+    validation_plan = [
+        "Run the current phase targeted pytest slice before moving phases.",
+        "Run full pytest and team check-compliance only at convergence.",
+    ]
+    if isinstance(next_task, dict):
+        validation_plan.extend(str(item) for item in next_task.get("validation", []) if item)
+    return {
+        "format": "agent_orchestrator.strategy_decision.v1",
+        "session_id": session.id,
+        "goal": session.structured_brief.goal or session.requirement,
+        "next_goal": next_goal,
+        "status": session.status,
+        "recommended_action": guidance.primary_action,
+        "control_plane_focus": "state_context_strategy_topology_approval_evidence_memory_recovery",
+        "orchestration_horizon": {
+            "short_term": "explicit orchestration solves real local work",
+            "medium_term": "control plane governs orchestration and evidence",
+            "long_term": "models may internalize orchestration while external artifacts remain auditable",
+        },
+        "selected_topology": session.decision_verdict.selected_topology if session.decision_verdict else None,
+        "topology_reason": session.structured_brief.topology_recommendation.get("selection_reason"),
+        "topology_policy": {
+            "task_size": session.structured_brief.topology_recommendation.get("subtask_count"),
+            "signals": dict(session.structured_brief.topology_recommendation.get("signals", {}))
+            if isinstance(session.structured_brief.topology_recommendation.get("signals"), dict)
+            else {},
+            "review_policy": dict(session.structured_brief.review_policy),
+            "provider_fallback": _strategy_provider_fallback(session),
+        },
+        "recovery_policy": {
+            "resume_action": guidance.resume_action,
+            "resume_reason": guidance.resume_reason,
+            "recovery_actions": list(guidance.recovery_actions),
+            "interruption_aware": True,
+            "execution_gate_authority": "approved_plan_gate",
+            "records_only": True,
+        },
+        "rationale": session.decision_verdict.rationale if session.decision_verdict else [],
+        "risks": [str(item) for item in session.structured_brief.risks],
+        "validation_plan": validation_plan,
+        "executes": False,
+    }
+
+
+def _strategy_provider_fallback(session: PlanSession) -> dict[str, object]:
+    if not session.decision_verdict:
+        return {}
+    runtime = session.decision_verdict.selected_provider_runtime
+    return {key: value for key, value in runtime.items() if "fallback" in key and value}
 
 
 def _session_execution_context_policy(session: PlanSession) -> dict[str, object]:
@@ -3288,6 +3565,9 @@ def _recovery_semantics_for_guidance(guidance: SessionGuidance) -> dict[str, obj
         "resume_reason": guidance.resume_reason,
         "block_source": guidance.block_source,
         "block_detail": guidance.block_detail,
+        "interruption_aware": True,
+        "execution_gate_authority": "approved_plan_gate",
+        "records_only": True,
         "auto_apply_allowed": action in {"approve", "execute", "retry_review", "retry_adversarial_review"},
         "human_escalation_required": action == "human_decision",
     }

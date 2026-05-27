@@ -10,6 +10,9 @@ def test_context_map_doc_exists_and_mentions_codebase_map_style_orientation() ->
     assert "file-header contract" in text
     assert "cli_inherit" in text
     assert "direct_api" in text
+    assert "agent_orchestrator.docs_context.v1" in text
+    assert "AI Work Control Plane artifact pipeline" in text
+    assert "team workspace-status" in text
 
 
 def test_long_cycle_plan_declares_auto_continue_protocol() -> None:
@@ -18,6 +21,66 @@ def test_long_cycle_plan_declares_auto_continue_protocol() -> None:
     assert "验证通过后自动进入下一段" in text
     assert "普通进展汇报不构成停点" in text
     assert "不再按“小计划一轮轮确认”运行" in text
+
+
+def test_ai_work_control_plane_master_plan_declares_artifact_pipeline() -> None:
+    text = Path("docs/process/ai-work-control-plane-master-plan.md").read_text(encoding="utf-8")
+
+    assert "AI Work Control Plane" in text
+    assert "WorkspaceState -> ContextPacket -> StrategyDecision -> ExecutionTopologySnapshot" in text
+    assert "原有编排不舍弃" in text
+    assert "长期允许编排逐步被模型内化" in text
+    assert "Contract Hardening + Dogfood" in text
+    assert "PlanSession -> WorkspaceState -> ContextPacket -> StrategyDecision" in text
+
+
+def test_control_plane_artifact_contracts_document_stable_formats() -> None:
+    text = Path("docs/process/control-plane-artifact-contracts.md").read_text(encoding="utf-8")
+
+    assert "agent_orchestrator.workspace_state.v1" in text
+    assert "agent_orchestrator.context_packet.v1" in text
+    assert "agent_orchestrator.strategy_decision.v1" in text
+    assert "agent_orchestrator.execution_topology_snapshot.v1" in text
+    assert "agent_orchestrator.approval_item.v1" in text
+    assert "agent_orchestrator.evidence_bundle.v1" in text
+    assert "Unknown fields must be ignored" in text
+
+
+def test_control_plane_dogfood_evidence_records_real_chain() -> None:
+    text = Path("docs/process/ai-work-control-plane-dogfood-evidence.md").read_text(encoding="utf-8")
+
+    assert "WorkspaceState -> ContextPacket -> StrategyDecision -> ExecutionTopologySnapshot" in text
+    assert "agent_orchestrator.workspace_state.v1" in text
+    assert "agent_orchestrator.context_packet.v1" in text
+    assert "agent_orchestrator.execution_topology_snapshot.v1" in text
+    assert "control_plane_focus=state_context_strategy_topology_approval_evidence_memory_recovery" in text
+    assert "auto_write=false" in text
+
+
+def test_control_plane_reference_rescreen_maps_research_repos_to_new_direction() -> None:
+    text = Path("docs/research/control-plane-reference-rescreen.md").read_text(encoding="utf-8")
+    context_map = Path("docs/process/context-map.md").read_text(encoding="utf-8")
+
+    for project in (
+        "HiveWard",
+        "wanman",
+        "slark",
+        "CodeWhale",
+        "codex-orchestrator",
+        "codex-plugin-cc",
+        "cc-plugin-codex",
+        "Eigent",
+    ):
+        assert project in text
+
+    assert "PlanSession -> WorkspaceState -> ContextPacket -> StrategyDecision" in text
+    assert "approval inbox" in text
+    assert "run ledger" in text
+    assert "runtime boundary" in text
+    assert "Workspace / Program Index v2" in text
+    assert "Topology Blueprint Snapshot" in text
+    assert "Memory Promotion Workflow" in text
+    assert "docs/research/control-plane-reference-rescreen.md" in context_map
 
 
 def test_process_doc_declares_long_plan_driven_execution() -> None:
@@ -31,9 +94,90 @@ def test_process_doc_declares_long_plan_driven_execution() -> None:
 def test_readme_points_to_continuous_internal_default_workflow() -> None:
     text = Path("README.md").read_text(encoding="utf-8")
 
+    assert "AI Work Control Plane for long-cycle local agent work" in text
     assert "internal default" in text
     assert "长周期主执行计划" in text
     assert "验证通过后自动进入下一段" in text
+    assert "while state, evidence, approvals, memory, and recovery stay outside the model" in text
+
+
+def test_continuous_control_plane_hardening_plan_declares_phase_protocol() -> None:
+    text = Path("docs/process/ai-work-control-plane-continuous-hardening-plan.md").read_text(encoding="utf-8")
+
+    assert "short term: use explicit orchestration" in text
+    assert "medium term: let the control plane govern orchestration" in text
+    assert "long term: allow orchestration to be internalized by model runtimes" in text
+    assert "Run targeted tests during phases" in text
+    assert "Run full `pytest` and `team check-compliance` only at final convergence" in text
+
+    for phase in range(8):
+        assert Path(f"docs/process/ai-work-control-plane-continuous-phase-{phase}-" + {
+            0: "baseline.md",
+            1: "operator-entry.md",
+            2: "recovery.md",
+            3: "topology-policy.md",
+            4: "compliance-sync.md",
+            5: "direct-api-tool-recording.md",
+            6: "dogfood.md",
+            7: "final-convergence.md",
+        }[phase]).exists()
+
+
+def test_operations_track_plan_declares_operator_control_plane_surface() -> None:
+    text = Path("docs/process/ai-work-control-plane-operations-track-plan.md").read_text(encoding="utf-8")
+    phase0 = Path("docs/process/ai-work-control-plane-operations-phase-0-baseline.md").read_text(encoding="utf-8")
+    context_map = Path("docs/process/context-map.md").read_text(encoding="utf-8")
+    master = Path("docs/process/ai-work-control-plane-master-plan.md").read_text(encoding="utf-8")
+    runbook = Path("docs/process/agent-team-operator-runbook.md").read_text(encoding="utf-8")
+
+    assert "PlanSession -> WorkspaceState -> ContextPacket -> StrategyDecision" in text
+    assert "ApprovalInbox -> RunLedger" in text
+    assert "Workspace / Program Index v2" in text
+    assert "MemoryPromotion" in text
+    assert "StrategyDecision.executes` stays `False" in text
+    assert "pytest tests/test_docs_process.py tests/test_planning_support.py -q" in phase0
+    assert "AI Work Control Plane Operations Track" in context_map
+    assert "Workspace / Program Index v2 + Approval Inbox + Run Ledger" in master
+    assert "Operations Track" in runbook
+
+
+def test_operations_dogfood_evidence_pins_complete_chain() -> None:
+    text = Path("docs/process/ai-work-control-plane-operations-dogfood-evidence.md").read_text(encoding="utf-8")
+    master = Path("docs/process/ai-work-control-plane-master-plan.md").read_text(encoding="utf-8")
+    runbook = Path("docs/process/agent-team-operator-runbook.md").read_text(encoding="utf-8")
+
+    assert "Workspace / Program Index v2" in text
+    assert "Topology Blueprint Snapshot" in text
+    assert "Approval Inbox" in text
+    assert "Run Ledger" in text
+    assert "Memory Candidate" in text
+    assert "agent_orchestrator.workspace_index.v1" in text
+    assert "agent_orchestrator.run_ledger.v1" in text
+    assert "auto_write=false" in text
+    assert "ai-work-control-plane-operations-dogfood-evidence.md" in master
+    assert "ai-work-control-plane-operations-dogfood-evidence.md" in runbook
+
+
+def test_live_recovery_track_plan_and_dogfood_evidence_pin_recovery_chain() -> None:
+    plan = Path("docs/process/ai-work-control-plane-live-recovery-track-plan.md").read_text(encoding="utf-8")
+    phase0 = Path("docs/process/ai-work-control-plane-live-recovery-phase-0-baseline.md").read_text(encoding="utf-8")
+    evidence = Path("docs/process/ai-work-control-plane-live-recovery-dogfood-evidence.md").read_text(encoding="utf-8")
+    master = Path("docs/process/ai-work-control-plane-master-plan.md").read_text(encoding="utf-8")
+    runbook = Path("docs/process/agent-team-operator-runbook.md").read_text(encoding="utf-8")
+
+    assert "Recovery Timeline" in plan
+    assert "Runtime Event Stream" in plan
+    assert "Recovery Recommendation" in plan
+    assert "pytest tests/test_docs_process.py tests/test_planning_support.py -q" in phase0
+    assert "PlanSession" in evidence
+    assert "agent_orchestrator.recovery_timeline.v1" in evidence
+    assert "agent_orchestrator.runtime_event_stream.v1" in evidence
+    assert "agent_orchestrator.recovery_recommendation.v1" in evidence
+    assert "awaiting-human / approval" in evidence
+    assert "compliance blocking" in evidence
+    assert "provider/runtime degraded or fallback" in evidence
+    assert "ai-work-control-plane-live-recovery-dogfood-evidence.md" in master
+    assert "ai-work-control-plane-live-recovery-dogfood-evidence.md" in runbook
 
 
 def test_operator_runbook_doc_covers_happy_path_and_recovery() -> None:
@@ -44,6 +188,12 @@ def test_operator_runbook_doc_covers_happy_path_and_recovery() -> None:
     assert "team next" in text
     assert "team roles" in text
     assert "team inspect-knowledge" in text
+    assert "team inspect-docs" in text
+    assert "team workspace-status" in text
+    assert "team context-packet" in text
+    assert "team topology inspect" in text
+    assert "team approvals list" in text
+    assert "team evidence-gates" in text
     assert "approval_state" in text
     assert "required outputs" in text
     assert "team revise" in text
@@ -60,11 +210,27 @@ def test_operator_runbook_doc_covers_happy_path_and_recovery() -> None:
     assert "不要直接编辑底层 JSON" in text
 
 
+def test_decision_docs_exist_and_use_required_headings() -> None:
+    decisions_root = Path("docs/decisions")
+    required = [
+        "0001-documentation-as-runtime-context.md",
+        "0002-handoff-packet-contract.md",
+        "0003-canonical-docs-vs-derived-views.md",
+        "0004-ai-work-control-plane-reframe.md",
+    ]
+
+    for name in required:
+        text = (decisions_root / name).read_text(encoding="utf-8")
+        for heading in ("## Status", "## Context", "## Decision", "## Consequences", "## Related Commands"):
+            assert heading in text
+
+
 def test_readme_points_to_hook_installation_workflow() -> None:
     text = Path("README.md").read_text(encoding="utf-8")
 
     assert "install-hooks" in text
     assert "team check-compliance" in text
+    assert "docs/decisions/" in text
 
 
 def test_readme_uses_health_subcommand_example() -> None:

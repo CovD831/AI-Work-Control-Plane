@@ -8,6 +8,7 @@ import argparse
 from agent_orchestrator.cli_presenters import (
     pick_primary_action,
     print_blocker_session_summary,
+    print_handoff_summary,
     print_execution_session_summary,
     print_team_next,
     print_team_runbook,
@@ -55,6 +56,29 @@ def test_team_next_alternatives_excludes_primary_action() -> None:
     )
 
     assert alternatives == ["retry_review", "inspect_compliance"]
+
+
+def test_print_handoff_summary_reports_latest_packet(capsys) -> None:
+    print_handoff_summary(
+        {
+            "session_id": "plan-1",
+            "packet_count": 1,
+            "latest_packet": {
+                "packet": {
+                    "from_role": "lead",
+                    "to_role": "runtime",
+                    "summary": "Execute approved plan",
+                    "docs_context_snapshot_id": "docsctx-123",
+                    "recommended_commands": ["python -m agent_orchestrator.cli team inspect-execution plan-1"],
+                }
+            },
+        }
+    )
+
+    out = capsys.readouterr().out
+    assert "handoff: plan-1" in out
+    assert "latest_packet: lead->runtime snapshot=docsctx-123" in out
+    assert "recommended_commands: python -m agent_orchestrator.cli team inspect-execution plan-1" in out
 
 
 def test_team_display_context_uses_fallback_primary_action_and_collects_failed_jobs() -> None:
@@ -258,6 +282,17 @@ def test_print_team_runbook_includes_recommended_command_and_steps(capsys) -> No
                 "selected_topology": "team",
                 "topology_reason": "work can proceed without adversarial depth",
                 "decision_rationale": ["approved plan exists", "no blocking gaps remain"],
+                "strategy_decision": {
+                    "format": "agent_orchestrator.strategy_decision.v1",
+                    "next_goal": "Execute approved plan",
+                    "recommended_action": "execute",
+                    "control_plane_focus": "state_context_strategy_topology_approval_evidence_memory_recovery",
+                    "topology_policy": {"selection_reason": "work can proceed without adversarial depth"},
+                    "recovery_policy": {"recovery_actions": ["execute"]},
+                    "rationale": ["approved plan exists"],
+                    "validation_plan": ["targeted tests first"],
+                    "executes": False,
+                },
             },
         )
     )
@@ -278,6 +313,11 @@ def test_print_team_runbook_includes_recommended_command_and_steps(capsys) -> No
     assert "reason: plan is ready to execute" in out
     assert "next_command: python -m agent_orchestrator.cli team execute session-123 --mode success_first" in out
     assert "decision_rationale: approved plan exists | no blocking gaps remain" in out
+    assert "control_plane_strategy: Execute approved plan" in out
+    assert "control_plane_strategy_focus: state_context_strategy_topology_approval_evidence_memory_recovery" in out
+    assert "control_plane_strategy_topology_policy: work can proceed without adversarial depth" in out
+    assert "control_plane_strategy_recovery_policy: execute" in out
+    assert "control_plane_strategy_validation: targeted tests first" in out
     assert "operator_runbook:" in out
     assert "1. Execute approved plan for session-123" in out
     assert "2. Inspect the execution record after completion" in out

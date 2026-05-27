@@ -157,7 +157,11 @@ def test_team_review_waits_for_human_confirmation_before_approval(tmp_path) -> N
         "review",
         "adversarial_review",
     ]
-    assert reviewed.to_dict()["status_summary"]["primary_action"] == "approve"
+    status = reviewed.to_dict()["status_summary"]
+    assert status["primary_action"] == "approve"
+    assert status["strategy_decision"]["format"] == "agent_orchestrator.strategy_decision.v1"
+    assert status["strategy_decision"]["executes"] is False
+    assert status["strategy_decision"]["recommended_action"] == "approve"
 
 
 def test_team_start_uses_distinct_configured_review_agents(tmp_path) -> None:
@@ -584,6 +588,25 @@ def test_team_escalation_marks_session_awaiting_human(tmp_path) -> None:
 def test_plan_session_round_trip_preserves_optional_fields() -> None:
     session = PlanSession.new(requirement="Build dashboard", stage_target="Stage 2: Planning Governance Skeleton")
     session.checklist = [PlanChecklistItem(label="Lead brief persisted", owner="lead", completed=True)]
+    session.docs_context_snapshot = {
+        "format": "agent_orchestrator.docs_context_snapshot.v1",
+        "id": "docsctx-test",
+        "session_id": session.id,
+        "query": session.requirement,
+        "changed_files": [],
+        "selected_doc_ids": ["process/context-map"],
+        "documents": [
+            {
+                "id": "process/context-map",
+                "path": "docs/process/context-map.md",
+                "status": "passed",
+                "fresh": True,
+                "relevance": "baseline orientation",
+                "content_hash": "abc123",
+            }
+        ],
+        "created_at": "2026-05-27T00:00:00+00:00",
+    }
     session.structured_brief = StructuredPlanBrief(
         goal="Build dashboard",
         constraints=["Keep current CLI surface"],
@@ -597,6 +620,8 @@ def test_plan_session_round_trip_preserves_optional_fields() -> None:
 
     assert restored.id == session.id
     assert restored.doc_sync == session.doc_sync
+    assert restored.docs_context_snapshot == session.docs_context_snapshot
+    assert restored.to_dict()["docs_context_snapshot_summary"]["doc_count"] == 1
     assert restored.compliance == session.compliance
     assert restored.structured_brief == session.structured_brief
     assert restored.checklist[0].owner == "lead"
@@ -793,6 +818,7 @@ def test_team_refresh_documentation_sync_writes_canonical_docs(tmp_path) -> None
     assert "- `demo.py`: Demo module." in module_manifest.read_text(encoding="utf-8")
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_blocks_on_root_map_structure_drift(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     (tmp_path / "docs" / "process" / "root-map.md").write_text(
@@ -814,6 +840,7 @@ def test_team_check_compliance_blocks_on_root_map_structure_drift(tmp_path) -> N
     assert any("root-map.md" in warning for warning in session.compliance["warnings"])
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_blocks_on_root_map_entry_drift(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     (tmp_path / "docs" / "process" / "root-map.md").write_text(
@@ -835,6 +862,7 @@ def test_team_check_compliance_blocks_on_root_map_entry_drift(tmp_path) -> None:
     assert any("root-map.md" in warning for warning in session.compliance["warnings"])
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_blocks_on_source_file_header_drift(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -884,6 +912,7 @@ def test_team_check_compliance_only_scans_changed_source_files_when_requested(tm
     assert any(path.endswith("good.py") for path in compliance["checked_files"])
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_warns_on_unrelated_placeholder_headers(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -910,6 +939,7 @@ def test_team_check_compliance_warns_on_unrelated_placeholder_headers(tmp_path) 
     assert "clean_up_non_blocking_header_warnings" in compliance["required_actions"]
 
 
+@pytest.mark.slow_integration
 def test_team_status_surfaces_warning_only_compliance_guidance(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -954,6 +984,141 @@ def test_team_refresh_documentation_sync_writes_context_map_doc(tmp_path) -> Non
     assert context_map.exists()
     assert "CODEBASE_MAP-style orientation" in context_map.read_text(encoding="utf-8")
 
+
+@pytest.mark.slow_integration
+def test_team_inspect_docs_builds_agent_ready_context_package(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.refresh_documentation_sync()
+
+    payload = team.inspect_docs(
+        query="Context7 style docs context for module changes",
+        changed_files=["src/agent_orchestrator/planning_support.py"],
+    )
+
+    assert payload["format"] == "agent_orchestrator.docs_context.v1"
+    assert "process/context-map" in payload["selected_doc_ids"]
+    assert "process/module-manifest" in payload["selected_doc_ids"]
+    assert "process/file-header-contract" in payload["selected_doc_ids"]
+    assert "process/module-manifest" in payload["injection_markdown"]
+    docs_by_id = {document["id"]: document for document in payload["documents"]}
+    assert docs_by_id["process/module-manifest"]["fresh"] is True
+    assert docs_by_id["process/file-header-contract"]["relevance"] == "changed source files require module/header context"
+    snapshot = payload["snapshot_summary"]
+    assert snapshot["format"] == "agent_orchestrator.docs_context_snapshot.v1"
+    assert snapshot["selected_doc_ids"] == payload["selected_doc_ids"]
+    assert "content" not in snapshot["documents"][0]
+    assert "content_hash" in snapshot["documents"][0]
+
+
+@pytest.mark.slow_integration
+def test_team_start_revise_and_execute_record_docs_context_snapshots(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+
+    session = _legacy_started_session(team, "Build a persisted plan artifact")
+    if session.gaps:
+        session = team.revise(
+            session.id,
+            summary="Close required docs context gaps",
+            closed_gap_ids=[gap.id for gap in session.gaps if gap.required],
+        )
+    if session.status != "approved_for_execution":
+        session = team.approve(session.id)
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+
+    assert executed.docs_context_snapshot is not None
+    assert executed.docs_context_snapshot["format"] == "agent_orchestrator.docs_context_snapshot.v1"
+    assert executed.docs_context_snapshot["session_id"] == executed.id
+    assert executed.to_dict()["status_summary"]["docs_context_snapshot"]["doc_count"] >= 1
+
+
+@pytest.mark.slow_integration
+def test_team_inspect_handoff_reports_structured_packets(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+
+    session = _legacy_started_session(team, "Build a persisted plan artifact")
+    if session.status != "approved_for_execution":
+        session = team.approve(session.id)
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+
+    payload = team.inspect_handoff(executed.id)
+
+    assert payload["format"] == "agent_orchestrator.handoff_inspection.v1"
+    assert payload["packet_count"] >= 1
+    packet = payload["latest_packet"]["packet"]
+    assert packet["format"] == "agent_orchestrator.handoff_packet.v1"
+    assert packet["docs_context_snapshot_id"] == executed.docs_context_snapshot["id"]
+    assert any("inspect-handoff" in command for command in packet["recommended_commands"])
+
+
+@pytest.mark.slow_integration
+def test_team_compliance_blocks_when_execution_handoff_packet_is_missing(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    session = _legacy_started_session(team, "Build a persisted plan artifact")
+    if session.status != "approved_for_execution":
+        session = team.approve(session.id)
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+    messages_path = tmp_path / "messages" / "messages.jsonl"
+    rewritten: list[str] = []
+    for line in messages_path.read_text(encoding="utf-8").splitlines():
+        payload = json.loads(line)
+        message_payload = payload.get("payload", {})
+        if isinstance(message_payload, dict) and message_payload.get("run_id") == executed.resume.linked_execution_run_id:
+            message_payload.pop("handoff_packet", None)
+        rewritten.append(json.dumps(payload, ensure_ascii=False))
+    messages_path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    compliance = team.check_session_compliance(executed.id)
+
+    assert compliance["blocking"] is True
+    assert "execution handoff packet missing for linked execution run" in compliance["blocking_reasons"]
+    assert "repair_handoff_packet" in compliance["required_actions"]
+    assert any("inspect-handoff" in command for command in compliance["recommended_commands"])
+
+
+@pytest.mark.slow_integration
+def test_team_docs_index_returns_docs_decisions_tests_and_commands(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    (tests_dir / "test_planning_support.py").write_text("# targeted docs index test\n", encoding="utf-8")
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+
+    payload = team.docs_index(
+        query="docs context handoff",
+        changed_files=["src/agent_orchestrator/planning_support.py"],
+    )
+
+    assert payload["format"] == "agent_orchestrator.docs_index.v1"
+    assert any(doc["id"] == "process/context-map" for doc in payload["matched_docs"])
+    assert any("0001-documentation-as-runtime-context.md" in item["path"] for item in payload["matched_decisions"])
+    assert "tests/test_planning_support.py" in payload["matched_tests"]
+    assert "team inspect-docs" in payload["recommended_context_command"]
+
+
 def test_team_check_compliance_blocks_on_placeholder_header_in_changed_file(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -996,6 +1161,7 @@ def test_team_check_compliance_blocks_on_missing_changed_file_dependency_declara
     assert "fix_changed_file_headers" in compliance["required_actions"]
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_blocks_on_stale_changed_file_dependency_declaration(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -1017,6 +1183,7 @@ def test_team_check_compliance_blocks_on_stale_changed_file_dependency_declarati
     assert "fix_changed_file_headers" in compliance["required_actions"]
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_blocks_on_module_manifest_coverage_drift(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -1049,6 +1216,7 @@ def test_team_check_compliance_blocks_on_module_manifest_coverage_drift(tmp_path
     )
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_blocks_when_changed_source_file_requires_manifest_refresh(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -1070,6 +1238,7 @@ def test_team_check_compliance_blocks_when_changed_source_file_requires_manifest
     assert "sync_process_doc_contracts" in compliance["required_actions"]
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_blocks_when_changed_source_summary_is_stale_in_manifest(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -1096,6 +1265,7 @@ def test_team_check_compliance_blocks_when_changed_source_summary_is_stale_in_ma
     assert "sync_process_doc_contracts" in compliance["required_actions"]
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_returns_structured_contract_for_project_and_session(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
@@ -1120,6 +1290,7 @@ def test_team_check_compliance_returns_structured_contract_for_project_and_sessi
     assert session.id in session_compliance["recommended_commands"][0]
 
 
+@pytest.mark.slow_integration
 def test_team_status_preserves_warning_only_compliance_snapshot(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -1144,6 +1315,7 @@ def test_team_status_preserves_warning_only_compliance_snapshot(tmp_path) -> Non
     assert any("legacy.py" in warning for warning in refreshed.compliance["warnings"])
 
 
+@pytest.mark.slow_integration
 def test_team_check_compliance_warns_when_managed_hooks_have_not_been_installed(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
@@ -1181,6 +1353,7 @@ def test_team_revision_round_opens_and_closes_gaps_before_approval(tmp_path) -> 
     assert approved.decision_verdict["required_gaps"] == []
 
 
+@pytest.mark.slow_integration
 def test_team_revise_refreshes_doc_sync_snapshot(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
@@ -2164,6 +2337,7 @@ def test_team_status_reports_execution_block_source_after_linked_run_failure(tmp
     assert status["recovery_semantics"]["category"] == "inspect_before_rerun"
 
 
+@pytest.mark.slow_integration
 def test_team_status_reports_execution_provenance_mismatch_block_detail(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
@@ -2195,6 +2369,7 @@ def test_team_status_reports_execution_provenance_mismatch_block_detail(tmp_path
     assert status["resume_action"] == "inspect_compliance"
 
 
+@pytest.mark.slow_integration
 def test_team_inspect_execution_reports_provenance_mismatch_summary(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
@@ -2225,6 +2400,7 @@ def test_team_inspect_execution_reports_provenance_mismatch_summary(tmp_path) ->
     assert any("run provenance mismatch" in reason for reason in inspected["session_summary"]["blocking_reasons"])
 
 
+@pytest.mark.slow_integration
 def test_team_inspect_execution_surfaces_warning_only_compliance_context(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     package_dir = tmp_path / "src" / "agent_orchestrator"
@@ -2250,6 +2426,7 @@ def test_team_inspect_execution_surfaces_warning_only_compliance_context(tmp_pat
     assert any("legacy.py" in warning for warning in inspected["session_summary"]["warnings"])
 
 
+@pytest.mark.slow_integration
 def test_team_inspect_blockers_summarizes_execution_blocked_session(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(
@@ -2323,6 +2500,7 @@ def test_team_inspect_blockers_summarizes_compliance_blocker(tmp_path) -> None:
     assert "compliance_blocking_reasons" not in summary["evidence"]
 
 
+@pytest.mark.slow_integration
 def test_team_status_reports_plan_artifact_blocking_when_checklist_snapshot_is_missing(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     team = TeamOrchestrator(

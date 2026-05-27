@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-# DEPS: __future__, agent_orchestrator, ast, dataclasses, json, pathlib, shlex, typing
+# DEPS: __future__, agent_orchestrator, ast, dataclasses, hashlib, json, pathlib, shlex, typing
 # RESPONSIBILITY: Centralize planning compliance checks and session guidance helpers.
 # MODULE: decision_core
 # ---
 
 import ast
+import hashlib
 import json
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agent_orchestrator.jobs import FileJobRuntime, JobRuntime
+from agent_orchestrator.jobs import FileJobRuntime, JobRuntime, now_iso
 from agent_orchestrator.roles import role_contracts
 
 if TYPE_CHECKING:
@@ -109,6 +110,20 @@ class SessionGuidance:
 BLOCK_SOURCES = {"compliance", "delegated_job", "execution_run", "review", "awaiting_human"}
 HEADER_REQUIRED_FIELDS = ("DEPS", "RESPONSIBILITY", "MODULE")
 HEADER_PLACEHOLDER_VALUES = {"待补充", "待确定", "todo", "tbd", "unknown"}
+DOC_CONTEXT_IDS = {
+    "root_map": "process/root-map",
+    "context_map": "process/context-map",
+    "module_manifest": "process/module-manifest",
+    "file_header_contract": "process/file-header-contract",
+    "release_readiness": "process/release-readiness",
+}
+DOC_CONTEXT_KEYWORDS = {
+    "root_map": ("root", "map", "repo", "repository", "目录", "结构", "入口"),
+    "context_map": ("context", "agent", "上下文", "context7", "docs", "文档"),
+    "module_manifest": ("module", "manifest", "src", "模块", "职责", "代码"),
+    "file_header_contract": ("header", "contract", "deps", "responsibility", "头部", "依赖"),
+    "release_readiness": ("release", "readiness", "setup", "gate", "evidence", "发布", "验收"),
+}
 
 
 def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumentationBundle:
@@ -134,8 +149,22 @@ def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumen
                 "compliance checks",
                 "provider runtime modes: cli_inherit, cli_isolated, direct_api",
                 "direct API readiness uses masked env-key reporting only",
+                "AI Work Control Plane artifact pipeline: WorkspaceState -> ContextPacket -> StrategyDecision -> ExecutionTopologySnapshot -> ApprovalItem -> EvidenceBundle -> MemoryRecord",
+                "AI Work Control Plane Phase 6+ hardens artifact contracts, lifecycle index refs, operator strategy visibility, approval reason codes, evidence-memory policy, read-only UI consumption, and dogfood coverage",
+                "AI Work Control Plane Operations Track extends the default operator surface to Workspace / Program Index v2, Approval Inbox, Run Ledger, Topology Blueprint Snapshot, Memory Promotion, and Runtime Health + Tool Inventory",
+                "AI Work Control Plane Live Recovery Track turns the operator-readable surface into an operator-recoverable surface with Recovery Timeline, Runtime Event Stream, Recovery Recommendation, resume hints, and evidence-backed memory promotion",
+                "`team inspect-docs` builds `agent_orchestrator.docs_context.v1` packages for agent-ready canonical docs",
+                "`team inspect-handoff` reads `agent_orchestrator.handoff_packet.v1` packets from session messages",
+                "`team docs-index` returns `agent_orchestrator.docs_index.v1` reverse lookup results",
+                "`team workspace-status`, `team context-packet`, `team topology inspect`, `team approvals`, and `team evidence-gates` expose `agent_orchestrator.*.v1` control-plane artifacts",
                 "README.md",
+                "docs/decisions/",
+                "docs/research/control-plane-reference-rescreen.md",
+                "docs/process/ai-work-control-plane-operations-track-plan.md",
+                "docs/process/ai-work-control-plane-live-recovery-track-plan.md",
                 "docs/process/agent-orchestrator-implementation-process.md",
+                "docs/process/ai-work-control-plane-master-plan.md",
+                "docs/process/control-plane-artifact-contracts.md",
                 "docs/process/agent-team-operator-runbook.md",
                 "docs/process/长周期主执行计划.md",
                 "docs/process/v1x-release-readiness.md",
@@ -167,6 +196,19 @@ def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumen
                 "`team setup` reports provider health, doc sync, compliance, and release readiness",
                 "evidence output is local markdown under `docs/process/`",
                 "full readiness still depends on targeted tests and final compliance",
+                "gate evidence summaries use `agent_orchestrator.gate_evidence.v1` and keep large logs in artifact paths",
+                "setup doctor JSON uses `agent_orchestrator.setup_doctor.v1` for UI and automation consumers",
+                "workspace state snapshots use `agent_orchestrator.workspace_state.v1` and persist `.agent_orchestrator/workspace/index.json`",
+                "context packets use `agent_orchestrator.context_packet.v1` and do not choose strategy",
+                "execution topology snapshots use `agent_orchestrator.execution_topology_snapshot.v1` as read-only graphs",
+                "approval items use `agent_orchestrator.approval_item.v1` and resolution never bypasses execution gates",
+                "evidence bundles use `agent_orchestrator.evidence_bundle.v1` for gate summaries",
+                "control-plane artifact contracts are documented in `docs/process/control-plane-artifact-contracts.md`",
+                "approval reason codes and evidence memory recommendations are part of the stable control-plane contract",
+                "documentation context packages use `agent_orchestrator.docs_context.v1` and include selected canonical docs only",
+                "docs context snapshots use `agent_orchestrator.docs_context_snapshot.v1` for session handoff",
+                "handoff packets use `agent_orchestrator.handoff_packet.v1` for structured communication",
+                "docs index results use `agent_orchestrator.docs_index.v1` for local reverse lookup",
                 "this repository does not promise plugin-marketplace style distribution",
             ),
         ),
@@ -184,6 +226,8 @@ def build_doc_sync_status_for_project(
         "README.md",
         "docs/process/长周期主执行计划.md",
         "docs/process/agent-orchestrator-implementation-process.md",
+        "docs/process/ai-work-control-plane-master-plan.md",
+        "docs/process/control-plane-artifact-contracts.md",
         "docs/architecture/决策核心-执行拓扑-运行时分层说明.md",
         "docs/process/root-map.md",
         "docs/process/context-map.md",
@@ -271,6 +315,270 @@ def build_doc_sync_status_for_project(
     if changed_files is not None:
         payload["changed_files"] = list(changed_files)
     return payload
+
+
+def build_document_context_package(
+    project_root: Path,
+    runtime: JobRuntime,
+    *,
+    query: str = "",
+    changed_files: list[str] | None = None,
+    include_all: bool = False,
+) -> dict[str, object]:
+    """Build an agent-consumable package of canonical documentation context."""
+    doc_sync = build_doc_sync_status_for_project(project_root, runtime, changed_files=changed_files)
+    bundle = canonical_process_documentation_bundle(project_root)
+    selected_names = _select_document_context_specs(query=query, changed_files=changed_files, include_all=include_all)
+    documents: list[dict[str, object]] = []
+    injection_sections: list[str] = []
+    statuses = doc_sync.get("documents", {}) if isinstance(doc_sync.get("documents"), dict) else {}
+
+    for name, spec in bundle.iter_specs():
+        if name not in selected_names:
+            continue
+        path = project_root / spec.path
+        status_payload = statuses.get(name, {}) if isinstance(statuses.get(name), dict) else {}
+        text = path.read_text(encoding="utf-8") if path.exists() else spec.render_markdown()
+        doc_payload = {
+            "id": DOC_CONTEXT_IDS.get(name, name),
+            "name": name,
+            "path": spec.path,
+            "title": spec.title,
+            "status": status_payload.get("status", "missing" if not path.exists() else "unknown"),
+            "fresh": status_payload.get("status") == "passed",
+            "relevance": _document_context_relevance(name, query=query, changed_files=changed_files, include_all=include_all),
+            "content": text,
+        }
+        documents.append(doc_payload)
+        injection_sections.append(f"## {doc_payload['id']}\n\n{text.strip()}")
+
+    package = {
+        "format": "agent_orchestrator.docs_context.v1",
+        "query": query,
+        "changed_files": list(changed_files or []),
+        "selection_policy": "all" if include_all else "query_and_changed_files",
+        "doc_sync": {
+            "missing_docs": doc_sync.get("missing_docs", []),
+            "stale_docs": doc_sync.get("stale_docs", []),
+            "header_contract_violations": doc_sync.get("header_contract_violations", []),
+        },
+        "documents": documents,
+        "selected_doc_ids": [str(document["id"]) for document in documents],
+        "injection_markdown": "\n\n".join(injection_sections).strip(),
+        "recommended_commands": [
+            "python -m agent_orchestrator.cli team inspect-docs --query <task>",
+            "python -m agent_orchestrator.cli team refresh-docs",
+            "python -m agent_orchestrator.cli team check-compliance",
+        ],
+    }
+    package["snapshot_summary"] = build_document_context_snapshot(package, session_id="ad-hoc")
+    return package
+
+
+def build_document_context_snapshot(
+    context_package: dict[str, object],
+    *,
+    session_id: str,
+) -> dict[str, object]:
+    """Create a compact persisted snapshot from a full docs context package."""
+    documents = context_package.get("documents", [])
+    snapshot_documents: list[dict[str, object]] = []
+    if isinstance(documents, list):
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            content = str(document.get("content", ""))
+            snapshot_documents.append(
+                {
+                    "id": str(document.get("id", "")),
+                    "path": str(document.get("path", "")),
+                    "status": str(document.get("status", "")),
+                    "fresh": bool(document.get("fresh", False)),
+                    "relevance": str(document.get("relevance", "")),
+                    "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                }
+            )
+    selected_doc_ids = [str(item.get("id", "")) for item in snapshot_documents if item.get("id")]
+    seed = "|".join(
+        [
+            session_id,
+            str(context_package.get("query", "")),
+            ",".join(selected_doc_ids),
+            ",".join(str(item.get("content_hash", "")) for item in snapshot_documents),
+        ]
+    )
+    return {
+        "format": "agent_orchestrator.docs_context_snapshot.v1",
+        "id": f"docsctx-{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:12]}",
+        "session_id": session_id,
+        "query": str(context_package.get("query", "")),
+        "changed_files": list(context_package.get("changed_files", []))
+        if isinstance(context_package.get("changed_files", []), list)
+        else [],
+        "selected_doc_ids": selected_doc_ids,
+        "documents": snapshot_documents,
+        "created_at": now_iso(),
+    }
+
+
+def summarize_document_context_snapshot(snapshot: dict[str, object] | None) -> dict[str, object] | None:
+    if not isinstance(snapshot, dict):
+        return None
+    documents = snapshot.get("documents", [])
+    doc_count = len(documents) if isinstance(documents, list) else 0
+    fresh_count = (
+        sum(1 for document in documents if isinstance(document, dict) and bool(document.get("fresh")))
+        if isinstance(documents, list)
+        else 0
+    )
+    return {
+        "format": str(snapshot.get("format", "")),
+        "id": str(snapshot.get("id", "")),
+        "session_id": str(snapshot.get("session_id", "")),
+        "query": str(snapshot.get("query", "")),
+        "selected_doc_ids": list(snapshot.get("selected_doc_ids", []))
+        if isinstance(snapshot.get("selected_doc_ids", []), list)
+        else [],
+        "doc_count": doc_count,
+        "fresh_doc_count": fresh_count,
+        "created_at": str(snapshot.get("created_at", "")),
+    }
+
+
+def build_docs_index(
+    project_root: Path,
+    runtime: JobRuntime,
+    *,
+    query: str = "",
+    changed_files: list[str] | None = None,
+) -> dict[str, object]:
+    context_package = build_document_context_package(
+        project_root,
+        runtime,
+        query=query,
+        changed_files=changed_files,
+    )
+    matched_docs = [
+        {
+            "id": document.get("id"),
+            "path": document.get("path"),
+            "status": document.get("status"),
+            "fresh": document.get("fresh"),
+            "relevance": document.get("relevance"),
+        }
+        for document in context_package.get("documents", [])
+        if isinstance(document, dict)
+    ]
+    matched_decisions = _matched_decision_docs(project_root, query=query)
+    matched_tests = _matched_test_paths(project_root, changed_files=changed_files, query=query)
+    query_arg = query or "current task"
+    changed_flags = " ".join(f"--changed-file {path}" for path in changed_files or [])
+    recommended_context_command = (
+        f"python -m agent_orchestrator.cli team inspect-docs --query {shlex.quote(query_arg)} {changed_flags}".strip()
+    )
+    matched_commands = [
+        recommended_context_command,
+        "python -m agent_orchestrator.cli team inspect-handoff <session_id>",
+        "python -m agent_orchestrator.cli team check-compliance",
+    ]
+    return {
+        "format": "agent_orchestrator.docs_index.v1",
+        "query": query,
+        "changed_files": list(changed_files or []),
+        "matched_docs": matched_docs,
+        "matched_decisions": matched_decisions,
+        "matched_tests": matched_tests,
+        "matched_commands": matched_commands,
+        "recommended_context_command": recommended_context_command,
+    }
+
+
+def _matched_decision_docs(project_root: Path, *, query: str) -> list[dict[str, object]]:
+    decisions_root = project_root / "docs" / "decisions"
+    if not decisions_root.exists():
+        return []
+    query_terms = {term for term in query.lower().replace("-", " ").split() if len(term) > 2}
+    matches: list[dict[str, object]] = []
+    for path in sorted(decisions_root.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        haystack = f"{path.name}\n{text}".lower()
+        if not query_terms or any(term in haystack for term in query_terms):
+            matches.append(
+                {
+                    "path": str(path.relative_to(project_root)),
+                    "title": text.splitlines()[0].lstrip("# ").strip() if text.splitlines() else path.stem,
+                }
+            )
+    return matches
+
+
+def _matched_test_paths(
+    project_root: Path,
+    *,
+    changed_files: list[str] | None,
+    query: str,
+) -> list[str]:
+    tests_root = project_root / "tests"
+    if not tests_root.exists():
+        return []
+    candidates: set[str] = set()
+    for changed_file in changed_files or []:
+        path = Path(changed_file)
+        if path.suffix == ".py":
+            test_name = f"test_{path.stem}.py"
+            if (tests_root / test_name).exists():
+                candidates.add(str((tests_root / test_name).relative_to(project_root)))
+    query_lower = query.lower()
+    for path in sorted(tests_root.glob("test_*.py")):
+        name = path.name.lower()
+        if any(term in name for term in ("doc", "planning", "cli", "team") if term in query_lower):
+            candidates.add(str(path.relative_to(project_root)))
+    return sorted(candidates)
+
+
+def _select_document_context_specs(
+    *,
+    query: str,
+    changed_files: list[str] | None,
+    include_all: bool,
+) -> list[str]:
+    if include_all:
+        return list(DOC_CONTEXT_IDS)
+    selected = {"context_map", "root_map"}
+    query_lower = query.lower()
+    changed = [path.lower() for path in changed_files or []]
+    if any(path.startswith("src/") or path.endswith(".py") for path in changed):
+        selected.update({"module_manifest", "file_header_contract"})
+    if any(path.startswith("docs/process/") or path.startswith("docs/architecture/") for path in changed):
+        selected.update({"context_map", "module_manifest", "release_readiness"})
+    for name, keywords in DOC_CONTEXT_KEYWORDS.items():
+        if any(keyword in query_lower for keyword in keywords):
+            selected.add(name)
+    return [name for name in DOC_CONTEXT_IDS if name in selected]
+
+
+def _document_context_relevance(
+    name: str,
+    *,
+    query: str,
+    changed_files: list[str] | None,
+    include_all: bool,
+) -> str:
+    if include_all:
+        return "selected by --all"
+    query_lower = query.lower()
+    if any(keyword in query_lower for keyword in DOC_CONTEXT_KEYWORDS.get(name, ())):
+        return "matched query keywords"
+    changed = [path.lower() for path in changed_files or []]
+    if name in {"module_manifest", "file_header_contract"} and any(
+        path.startswith("src/") or path.endswith(".py") for path in changed
+    ):
+        return "changed source files require module/header context"
+    if name in {"context_map", "module_manifest", "release_readiness"} and any(
+        path.startswith("docs/process/") or path.startswith("docs/architecture/") for path in changed
+    ):
+        return "changed documentation files require process context"
+    return "baseline orientation"
 
 
 def scan_source_file_headers(project_root: Path, *, changed_files: list[str] | None = None) -> list[str]:
@@ -742,6 +1050,9 @@ def build_compliance_status_for_session(
             "team resume",
             "team roles",
             "team inspect-blockers",
+            "team inspect-docs",
+            "team inspect-handoff",
+            "team docs-index",
             "team inspect-execution",
             "team retry-review",
             "team retry-adversarial-review",
@@ -788,6 +1099,8 @@ def build_compliance_status_for_session(
         if "required header fields: DEPS / RESPONSIBILITY / MODULE" not in header_contract_text:
             baseline_reasons.append("file-header contract missing required header fields")
 
+        warnings.extend(_decision_doc_warnings(project_root, readme_text, impl_process_text, runbook_text))
+
         if changed_file_scope or not session_scope:
             blocking_reasons.extend(baseline_reasons)
         else:
@@ -820,6 +1133,13 @@ def build_compliance_status_for_session(
         if isinstance(approved_plan, dict) and approved_plan.get("session_id") != session.id:
             blocking_reasons.append("run provenance mismatch: approved plan session id does not match current plan session")
 
+    if session is not None:
+        if not session.docs_context_snapshot:
+            warnings.append("docs context snapshot warning: session has no docs_context_snapshot")
+        elif session.resume.linked_execution_run_id:
+            blocking_reasons.extend(_execution_handoff_packet_blockers(session, plans_root))
+        warnings.extend(_handoff_packet_warnings(session, plans_root))
+
     if session is not None and plans_root is not None:
         session_dir = Path(plans_root) / session.id
         if not (session_dir / "checklist.json").exists():
@@ -843,7 +1163,14 @@ def build_compliance_status_for_session(
         project_root=project_root,
         warnings=warnings,
     )
+    if session is not None and any("handoff packet" in reason for reason in blocking_reasons):
+        recommended_commands.append(f"python -m agent_orchestrator.cli team inspect-handoff {session.id}")
     required_actions = _compliance_required_actions(blocking_reasons, warnings)
+    diagnostics = build_lightweight_diagnostics(
+        blocking_reasons=blocking_reasons,
+        warnings=warnings,
+        recommended_commands=recommended_commands,
+    )
     status = "blocked" if blocking_reasons else "warning" if warnings else "passed"
 
     return {
@@ -895,6 +1222,22 @@ def build_compliance_status_for_session(
                 "details": "linked execution run matches the current plan session",
             },
             {
+                "name": "docs_context_snapshot_present",
+                "status": "warning" if any("docs context snapshot warning" in warning for warning in warnings) else "passed",
+                "details": "plan sessions carry agent-ready docs context snapshots",
+            },
+            {
+                "name": "execution_handoff_packet_present",
+                "status": (
+                    "failed"
+                    if any("execution handoff packet" in reason for reason in blocking_reasons)
+                    else "warning"
+                    if any("handoff packet warning" in warning for warning in warnings)
+                    else "passed"
+                ),
+                "details": "execution handoffs carry structured handoff packets",
+            },
+            {
                 "name": "source_file_headers_match_contract",
                 "status": "failed" if header_contract_violations else "passed",
                 "details": "python source files expose the required module header contract",
@@ -927,9 +1270,133 @@ def build_compliance_status_for_session(
         "checked_files": checked_files,
         "required_actions": required_actions,
         "recommended_commands": recommended_commands,
+        "diagnostics": diagnostics,
         "changed_files": list(changed_files or []),
     }
 
+
+
+def build_lightweight_diagnostics(
+    *,
+    blocking_reasons: list[str],
+    warnings: list[str],
+    recommended_commands: list[str],
+) -> dict[str, object]:
+    """Classify compliance and workflow signals into lightweight diagnostics."""
+    items: list[dict[str, object]] = []
+    all_messages = [*blocking_reasons, *warnings]
+    def add(name: str, severity: str, message: str, command: str | None = None) -> None:
+        items.append({"name": name, "severity": severity, "message": message, "recommended_command": command})
+
+    for message in all_messages:
+        severity = "error" if message in blocking_reasons else "warning"
+        if "stale document structure" in message or "missing required docs" in message:
+            add("doc_compliance", severity, message, _first_command(recommended_commands, "team refresh-docs"))
+        elif "module manifest" in message or "root map" in message or "changed-file doc sync violation" in message:
+            add("module_manifest_drift", severity, message, _first_command(recommended_commands, "team repair-compliance") or _first_command(recommended_commands, "team refresh-docs"))
+        elif "header contract" in message:
+            add("header_contract", severity, message, _first_command(recommended_commands, "team repair-compliance"))
+        elif "managed hook warning" in message:
+            add("managed_hook", "warning", message, _first_command(recommended_commands, "install-hooks"))
+        elif "missing plan artifact snapshot" in message or "review round snapshots are incomplete" in message:
+            add("missing_artifact", severity, message, _first_command(recommended_commands, "team summary"))
+        elif "docs context snapshot" in message:
+            add("docs_context_snapshot", severity, message, _first_command(recommended_commands, "team inspect-docs"))
+        elif "handoff packet" in message:
+            add("handoff_packet", severity, message, _first_command(recommended_commands, "team inspect-handoff"))
+        elif "provider fallback" in message or "fallback" in message:
+            add("provider_fallback", severity, message, _first_command(recommended_commands, "team setup"))
+    if not items and any("pytest" in command for command in recommended_commands):
+        add("targeted_test", "info", "targeted test evidence is tracked by the phase plan", _first_command(recommended_commands, "pytest"))
+    return {
+        "format": "agent_orchestrator.lightweight_diagnostics.v1",
+        "items": items,
+        "summary": ", ".join(sorted({str(item["name"]) for item in items})) if items else "none",
+    }
+
+
+def _first_command(commands: list[str], needle: str) -> str | None:
+    for command in commands:
+        if needle in command:
+            return command
+    return commands[0] if commands else None
+
+
+HANDOFF_PACKET_REQUIRED_FIELDS = (
+    "format",
+    "session_id",
+    "from_role",
+    "to_role",
+    "summary",
+    "changes",
+    "evidence",
+    "risks",
+    "blockers",
+    "docs_context_snapshot_id",
+    "recommended_commands",
+    "created_at",
+)
+
+
+def _session_handoff_messages(session: PlanSession, plans_root: Path | str | None) -> list[dict[str, object]]:
+    if plans_root is None:
+        return []
+    messages_path = Path(plans_root).parent / "messages" / "messages.jsonl"
+    if not messages_path.exists():
+        return []
+    messages: list[dict[str, object]] = []
+    for line in messages_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(payload, dict)
+            and payload.get("session_id") == session.id
+            and payload.get("message_type") == "handoff"
+        ):
+            messages.append(payload)
+    return messages
+
+
+def _handoff_packet_warnings(session: PlanSession, plans_root: Path | str | None) -> list[str]:
+    warnings: list[str] = []
+    for message in _session_handoff_messages(session, plans_root):
+        payload = message.get("payload", {})
+        packet = payload.get("handoff_packet") if isinstance(payload, dict) else None
+        if packet is None:
+            warnings.append(f"handoff packet warning: {message.get('id', 'unknown')} has no handoff_packet")
+            continue
+        if not isinstance(packet, dict):
+            warnings.append(f"handoff packet warning: {message.get('id', 'unknown')} handoff_packet is not an object")
+            continue
+        missing = [field for field in HANDOFF_PACKET_REQUIRED_FIELDS if field not in packet]
+        if missing:
+            warnings.append(
+                f"handoff packet warning: {message.get('id', 'unknown')} missing field(s): {', '.join(missing)}"
+            )
+    return warnings
+
+
+def _execution_handoff_packet_blockers(session: PlanSession, plans_root: Path | str | None) -> list[str]:
+    run_id = session.resume.linked_execution_run_id
+    if not run_id:
+        return []
+    messages = _session_handoff_messages(session, plans_root)
+    for message in messages:
+        payload = message.get("payload", {})
+        packet = payload.get("handoff_packet") if isinstance(payload, dict) else None
+        if (
+            isinstance(payload, dict)
+            and payload.get("run_id") == run_id
+            and isinstance(packet, dict)
+            and packet.get("format") == "agent_orchestrator.handoff_packet.v1"
+            and packet.get("docs_context_snapshot_id")
+        ):
+            return []
+    return ["execution handoff packet missing for linked execution run"]
 
 def _collect_checked_files(
     *,
@@ -1003,6 +1470,10 @@ def _compliance_required_actions(blocking_reasons: list[str], warnings: list[str
         actions.append("fix_changed_file_headers")
     if any("run provenance mismatch" in reason for reason in blocking_reasons):
         actions.append("repair_execution_provenance")
+    if any("docs context snapshot" in warning for warning in warnings):
+        actions.append("refresh_docs_context_snapshot")
+    if any("handoff packet" in reason for reason in [*blocking_reasons, *warnings]):
+        actions.append("repair_handoff_packet")
     if any("missing plan artifact snapshot" in reason or "review round snapshots are incomplete" in reason for reason in blocking_reasons):
         actions.append("restore_plan_artifacts")
     if any("managed hook warning" in warning for warning in warnings):
@@ -1029,6 +1500,10 @@ def _compliance_recommended_commands(
             "python -m agent_orchestrator.cli team status",
             f"python -m agent_orchestrator.cli team summary {session.id}",
         ]
+        if any("docs context snapshot" in warning for warning in warnings):
+            commands.append(f"python -m agent_orchestrator.cli team inspect-docs --query {shlex.quote(session.requirement)}")
+        if any("handoff packet" in warning for warning in warnings):
+            commands.append(f"python -m agent_orchestrator.cli team inspect-handoff {session.id}")
     if any("managed hook warning" in warning for warning in warnings):
         commands.append(f"python -m agent_orchestrator.cli install-hooks --root {shlex.quote(str(project_root))}")
     return commands
@@ -1462,6 +1937,37 @@ def _role_contract_issues(runbook_text: str) -> list[str]:
     return issues
 
 
+def _decision_doc_warnings(
+    project_root: Path,
+    readme_text: str,
+    impl_process_text: str,
+    runbook_text: str,
+) -> list[str]:
+    decisions_root = project_root / "docs" / "decisions"
+    warnings: list[str] = []
+    required_decisions = [
+        "0001-documentation-as-runtime-context.md",
+        "0002-handoff-packet-contract.md",
+        "0003-canonical-docs-vs-derived-views.md",
+        "0004-ai-work-control-plane-reframe.md",
+    ]
+    if not decisions_root.exists():
+        return ["decision docs warning: docs/decisions/ directory is missing"]
+    missing = [name for name in required_decisions if not (decisions_root / name).exists()]
+    if missing:
+        warnings.append("decision docs warning: missing ADR files: " + ", ".join(missing))
+    combined = "\n".join([readme_text, impl_process_text, runbook_text])
+    if "docs/decisions/" not in combined:
+        warnings.append("decision docs warning: README/process/runbook missing ADR entry link")
+    for path in decisions_root.glob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        for heading in ("## Status", "## Context", "## Decision", "## Consequences", "## Related Commands"):
+            if heading not in text:
+                warnings.append(f"decision docs warning: {path.relative_to(project_root)} missing {heading}")
+                break
+    return warnings
+
+
 def compliance_blocking_reasons(session: PlanSession) -> list[str]:
     return _compliance_blocking_reasons(session)
 
@@ -1504,6 +2010,72 @@ def latest_round(rounds: list[PlanReviewRound], round_family: str) -> PlanReview
             latest = round_
     return latest
 
+
+
+def build_task_timeline_for_session(session: PlanSession) -> dict[str, object]:
+    """Build a compact operator timeline from existing PlanSession state."""
+    compliance = session.compliance if isinstance(session.compliance, dict) else {}
+    gate_evidence = compliance.get("gate_evidence", {}) if isinstance(compliance.get("gate_evidence"), dict) else {}
+    events: list[dict[str, object]] = [
+        {
+            "kind": "phase",
+            "status": session.status,
+            "summary": f"phase={session.resume.current_phase}; pending_role={session.resume.pending_role}",
+            "artifact_path": None,
+        }
+    ]
+    for item in session.checklist:
+        events.append(
+            {
+                "kind": "checklist",
+                "status": "done" if getattr(item, "completed", False) else "pending",
+                "summary": getattr(item, "label", "checklist item"),
+                "artifact_path": None,
+            }
+        )
+    for round_ in session.review_rounds:
+        events.append(
+            {
+                "kind": "worker_result" if "job " in getattr(round_, "summary", "") else "review_round",
+                "status": "recorded",
+                "summary": f"{round_.round_type}: {round_.summary}",
+                "artifact_path": None,
+            }
+        )
+    if gate_evidence:
+        latest = gate_evidence.get("latest", {}) if isinstance(gate_evidence.get("latest"), dict) else {}
+        events.append(
+            {
+                "kind": "gate_evidence",
+                "status": latest.get("status", "recorded"),
+                "summary": latest.get("summary", "gate evidence recorded"),
+                "artifact_path": latest.get("artifact_path"),
+            }
+        )
+    if session.resume.linked_execution_run_id:
+        events.append(
+            {
+                "kind": "execution_run",
+                "status": "linked",
+                "summary": "approved-plan execution run is linked",
+                "artifact_path": session.resume.linked_execution_run_id,
+            }
+        )
+    guidance = build_session_guidance(session)
+    events.append(
+        {
+            "kind": "recovery",
+            "status": "available",
+            "summary": f"next={guidance.primary_action}; resume={guidance.resume_action}",
+            "artifact_path": None,
+        }
+    )
+    return {
+        "format": "agent_orchestrator.task_timeline.v1",
+        "session_id": session.id,
+        "event_count": len(events),
+        "events": events,
+    }
 
 def checklist_item_completed(checklist: list[Any], label: str) -> bool:
     return any(getattr(item, "label", None) == label and bool(getattr(item, "completed", False)) for item in checklist)

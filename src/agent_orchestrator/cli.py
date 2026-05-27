@@ -1,7 +1,7 @@
 """Command line interface for the orchestration MVP."""
 from __future__ import annotations
 
-# DEPS: __future__, agent_orchestrator, argparse, json, pathlib, shutil
+# DEPS: __future__, agent_orchestrator, argparse, json, os, pathlib, shutil
 # RESPONSIBILITY: Parse CLI commands and delegate presentation-safe orchestration actions.
 # MODULE: interface
 # ---
@@ -22,8 +22,18 @@ from agent_orchestrator.cli_presenters import (
     print_team_runbook as _print_team_runbook_presenter,
     print_team_summary as _print_team_summary_presenter,
     pick_primary_action as _pick_primary_action,
+    print_approval_queue_summary as _print_approval_queue_summary_presenter,
+    print_approval_resolution_summary as _print_approval_resolution_summary_presenter,
     print_blocker_session_summary as _print_blocker_session_summary_presenter,
+    print_context_packet_summary as _print_context_packet_summary_presenter,
+    print_docs_context_summary as _print_docs_context_summary_presenter,
+    print_docs_index_summary as _print_docs_index_summary_presenter,
+    print_evidence_bundle_summary as _print_evidence_bundle_summary_presenter,
+    print_handoff_summary as _print_handoff_summary_presenter,
+    print_provider_session_snapshot_summary as _print_provider_session_snapshot_summary_presenter,
     print_execution_session_summary as _print_execution_session_summary_presenter,
+    print_topology_snapshot_summary as _print_topology_snapshot_summary_presenter,
+    print_workspace_state_summary as _print_workspace_state_summary_presenter,
     status_summary as _status_summary,
     summary_bool as _summary_bool,
     summary_list as _summary_list,
@@ -32,6 +42,17 @@ from agent_orchestrator.cli_presenters import (
     team_display_context as _team_display_context,
 )
 from agent_orchestrator.command import CommandJobRuntime, ProviderHealthCheck, RuntimeModeRouter, direct_api_auth_status
+from agent_orchestrator.control_plane import (
+    build_approval_queue,
+    build_context_packet,
+    build_evidence_bundle,
+    build_execution_topology_snapshot,
+    build_provider_session_snapshot,
+    build_recovery_recommendation,
+    build_workspace_index,
+    build_workspace_state_snapshot,
+    resolve_approval_item,
+)
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator, build_operator_runbook
@@ -224,6 +245,7 @@ def main() -> None:
     team_next.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_next.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_next.add_argument("--provider", choices=["codex", "claude"])
+    team_next.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     team_task = team_subparsers.add_parser("task", help="Inspect or update plan session tasks.")
     team_task_subparsers = team_task.add_subparsers(dest="task_command")
@@ -403,6 +425,121 @@ def main() -> None:
     team_inspect_knowledge.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_inspect_knowledge.add_argument("--provider", choices=["codex", "claude"])
     team_inspect_knowledge.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_inspect_handoff = team_subparsers.add_parser(
+        "inspect-handoff",
+        help="Show structured handoff packets for a plan session.",
+    )
+    team_inspect_handoff.add_argument("session_id")
+    team_inspect_handoff.add_argument("--limit", type=int, default=10)
+    team_inspect_handoff.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_inspect_handoff.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_inspect_handoff.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_inspect_handoff.add_argument("--provider", choices=["codex", "claude"])
+    team_inspect_handoff.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_inspect_docs = team_subparsers.add_parser(
+        "inspect-docs",
+        help="Build an agent-ready canonical documentation context package.",
+    )
+    team_inspect_docs.add_argument("--query", default="", help="Task or topic used to select relevant canonical docs.")
+    team_inspect_docs.add_argument("--changed-file", action="append", default=[])
+    team_inspect_docs.add_argument("--all", action="store_true", help="Include every canonical process doc.")
+    team_inspect_docs.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_inspect_docs.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_inspect_docs.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_inspect_docs.add_argument("--provider", choices=["codex", "claude"])
+    team_inspect_docs.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_docs_index = team_subparsers.add_parser(
+        "docs-index",
+        help="Find relevant canonical docs, ADRs, tests, and commands for a task.",
+    )
+    team_docs_index.add_argument("--query", default="")
+    team_docs_index.add_argument("--changed-file", action="append", default=[])
+    team_docs_index.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_docs_index.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_docs_index.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_docs_index.add_argument("--provider", choices=["codex", "claude"])
+    team_docs_index.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_workspace_status = team_subparsers.add_parser(
+        "workspace-status",
+        help="Show the AI Work Control Plane workspace state snapshot.",
+    )
+    team_workspace_status.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_workspace_status.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_workspace_status.add_argument("--jobs-root", default=".agent_orchestrator/jobs")
+    team_workspace_status.add_argument("--approvals-root", default=".agent_orchestrator/approvals")
+    team_workspace_status.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_workspace_status.add_argument("--provider", choices=["codex", "claude"])
+    team_workspace_status.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_runtime = team_subparsers.add_parser("runtime", help="Inspect runtime fidelity artifacts.")
+    team_runtime_subparsers = team_runtime.add_subparsers(dest="runtime_command")
+    team_runtime_inspect = team_runtime_subparsers.add_parser("inspect", help="Inspect a provider session snapshot for a job.")
+    team_runtime_inspect.add_argument("job_id")
+    team_runtime_inspect.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_runtime_inspect.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_runtime_inspect.add_argument("--jobs-root", default=".agent_orchestrator/jobs")
+    team_runtime_inspect.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_runtime_inspect.add_argument("--provider", choices=["codex", "claude"])
+    team_runtime_inspect.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_context_packet = team_subparsers.add_parser(
+        "context-packet",
+        help="Build an AI Work Control Plane context packet without choosing strategy.",
+    )
+    team_context_packet.add_argument("--query", default="")
+    team_context_packet.add_argument("--changed-file", action="append", default=[])
+    team_context_packet.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_context_packet.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_context_packet.add_argument("--jobs-root", default=".agent_orchestrator/jobs")
+    team_context_packet.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_context_packet.add_argument("--provider", choices=["codex", "claude"])
+    team_context_packet.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_topology = team_subparsers.add_parser("topology", help="Inspect AI-native execution topology artifacts.")
+    team_topology_subparsers = team_topology.add_subparsers(dest="topology_command")
+    team_topology_inspect = team_topology_subparsers.add_parser("inspect", help="Inspect a plan session topology snapshot.")
+    team_topology_inspect.add_argument("session_id")
+    team_topology_inspect.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_topology_inspect.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_topology_inspect.add_argument("--approvals-root", default=".agent_orchestrator/approvals")
+    team_topology_inspect.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_topology_inspect.add_argument("--provider", choices=["codex", "claude"])
+    team_topology_inspect.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_approvals = team_subparsers.add_parser("approvals", help="List or resolve control-plane approval items.")
+    team_approvals_subparsers = team_approvals.add_subparsers(dest="approvals_command")
+    team_approvals_list = team_approvals_subparsers.add_parser("list", help="List pending and resolved approval items.")
+    team_approvals_list.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_approvals_list.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_approvals_list.add_argument("--approvals-root", default=".agent_orchestrator/approvals")
+    team_approvals_list.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_approvals_list.add_argument("--provider", choices=["codex", "claude"])
+    team_approvals_list.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    team_approvals_resolve = team_approvals_subparsers.add_parser("resolve", help="Record a human approval decision.")
+    team_approvals_resolve.add_argument("approval_id")
+    team_approvals_resolve.add_argument("--status", choices=["approved", "rejected", "resolved"], required=True)
+    team_approvals_resolve.add_argument("--reason", required=True)
+    team_approvals_resolve.add_argument("--actor", default="human")
+    team_approvals_resolve.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_approvals_resolve.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_approvals_resolve.add_argument("--approvals-root", default=".agent_orchestrator/approvals")
+    team_approvals_resolve.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_approvals_resolve.add_argument("--provider", choices=["codex", "claude"])
+    team_approvals_resolve.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_evidence_gates = team_subparsers.add_parser(
+        "evidence-gates",
+        help="Show the AI Work Control Plane evidence bundle and gate summaries.",
+    )
+    team_evidence_gates.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_evidence_gates.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_evidence_gates.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_evidence_gates.add_argument("--provider", choices=["codex", "claude"])
+    team_evidence_gates.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
     args = parser.parse_args()
 
     if args.command == "health":
@@ -460,7 +597,13 @@ def main() -> None:
             _emit_json(payload, args)
             return
         if args.team_command == "next":
-            _print_team_next(team.status(args.session_id), args)
+            session = team.status(args.session_id)
+            if _json_only(args):
+                payload = session.to_dict()
+                payload["recovery_recommendation"] = build_recovery_recommendation(session)
+                _emit_json(payload, args)
+            else:
+                _print_team_next(session, args)
             return
         if args.team_command == "task":
             if args.task_command == "list":
@@ -586,6 +729,114 @@ def main() -> None:
             payload = team.inspect_knowledge(args.session_id)
             if not _json_only(args):
                 _print_knowledge_summary(payload)
+            _emit_json(payload, args)
+            return
+        if args.team_command == "inspect-handoff":
+            payload = team.inspect_handoff(args.session_id, limit=getattr(args, "limit", 10))
+            if not _json_only(args):
+                _print_handoff_summary(payload)
+            _emit_json(payload, args)
+            return
+        if args.team_command == "inspect-docs":
+            payload = team.inspect_docs(
+                query=getattr(args, "query", ""),
+                changed_files=list(getattr(args, "changed_file", []) or []),
+                include_all=bool(getattr(args, "all", False)),
+            )
+            if not _json_only(args):
+                _print_docs_context_summary(payload)
+            _emit_json(payload, args)
+            return
+        if args.team_command == "docs-index":
+            payload = team.docs_index(
+                query=getattr(args, "query", ""),
+                changed_files=list(getattr(args, "changed_file", []) or []),
+            )
+            if not _json_only(args):
+                _print_docs_index_summary(payload)
+            _emit_json(payload, args)
+            return
+        if args.team_command == "workspace-status":
+            payload = build_workspace_index(
+                Path.cwd(),
+                plans_root=getattr(args, "plans_root", ".agent_orchestrator/plans"),
+                runs_root=getattr(args, "runs_root", ".agent_orchestrator/runs"),
+                jobs_root=getattr(args, "jobs_root", ".agent_orchestrator/jobs"),
+                approvals_root=getattr(args, "approvals_root", ".agent_orchestrator/approvals"),
+                provider_health=health_snapshot,
+            )
+            if not _json_only(args):
+                _print_workspace_state_summary(payload)
+            _emit_json(payload, args)
+            return
+        if args.team_command == "runtime":
+            if args.runtime_command != "inspect":
+                parser.error("a team runtime subcommand is required")
+            payload = build_provider_session_snapshot(
+                args.job_id,
+                Path.cwd(),
+                jobs_root=getattr(args, "jobs_root", ".agent_orchestrator/jobs"),
+            )
+            if not _json_only(args):
+                _print_provider_session_snapshot_summary(payload)
+            _emit_json(payload, args)
+            return
+        if args.team_command == "context-packet":
+            payload = build_context_packet(
+                Path.cwd(),
+                query=getattr(args, "query", ""),
+                changed_files=list(getattr(args, "changed_file", []) or []),
+                jobs_root=getattr(args, "jobs_root", ".agent_orchestrator/jobs"),
+            )
+            if not _json_only(args):
+                _print_context_packet_summary(payload)
+            _emit_json(payload, args)
+            return
+        if args.team_command == "topology":
+            if args.topology_command != "inspect":
+                parser.error("a team topology subcommand is required")
+            session = team.status(args.session_id)
+            payload = build_execution_topology_snapshot(
+                session,
+                plans_root=getattr(args, "plans_root", ".agent_orchestrator/plans"),
+                approvals_root=getattr(args, "approvals_root", ".agent_orchestrator/approvals"),
+                project_root=Path.cwd(),
+            )
+            if not _json_only(args):
+                _print_topology_snapshot_summary(payload)
+            _emit_json(payload, args)
+            return
+        if args.team_command == "approvals":
+            if args.approvals_command == "list":
+                payload = build_approval_queue(
+                    Path.cwd(),
+                    plans_root=getattr(args, "plans_root", ".agent_orchestrator/plans"),
+                    approvals_root=getattr(args, "approvals_root", ".agent_orchestrator/approvals"),
+                )
+                if not _json_only(args):
+                    _print_approval_queue_summary(payload)
+                _emit_json(payload, args)
+                return
+            if args.approvals_command == "resolve":
+                payload = resolve_approval_item(
+                    args.approval_id,
+                    status=args.status,
+                    reason=args.reason,
+                    actor=getattr(args, "actor", "human"),
+                    project_root=Path.cwd(),
+                    plans_root=getattr(args, "plans_root", ".agent_orchestrator/plans"),
+                    approvals_root=getattr(args, "approvals_root", ".agent_orchestrator/approvals"),
+                )
+                if not _json_only(args):
+                    _print_approval_resolution_summary(payload)
+                _emit_json(payload, args)
+                return
+            parser.error("a team approvals subcommand is required")
+        if args.team_command == "evidence-gates":
+            compliance = team.check_compliance()
+            payload = build_evidence_bundle(Path.cwd(), compliance=compliance)
+            if not _json_only(args):
+                _print_evidence_bundle_summary(payload)
             _emit_json(payload, args)
             return
         parser.error("a team subcommand is required")
@@ -928,6 +1179,46 @@ def _print_blocker_session_summary(payload: dict[str, object]) -> None:
     _print_blocker_session_summary_presenter(payload)
 
 
+def _print_docs_context_summary(payload: dict[str, object]) -> None:
+    _print_docs_context_summary_presenter(payload)
+
+
+def _print_handoff_summary(payload: dict[str, object]) -> None:
+    _print_handoff_summary_presenter(payload)
+
+
+def _print_provider_session_snapshot_summary(payload: dict[str, object]) -> None:
+    _print_provider_session_snapshot_summary_presenter(payload)
+
+
+def _print_docs_index_summary(payload: dict[str, object]) -> None:
+    _print_docs_index_summary_presenter(payload)
+
+
+def _print_workspace_state_summary(payload: dict[str, object]) -> None:
+    _print_workspace_state_summary_presenter(payload)
+
+
+def _print_context_packet_summary(payload: dict[str, object]) -> None:
+    _print_context_packet_summary_presenter(payload)
+
+
+def _print_topology_snapshot_summary(payload: dict[str, object]) -> None:
+    _print_topology_snapshot_summary_presenter(payload)
+
+
+def _print_approval_queue_summary(payload: dict[str, object]) -> None:
+    _print_approval_queue_summary_presenter(payload)
+
+
+def _print_approval_resolution_summary(payload: dict[str, object]) -> None:
+    _print_approval_resolution_summary_presenter(payload)
+
+
+def _print_evidence_bundle_summary(payload: dict[str, object]) -> None:
+    _print_evidence_bundle_summary_presenter(payload)
+
+
 def _print_team_task_payload(payload: dict[str, object]) -> None:
     print(f"session: {payload.get('session_id')}")
     tasks = payload.get("tasks")
@@ -997,6 +1288,11 @@ def _team_setup_snapshot(team: TeamOrchestrator, args: argparse.Namespace) -> di
     role_profiles = _role_profile_snapshot(agent_config)
     readiness = _build_setup_readiness(project_root, health_snapshot, doc_sync, compliance, role_profiles=role_profiles)
     return {
+        "contract": {
+            "format": "agent_orchestrator.setup_doctor.v1",
+            "json_pure": True,
+            "pretty_output": "human-readable summary; automation should consume --format json",
+        },
         "provider_health": health_snapshot,
         "runtime_modes": _runtime_mode_contract(),
         "role_profiles": role_profiles,
@@ -1004,6 +1300,17 @@ def _team_setup_snapshot(team: TeamOrchestrator, args: argparse.Namespace) -> di
         "compliance": compliance,
         "readiness": readiness,
         "release_readiness": _build_release_readiness(project_root, health_snapshot, doc_sync, compliance, readiness),
+        "stable_fields": [
+            "contract",
+            "provider_health",
+            "runtime_modes",
+            "role_profiles",
+            "doc_sync",
+            "compliance",
+            "readiness",
+            "release_readiness",
+            "recommended_commands",
+        ],
         "recommended_commands": [
             "python -m agent_orchestrator.cli team check-compliance",
             "python -m agent_orchestrator.cli team refresh-docs",
@@ -1066,11 +1373,13 @@ def _build_release_readiness(
         "trend_report_present": (project_root / "docs" / "process" / "v1x-evidence-trend.md").exists(),
         "evidence_cases_present": (project_root / "docs" / "process" / "evidence-cases.json").exists(),
     }
+    gate_evidence = _build_gate_evidence_summary(project_root, compliance, evidence_state)
     checklist = {
         "version_sync": bool(version_sync["version_file_present"]),
         "tests": "pytest" in " ".join(_release_readiness_commands()),
         "evidence": all(evidence_state.values()),
         "compliance": not blocking_reasons,
+        "gate_evidence": bool(gate_evidence.get("available", False)),
     }
     return {
         "project_root": str(project_root),
@@ -1078,12 +1387,69 @@ def _build_release_readiness(
         "version_sync": version_sync,
         "provider_states": provider_states,
         "evidence_state": evidence_state,
+        "gate_evidence": gate_evidence,
         "checklist": checklist,
         "warnings": warnings,
         "blocking_reasons": blocking_reasons,
         "recommended_commands": _release_readiness_commands(),
     }
 
+
+
+def _build_gate_evidence_summary(
+    project_root: Path,
+    compliance: dict[str, object],
+    evidence_state: dict[str, object],
+) -> dict[str, object]:
+    gates = [
+        {
+            "name": "targeted_tests",
+            "command": "phase-specific pytest slice",
+            "cwd": str(project_root),
+            "exit_code": None,
+            "duration_seconds": None,
+            "summary": "recorded per implementation phase; run only the phase targeted test before final convergence",
+            "artifact_path": None,
+            "status": "planned",
+        },
+        {
+            "name": "full_tests",
+            "command": "pytest",
+            "cwd": str(project_root),
+            "exit_code": None,
+            "duration_seconds": None,
+            "summary": "reserved for final convergence",
+            "artifact_path": None,
+            "status": "planned",
+        },
+        {
+            "name": "compliance",
+            "command": "env PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance",
+            "cwd": str(project_root),
+            "exit_code": 1 if bool(compliance.get("blocking", False)) else 0,
+            "duration_seconds": None,
+            "summary": "blocked" if bool(compliance.get("blocking", False)) else "passed or warning-only",
+            "artifact_path": None,
+            "status": "failed" if bool(compliance.get("blocking", False)) else "passed",
+        },
+        {
+            "name": "evidence_report",
+            "command": "python -m agent_orchestrator.cli evidence report --output docs/process/v1x-evidence-report.md",
+            "cwd": str(project_root),
+            "exit_code": 0 if bool(evidence_state.get("benchmark_report_present", False)) else None,
+            "duration_seconds": None,
+            "summary": "local markdown evidence report present" if bool(evidence_state.get("benchmark_report_present", False)) else "local markdown evidence report missing",
+            "artifact_path": "docs/process/v1x-evidence-report.md",
+            "status": "passed" if bool(evidence_state.get("benchmark_report_present", False)) else "missing",
+        },
+    ]
+    return {
+        "available": True,
+        "format": "agent_orchestrator.gate_evidence.v1",
+        "log_policy": "large logs stay in artifact_path; setup and release readiness show summaries only",
+        "gates": gates,
+        "latest": gates[-1],
+    }
 
 def _release_readiness_commands() -> list[str]:
     return [
@@ -1135,6 +1501,7 @@ def _build_setup_readiness(
         "provider_states": provider_states,
         "runtime_mode_states": _runtime_mode_contract(),
         "role_profiles": role_profiles or [],
+        "masked_key_readiness": _masked_key_readiness(),
         "doc_sync_status": {
             "missing_docs": list(doc_sync.get("missing_docs", [])) if isinstance(doc_sync.get("missing_docs"), list) else [],
             "stale_docs": list(doc_sync.get("stale_docs", [])) if isinstance(doc_sync.get("stale_docs"), list) else [],
@@ -1149,6 +1516,31 @@ def _build_setup_readiness(
         },
     }
 
+
+
+def _masked_key_readiness() -> dict[str, object]:
+    import os
+
+    keys = {
+        "openai": os.environ.get("OPENAI_API_KEY"),
+        "anthropic": os.environ.get("ANTHROPIC_API_KEY"),
+    }
+    return {
+        provider: {
+            "present": bool(value),
+            "masked": _mask_secret(value) if value else None,
+            "source": "env" if value else "missing",
+        }
+        for provider, value in keys.items()
+    }
+
+
+def _mask_secret(value: str | None) -> str | None:
+    if not value:
+        return None
+    if len(value) <= 8:
+        return "****"
+    return f"{value[:3]}…{value[-4:]}"
 
 def _role_profile_snapshot(agent_config: object) -> list[dict[str, object]]:
     profiles = getattr(agent_config, "profiles", {})

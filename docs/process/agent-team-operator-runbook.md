@@ -6,7 +6,7 @@
 
 > 当你准备让 `agent team` 持续推进主计划时，下一步应该运行什么标准命令。
 
-它面向 operator，而不是面向底层实现。
+它面向 operator，而不是面向底层实现。当前项目重心已上移为 **AI Work Control Plane**：`agent team` 仍然重要，但它是 control plane 下方的执行拓扑能力。
 
 默认原则：
 
@@ -28,10 +28,59 @@
 7. `team inspect-execution`
 8. `team task list` / `team task next`
 
+## AI Work Control Plane Entries
+
+AI-native 控制面优先看 artifact，而不是模仿人类组织层级：
+
+- `team workspace-status`：生成 `agent_orchestrator.workspace_state.v1`，并写入 `.agent_orchestrator/workspace/index.json`。
+- `team context-packet --query "<task>" --changed-file <path>`：生成 `agent_orchestrator.context_packet.v1`，压缩 docs、memory、changed files 和 stale warnings，但不选择 strategy。
+- `team topology inspect <session_id>`：生成只读 `agent_orchestrator.execution_topology_snapshot.v1`。
+- `team approvals list`：查看 `agent_orchestrator.approval_item.v1` 队列。
+- `team approvals resolve <approval_id> --status resolved --reason "<why>"`：只记录人类决策，不绕过 execution gate。
+- `team evidence-gates`：生成 `agent_orchestrator.evidence_bundle.v1`，汇总 tests、compliance、setup 和 evidence report gate。
+- `team summary` / `team next` / `team runbook`：直接展示 `StrategyDecision` 摘要，不需要先打开 topology 才知道 control-plane 建议。
+
+Phase 6+ control-plane hardening 增加了以下 operator 约束：
+
+- artifact contract 以 `docs/process/control-plane-artifact-contracts.md` 为准。
+- `.agent_orchestrator/workspace/index.json` 记录最近 workspace/context/strategy/topology/evidence artifact 引用。
+- approval item 必须带稳定 `reason_code`。
+- evidence bundle 只给 memory recommendation，不自动同步 external cache。
+- UI 只读消费 control-plane JSON schema，不提供 approval resolve 或 graph edit mutation。
+
+Operations Track 继续把默认 operator 入口上移为控制面现场：
+
+- `.agent_orchestrator/workspace/index.json` 应成为当前 workspace/program、active artifacts、open approvals、recent runs、memory candidates 和 provider/runtime health 的索引。
+- `team approvals list` 应按 inbox 理解，显示 pending/resolved/blocking、reason code distribution 和 recommended next command。
+- `team topology inspect` 应提供只读 topology blueprint snapshot，不提供拓扑编辑。
+- `team summary`、`team next`、`team runbook` 应从 run ledger 和 recovery 语义补充下一步，而不是只复述 team 编排状态。
+- evidence bundle 可以产生 memory promotion candidates，但不能自动写 durable memory。
+- operations dogfood 以 `docs/process/ai-work-control-plane-operations-dogfood-evidence.md` 为当前证据基准。
+
+Live Recovery Track 在此基础上继续推进：operator 不只看到当前状态，还要能看到 Recovery Timeline、Runtime Event Stream、Recovery Recommendation、resume hint 和 last checkpoint。恢复建议仍然是只读控制面输出；真正执行继续由 approved-plan gate 和 runtime 层完成。
+
+Live Recovery dogfood 以 `docs/process/ai-work-control-plane-live-recovery-dogfood-evidence.md` 为当前恢复证据基准，覆盖 awaiting-human / approval、compliance blocking、provider/runtime degraded or fallback 三类场景。
+
+Runtime Bridge Fidelity Track 继续补齐 provider/runtime 会话保真度：
+
+- `team runtime inspect <job_id>` 生成只读 `agent_orchestrator.provider_session_snapshot.v1`。
+- runtime operation receipt 使用 `agent_orchestrator.runtime_operation_receipt.v1`，记录 send/cancel/terminal/missing-session/auth/provider-unavailable 等结果。
+- Runtime Event Stream 应包含 session liveness、operation receipts、attachability、continuation support、degraded reason 和 recovery-safe next command。
+- workspace status、evidence gates 和 UI 只读消费 runtime fidelity 摘要，不拥有 provider 会话，也不绕过 approved-plan gate。
+
+Runtime Bridge dogfood 以 `docs/process/ai-work-control-plane-runtime-bridge-dogfood-evidence.md` 为当前运行时保真度证据基准。
+
 ## Role Contracts
 
-`team roles` 是角色纪律的标准入口。它展示 planner、reviewer、adversarial_reviewer、builder、rescue 的 runtime mode、allowed actions、forbidden actions、required outputs、command refs。
+`team roles` 是角色纪律的标准入口。它展示 planner、reviewer、adversarial_reviewer、builder、rescue，以及 AI-native artifact 转换角色 state_keeper、context_compressor、strategist、topology_compiler、evidence_recorder、memory_curator、approval_gate 的 runtime mode、allowed actions、forbidden actions、required outputs、command refs。
 
+- state_keeper: `team workspace-status`
+- context_compressor: `team context-packet`、`team inspect-docs`、`team docs-index`
+- strategist: `team topology inspect`
+- topology_compiler: `team topology inspect`
+- evidence_recorder: `team evidence-gates`、`team setup`、`team check-compliance`
+- memory_curator: `team inspect-knowledge`、`team context-packet`
+- approval_gate: `team approvals list`、`team approvals resolve`
 - planner: `team start`、`team chat`、`team draft-ready`、`team task next`
 - reviewer: `team submit-review`、`team retry-review`、`team task list`
 - adversarial_reviewer: `team submit-review`、`team retry-adversarial-review`
@@ -48,6 +97,11 @@ python -m agent_orchestrator.cli team submit-review <session_id>
 python -m agent_orchestrator.cli team summary <session_id>
 python -m agent_orchestrator.cli team next <session_id>
 python -m agent_orchestrator.cli team runbook <session_id>
+python -m agent_orchestrator.cli team workspace-status
+python -m agent_orchestrator.cli team context-packet --query "Build a persisted plan artifact"
+python -m agent_orchestrator.cli team topology inspect <session_id>
+python -m agent_orchestrator.cli team approvals list
+python -m agent_orchestrator.cli team evidence-gates
 ```
 
 判断标准：
@@ -156,6 +210,15 @@ python -m agent_orchestrator.cli team runbook <session_id>
 - `team retry-adversarial-review`
 - `team resume`
 - `team inspect-blockers`
+- `team inspect-docs`
+- `team inspect-handoff`
+- `team docs-index`
+- `team workspace-status`
+- `team context-packet`
+- `team topology inspect`
+- `team approvals list`
+- `team approvals resolve`
+- `team evidence-gates`
 - `team check-compliance`
 - `team refresh-docs`
 - `team repair-compliance`
@@ -168,10 +231,41 @@ python -m agent_orchestrator.cli team runbook <session_id>
 4. 如果是临时失败，用 `retry-review` 或 `retry-adversarial-review`。
 5. 如果失败暴露的是计划缺口，回到 `team revise`。
 
+
+## Worker / Subagent Result Contract
+
+并行 worker、explorer、reviewer、verifier 的交付必须使用固定五段格式，父流程只整合这些摘要和证据，不要求粘贴完整子会话：
+
+```text
+SUMMARY: one paragraph describing what was done and what happened
+CHANGES: files modified with one-line descriptions, or None
+EVIDENCE: path:line-range citations, commands, gate summaries, or artifact paths
+RISKS: concrete risks or follow-up checks the parent should consider
+BLOCKERS: what stopped the worker, or None
+```
+
+使用规则：
+
+- explorer / reviewer 默认只读，`CHANGES` 应为 `None`。
+- implementer 必须列出实际改动文件，并在 `EVIDENCE` 中放 targeted test 或检查结果。
+- verifier 不修复失败，只在 `RISKS` / `BLOCKERS` 中记录失败断言、命令和下一步候选。
+- 父 session 的 `team summary`、`team next`、`team runbook` 只消费结构化 evidence、risks、blockers 和 artifact path，避免把大日志放进 operator 输出。
+- 如果 worker 输出缺少这些段落，恢复建议优先要求重新整理结果，而不是直接继续执行。
+
 ## v1.x 操作入口
 
 - 用 `health` 查看 `codex`、`claude`、`mock` 的 binary、available、detail 和 recommended fallback。
 - 用 `team setup` 查看 provider/runtime 就绪状态、doc sync 和 compliance 摘要，并获取推荐下一步命令。
+- 自动化和 UI 必须消费 `team setup --format json` 的 `agent_orchestrator.setup_doctor.v1` contract，不解析 pretty 文本。
+- 用 `team inspect-docs --query "<task>" --changed-file <path>` 生成 `agent_orchestrator.docs_context.v1` 文档上下文包，供 agent 在动手前读取最新 canonical docs。
+- 用 `team inspect-handoff <session_id>` 查看最近的 `agent_orchestrator.handoff_packet.v1` 交接包。
+- 用 `team docs-index --query "<task>" --changed-file <path>` 反查相关 canonical docs、ADR、测试和推荐命令。
+- 用 `team workspace-status` 查看当前 workspace state、dirty files、plans/runs/jobs、approvals、memory digest 和 optional explore_cache 状态。
+- 用 `team context-packet --query "<task>"` 生成 control-plane context packet；它只压缩上下文，不替模型或 strategy 做决策。
+- 用 `team topology inspect <session_id>` 查看 read-only execution topology snapshot。
+- 用 `team approvals list` / `team approvals resolve` 记录人类介入决策；resolve 只写 event/memory，不自动执行 gated work。
+- 用 `team evidence-gates` 查看 `agent_orchestrator.evidence_bundle.v1`。
+- 用 `docs/decisions/` 查看 ADR，确认文档上下文、handoff packet、canonical docs 与 derived views 的边界。
 - 用 `--review-policy auto|standard|adversarial|required-human` 记录受控 review policy；默认 `auto` 不改变原策略。
 - 用 `evidence benchmark/capture/report` 生成 JSON evidence 和 markdown 阶段报告。
 - 用 `docs/process/evidence-cases.json` 作为可提交的真实任务样本库，并生成 `docs/process/v1x-evidence-report.md`。

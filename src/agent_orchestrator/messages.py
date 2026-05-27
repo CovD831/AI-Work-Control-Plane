@@ -227,8 +227,18 @@ class MessageRouter:
         content: str,
         work_unit_id: str | None = None,
         payload: dict[str, Any] | None = None,
+        handoff_packet: dict[str, Any] | None = None,
         requires_response: bool = False,
     ) -> TeamMessage:
+        message_payload = dict(payload or {})
+        message_payload["handoff_packet"] = _normalize_handoff_packet(
+            handoff_packet or message_payload.get("handoff_packet"),
+            session_id=session_id,
+            from_role=from_role,
+            to_role=to_role,
+            content=content,
+            payload=message_payload,
+        )
         return self.store.create(
             session_id=session_id,
             work_unit_id=work_unit_id,
@@ -236,10 +246,155 @@ class MessageRouter:
             to_role=to_role,
             message_type="handoff",
             content=content,
-            payload=payload,
-            thread=_thread_from_payload(payload or {}),
+            payload=message_payload,
+            thread=_thread_from_payload(message_payload),
             requires_response=requires_response,
         )
+
+    def build_direct_api_tool_trace(
+        self,
+        *,
+        session_id: str,
+        provider: str,
+        tool_name: str,
+        intent: str,
+        result: str | None = None,
+        fallback: dict[str, Any] | None = None,
+        usage_cost: dict[str, Any] | None = None,
+        work_unit_id: str | None = None,
+    ) -> TeamMessage:
+        payload = build_direct_api_tool_trace_payload(
+            provider=provider,
+            tool_name=tool_name,
+            intent=intent,
+            result=result,
+            fallback=fallback,
+            usage_cost=usage_cost,
+        )
+        return self.store.create(
+            session_id=session_id,
+            work_unit_id=work_unit_id,
+            from_role=provider,
+            to_role="control_plane",
+            message_type="direct_api_tool_trace",
+            content=intent,
+            payload=payload,
+            thread="governance",
+            requires_response=False,
+        )
+
+
+def build_handoff_packet(
+    *,
+    session_id: str,
+    from_role: str,
+    to_role: str,
+    summary: str,
+    changes: list[str] | None = None,
+    evidence: list[str] | None = None,
+    risks: list[str] | None = None,
+    blockers: list[str] | None = None,
+    docs_context_snapshot_id: str | None = None,
+    recommended_commands: list[str] | None = None,
+    created_at: str | None = None,
+) -> dict[str, object]:
+    return {
+        "format": "agent_orchestrator.handoff_packet.v1",
+        "session_id": session_id,
+        "from_role": from_role,
+        "to_role": to_role,
+        "summary": summary,
+        "changes": list(changes or []),
+        "evidence": list(evidence or []),
+        "risks": list(risks or []),
+        "blockers": list(blockers or []),
+        "docs_context_snapshot_id": docs_context_snapshot_id,
+        "recommended_commands": list(recommended_commands or []),
+        "created_at": created_at or now_iso(),
+    }
+
+
+def build_direct_api_tool_trace_payload(
+    *,
+    provider: str,
+    tool_name: str,
+    intent: str,
+    result: str | None = None,
+    fallback: dict[str, Any] | None = None,
+    usage_cost: dict[str, Any] | None = None,
+    created_at: str | None = None,
+) -> dict[str, object]:
+    return {
+        "format": "agent_orchestrator.direct_api_tool_trace.v1",
+        "provider": provider,
+        "runtime_mode": "direct_api",
+        "tool_name": tool_name,
+        "intent": intent,
+        "result": result,
+        "fallback": dict(fallback or {}),
+        "usage_cost": {
+            "available": False,
+            "input_tokens": None,
+            "output_tokens": None,
+            "estimated_cost_usd": None,
+            "source": "placeholder",
+            **dict(usage_cost or {}),
+        },
+        "execution_policy": "record intent and result only; local file edits stay behind approved-plan runtime gates",
+        "created_at": created_at or now_iso(),
+    }
+
+
+def _normalize_handoff_packet(
+    packet: object,
+    *,
+    session_id: str,
+    from_role: str,
+    to_role: str,
+    content: str,
+    payload: dict[str, Any],
+) -> dict[str, object]:
+    if isinstance(packet, dict):
+        normalized = dict(packet)
+        normalized.setdefault("format", "agent_orchestrator.handoff_packet.v1")
+        normalized.setdefault("session_id", session_id)
+        normalized.setdefault("from_role", from_role)
+        normalized.setdefault("to_role", to_role)
+        normalized.setdefault("summary", content)
+        normalized.setdefault("changes", [])
+        normalized.setdefault("evidence", [])
+        normalized.setdefault("risks", [])
+        normalized.setdefault("blockers", [])
+        normalized.setdefault("docs_context_snapshot_id", payload.get("docs_context_snapshot_id"))
+        normalized.setdefault("recommended_commands", payload.get("recommended_commands", []))
+        normalized.setdefault("created_at", now_iso())
+        return normalized
+    return build_handoff_packet(
+        session_id=session_id,
+        from_role=from_role,
+        to_role=to_role,
+        summary=content,
+        changes=_list_payload(payload, "changes"),
+        evidence=_list_payload(payload, "evidence"),
+        risks=_list_payload(payload, "risks"),
+        blockers=_list_payload(payload, "blockers"),
+        docs_context_snapshot_id=_string_payload(payload, "docs_context_snapshot_id"),
+        recommended_commands=_list_payload(payload, "recommended_commands"),
+    )
+
+
+def _list_payload(payload: dict[str, Any], key: str) -> list[str]:
+    value = payload.get(key, [])
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
+
+
+def _string_payload(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    return value if isinstance(value, str) and value else None
 
 
 def _thread_from_payload(payload: dict[str, Any]) -> str:

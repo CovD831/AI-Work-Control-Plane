@@ -18,7 +18,7 @@ def write_minimal_process_docs(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "README.md").write_text(
-        "# temp\n\n- 长周期主执行计划\n- agent-team-operator-runbook.md\n",
+        "# temp\n\n- 长周期主执行计划\n- agent-team-operator-runbook.md\n- docs/decisions/\n",
         encoding="utf-8",
     )
     (root / "docs" / "process" / "长周期主执行计划.md").write_text(
@@ -26,7 +26,7 @@ def write_minimal_process_docs(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "docs" / "process" / "agent-orchestrator-implementation-process.md").write_text(
-        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n",
+        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n- docs/decisions/\n",
         encoding="utf-8",
     )
     (root / "docs" / "architecture").mkdir(parents=True, exist_ok=True)
@@ -46,6 +46,13 @@ def write_minimal_process_docs(root: Path) -> None:
         "- adversarial_reviewer\n"
         "- builder\n"
         "- rescue\n"
+        "- state_keeper\n"
+        "- context_compressor\n"
+        "- strategist\n"
+        "- topology_compiler\n"
+        "- evidence_recorder\n"
+        "- memory_curator\n"
+        "- approval_gate\n"
         "- team start\n"
         "- team chat\n"
         "- team draft-ready\n"
@@ -56,15 +63,58 @@ def write_minimal_process_docs(root: Path) -> None:
         "- team retry-adversarial-review\n"
         "- team execute\n"
         "- team inspect-blockers\n"
+        "- team inspect-docs\n"
+        "- team inspect-handoff\n"
+        "- team docs-index\n"
+        "- team workspace-status\n"
+        "- team context-packet\n"
+        "- team topology inspect\n"
+        "- team approvals list\n"
+        "- team approvals resolve\n"
+        "- team evidence-gates\n"
         "- team inspect-execution\n"
         "- team retry-review\n"
         "- team retry-adversarial-review\n"
         "- team check-compliance\n"
+        "- team setup\n"
+        "- team inspect-knowledge\n"
         "- topology_reason\n"
         "- fallback_reason\n"
         "- fallback_detail\n",
         encoding="utf-8",
     )
+    (root / "docs" / "process" / "ai-work-control-plane-master-plan.md").write_text(
+        "# AI Work Control Plane Master Plan\n\n"
+        "- AI Work Control Plane\n"
+        "- WorkspaceState -> ContextPacket -> StrategyDecision -> ExecutionTopologySnapshot -> ApprovalItem -> EvidenceBundle -> MemoryRecord\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "control-plane-artifact-contracts.md").write_text(
+        "# Control Plane Artifact Contracts\n\n"
+        "- agent_orchestrator.workspace_state.v1\n"
+        "- agent_orchestrator.context_packet.v1\n"
+        "- agent_orchestrator.strategy_decision.v1\n"
+        "- agent_orchestrator.approval_item.v1\n"
+        "- agent_orchestrator.evidence_bundle.v1\n",
+        encoding="utf-8",
+    )
+    decisions_dir = root / "docs" / "decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    for name in [
+        "0001-documentation-as-runtime-context.md",
+        "0002-handoff-packet-contract.md",
+        "0003-canonical-docs-vs-derived-views.md",
+        "0004-ai-work-control-plane-reframe.md",
+    ]:
+        (decisions_dir / name).write_text(
+            "# Test ADR\n\n"
+            "## Status\n\nAccepted\n\n"
+            "## Context\n\nTest context.\n\n"
+            "## Decision\n\nTest decision.\n\n"
+            "## Consequences\n\nTest consequence.\n\n"
+            "## Related Commands\n\n- python -m agent_orchestrator.cli team check-compliance\n",
+            encoding="utf-8",
+        )
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=root / "plans"),

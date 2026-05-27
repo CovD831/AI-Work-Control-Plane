@@ -651,13 +651,27 @@ def _with_operation(
     detail: str,
     reason: str | None = None,
 ) -> AgentJob:
+    timestamp = now_iso()
     operation = {
+        "format": "agent_orchestrator.runtime_operation_receipt.v1",
+        "id": f"receipt-{uuid4().hex[:8]}",
         "action": action,
         "status": status,
         "reason": reason or status,
         "detail": detail,
-        "updated_at": now_iso(),
+        "job_id": job.id,
+        "provider": job.provider,
+        "runtime_mode": job.runtime_mode,
+        "session_id": job.session_id,
+        "thread_id": job.thread_id,
+        "terminal_state": job.status in TERMINAL_STATUSES,
+        "records_only": True,
+        "updated_at": timestamp,
     }
     parsed_payload = dict(job.parsed_payload or {})
     parsed_payload["operation"] = operation
-    return replace(job, parsed_payload=parsed_payload, updated_at=str(operation["updated_at"]))
+    receipts = parsed_payload.get("runtime_operation_receipts", [])
+    if not isinstance(receipts, list):
+        receipts = []
+    parsed_payload["runtime_operation_receipts"] = [*receipts, operation][-10:]
+    return replace(job, parsed_payload=parsed_payload, updated_at=timestamp)

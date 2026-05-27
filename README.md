@@ -1,17 +1,28 @@
 # Agent Orchestrator
 
-Agent Orchestrator is a local-first agent orchestration system for personal workflows.
+Agent Orchestrator is an AI Work Control Plane for long-cycle local agent work.
 
 中文说明入口：
 
 - 分层说明见 [docs/architecture/决策核心-执行拓扑-运行时分层说明.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
 - 上下文地图见 [docs/process/context-map.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/context-map.md)
+- 架构决策记录见 [docs/decisions/](/Users/abab/Desktop/Agent-Orchestratoar/docs/decisions/)
 - 长周期执行章程见 [docs/process/长周期主执行计划.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/长周期主执行计划.md)
 - operator 操作说明见 [docs/process/agent-team-operator-runbook.md](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/agent-team-operator-runbook.md)
-- 后续实现默认按 `决策核心层 + 执行拓扑层 + Provider / Runtime 层` 三层来归类
+- 后续实现默认按 `AI Work Control Plane -> 决策核心层 + 执行拓扑层 + Provider / Runtime 层` 来归类
 - 当前仓库的默认目标是先做到 `internal default`，并按“验证通过后自动进入下一段”的长周期方式持续推进
 
-It has two first-class product layers:
+It keeps the existing orchestration engine, but the project center of gravity moves upward to external work governance:
+
+- `WorkspaceState`
+- `ContextPacket`
+- `StrategyDecision`
+- `ExecutionTopologySnapshot`
+- `ApprovalItem`
+- `EvidenceBundle`
+- `MemoryRecord`
+
+The older two product layers remain as implementation layers under that control plane:
 
 - `Planning Governance Layer`
   - generates plans
@@ -34,7 +45,7 @@ task input
                   -> explainable run artifacts + synchronized docs
 ```
 
-The system is intentionally not trying to win by rebuilding every bridge, session runtime, or provider shell. Its value comes from stronger planning governance, stronger execution decisions, and stronger project discipline around docs, hooks, and recoverable plan state.
+The system is intentionally not trying to win by rebuilding every bridge, session runtime, provider shell, or model-internal planning behavior. Its value comes from durable external state: context compression, evidence, approval, memory provenance, recovery semantics, and recoverable plan state. In the short term, explicit orchestration still solves real work; in the medium term, the control plane governs that orchestration; in the long term, orchestration may be internalized by stronger model runtimes, while state, evidence, approvals, memory, and recovery stay outside the model as auditable system responsibilities.
 
 ## 5-Minute CLI Quickstart
 
@@ -44,6 +55,8 @@ Run from the repository root. The quickstart is CLI-first and uses the default l
 cd /Users/abab/Desktop/Agent-Orchestratoar
 PYTHONPATH=src python -m agent_orchestrator.cli health
 PYTHONPATH=src python -m agent_orchestrator.cli team setup
+PYTHONPATH=src python -m agent_orchestrator.cli team workspace-status
+PYTHONPATH=src python -m agent_orchestrator.cli team context-packet --query "current task"
 ```
 
 Start a governed planning session, inspect the next operator action, and approve only after required gaps are closed:
@@ -83,6 +96,7 @@ The intended v1 product shape is:
 
 - a local-first CLI tool
 - optimized for the author's real workflows before broader generalization
+- shaped as an AI Work Control Plane before it is an agent-role product
 - built around pluggable providers, bridges, runtimes, and job backends
 - centered on plan governance before code execution
 - centered on explainable strategy decisions during execution
@@ -100,10 +114,11 @@ In practice, a user gives the CLI a task plus optional strategy constraints, and
 - review/rescue/replay/reroute decisions
 - a structured run record describing why the system chose that path
 - synchronized documentation updates and compliance results
+- a workspace state snapshot, context packet, topology snapshot, approval queue, evidence bundle, and memory provenance
 - direct-run artifacts that also carry entrypoint and provenance metadata
 - direct-run artifacts that also carry an approved-plan-style execution contract, including topology and provider recommendations
 
-The v1 product is not a bridge product, a tmux/session manager, or a provider-specific orchestration shell. Those concerns remain plugin boundaries around the two core layers.
+The v1 product is not a bridge product, a tmux/session manager, a provider-specific orchestration shell, or a classically human org chart. Those concerns remain plugin boundaries below the work control plane.
 
 ## Provider Runtime Modes
 
@@ -158,7 +173,17 @@ The first product-quality version should be able to:
 - Exposes role-contract discipline through `team roles`.
 - Records execution context policy (`fresh`, `resume`, `resume_if_same_task`) in execution metadata.
 - Persists lightweight knowledge artifacts through `team inspect-knowledge`.
+- Builds agent-ready canonical documentation packages through `team inspect-docs`, using stable doc ids and current doc-sync status.
+- Builds AI-native context packets through `team context-packet`; packets compress docs and memory but do not choose strategy.
+- Persists workspace snapshots through `team workspace-status` at `.agent_orchestrator/workspace/index.json`.
+- Exposes read-only topology snapshots through `team topology inspect`.
+- Exposes human intervention and approval records through `team approvals list` / `team approvals resolve`.
+- Exposes gate summaries through `team evidence-gates`.
+- Exposes runtime fidelity through `team runtime inspect <job_id>`, provider session snapshots, and operation receipts without claiming ownership of persistent provider sessions.
+- Records durable architecture decisions under `docs/decisions/` so session knowledge can graduate into canonical ADRs.
 - Surfaces approval state, human-intervention reason, runtime health, and usage/cost placeholders in operator payloads.
+- Standardizes worker/subagent handoffs with `SUMMARY / CHANGES / EVIDENCE / RISKS / BLOCKERS` so parent sessions consume bounded evidence instead of full child transcripts.
+- Exposes gate evidence summaries, task timelines, setup doctor JSON contracts, and lightweight diagnostics through existing team/setup/status surfaces.
 - Decomposes the approved plan into execution-ready work units.
 - Executes approved team plans from approved-plan artifacts rather than re-deriving from the raw requirement.
 - Routes execution through a policy profile.
@@ -194,9 +219,11 @@ Execution plugins may use local commands, hosted APIs, bridge tools, or mock run
 
 中文补充：
 
+- `AI Work Control Plane` 是新的上层产品重心，负责状态、上下文、策略、拓扑、审批、证据、记忆和恢复
 - `agent team` 应归到“执行拓扑层”，不是整个产品本体
 - `claude / codex / command runtime` 应归到 “Provider / Runtime 层”
 - `PlanSession / RoundController / DecisionVerdict / execution gating` 应归到“决策核心层”
+- 短期靠显式编排完成真实工作；中期由 control plane 管住编排；长期即使编排被模型逐步内化，状态、证据、审批、记忆和恢复仍保留在系统外部
 
 ## Execution Backends
 
@@ -267,6 +294,14 @@ agent-orchestrator run "Build a dashboard with tests" --mode speed_first
 ```
 
 ## Test
+
+For quick local feedback, skip the slower CLI/team integration scenarios:
+
+```bash
+pytest -m "not slow_integration"
+```
+
+Before stage closeout or release readiness, run the full suite:
 
 ```bash
 pytest

@@ -428,6 +428,7 @@ def _capture_case(
             "approval_state": team_summary.get("approval_state", {}),
             "runtime_health": team_summary.get("runtime_health", {}),
             "usage_cost": team_summary.get("usage_cost", {}),
+            "gate_evidence": _case_gate_evidence(team_session, execution_payload),
         },
         "signals": signals,
         "comparison": {
@@ -438,6 +439,29 @@ def _capture_case(
         },
     }
 
+
+
+def _case_gate_evidence(session: Any, execution_payload: dict[str, object] | None) -> dict[str, object]:
+    linked_run = session.resume.linked_execution_run_id
+    execution_status = None
+    if isinstance(execution_payload, dict):
+        execution_status = execution_payload.get("status") or ("accepted" if execution_payload.get("accepted") else None)
+    return {
+        "format": "agent_orchestrator.gate_evidence.v1",
+        "gates": [
+            {
+                "name": "approved_plan_execution",
+                "command": "team execute",
+                "cwd": None,
+                "exit_code": 0 if linked_run else None,
+                "duration_seconds": None,
+                "summary": "linked execution run recorded" if linked_run else "execution run not recorded",
+                "artifact_path": linked_run,
+                "status": execution_status or ("passed" if linked_run else "missing"),
+            }
+        ],
+        "log_policy": "large run details stay in the linked run artifact",
+    }
 
 def _comparison_snapshot(
     summary: dict[str, object],
@@ -687,6 +711,7 @@ def _team_advantages(
         advantages.append("usage_cost_placeholder")
     if getattr(session, "id", None):
         advantages.append("knowledge_artifacts")
+    advantages.append("gate_evidence_artifact")
     if session.review_rounds:
         advantages.append("role_contract_enforced")
     if session.decision_verdict is not None and session.decision_verdict.selected_provider_runtime:

@@ -412,8 +412,10 @@ def test_command_job_runtime_send_persists_follow_up_payload(tmp_path) -> None:
     assert sent.messages == ["follow up"]
     assert sent.parsed_payload is not None
     assert sent.parsed_payload["follow_up"]["message"] == "follow up"
+    assert sent.parsed_payload["follow_up"]["format"] == "agent_orchestrator.runtime_operation_receipt.v1"
     assert sent.parsed_payload["follow_up"]["status"] == "accepted"
     assert sent.parsed_payload["operation"]["status"] == "accepted"
+    assert sent.parsed_payload["runtime_operation_receipts"][-1]["job_id"] == job.id
     assert sent.session_id == "session-1"
     assert sent.thread_id == "thread-1"
 

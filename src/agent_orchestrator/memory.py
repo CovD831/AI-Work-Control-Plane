@@ -25,6 +25,10 @@ class MemoryRecord:
     record_type: str
     summary: str
     payload: dict[str, Any] = field(default_factory=dict)
+    provenance: dict[str, Any] = field(default_factory=dict)
+    freshness: str = "unknown"
+    confidence: float | None = None
+    external_cache_status: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=now_iso)
 
     def to_dict(self) -> dict[str, object]:
@@ -37,6 +41,10 @@ class MemoryRecord:
             "record_type": self.record_type,
             "summary": self.summary,
             "payload": self.payload,
+            "provenance": self.provenance,
+            "freshness": self.freshness,
+            "confidence": self.confidence,
+            "external_cache_status": self.external_cache_status,
             "created_at": self.created_at,
         }
 
@@ -51,6 +59,12 @@ class MemoryRecord:
             record_type=str(data.get("record_type") or "note"),
             summary=str(data.get("summary") or ""),
             payload=dict(data.get("payload", {})) if isinstance(data.get("payload"), dict) else {},
+            provenance=dict(data.get("provenance", {})) if isinstance(data.get("provenance"), dict) else {},
+            freshness=str(data.get("freshness") or "unknown"),
+            confidence=float(data["confidence"]) if isinstance(data.get("confidence"), int | float) else None,
+            external_cache_status=dict(data.get("external_cache_status", {}))
+            if isinstance(data.get("external_cache_status"), dict)
+            else {},
             created_at=str(data.get("created_at") or now_iso()),
         )
 
@@ -73,6 +87,10 @@ class MemoryStore:
         role: str | None = None,
         provider: str | None = None,
         payload: dict[str, Any] | None = None,
+        provenance: dict[str, Any] | None = None,
+        freshness: str = "unknown",
+        confidence: float | None = None,
+        external_cache_status: dict[str, Any] | None = None,
     ) -> MemoryRecord:
         record = MemoryRecord(
             id=f"memory-{uuid4().hex[:10]}",
@@ -83,6 +101,10 @@ class MemoryStore:
             record_type=record_type,
             summary=summary,
             payload=payload or {},
+            provenance=provenance or {},
+            freshness=freshness,
+            confidence=confidence,
+            external_cache_status=external_cache_status or {},
         )
         with self._memory_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")

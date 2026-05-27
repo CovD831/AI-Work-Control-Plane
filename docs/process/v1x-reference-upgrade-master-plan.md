@@ -423,3 +423,141 @@ Goal:
 Targeted test:
 
 - `pytest tests/test_docs_process.py tests/test_planning_support.py tests/test_cli.py -q`
+
+## CodeWhale Reference Integration Track
+
+### Execution Protocol
+
+- This track absorbs CodeWhale's useful engineering patterns while preserving Agent Orchestrator's governance-first product shape.
+- Each phase starts by appending a short phase plan here before code or doc changes.
+- During a phase, run only the targeted test command listed for that phase.
+- If targeted tests pass, continue directly into the next phase without waiting for additional confirmation.
+- Run full `pytest`, `env PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance`, and `git status --short` only at final convergence.
+
+### Borrowing Matrix
+
+| CodeWhale pattern | Local landing zone | Layer | Boundary |
+| --- | --- | --- | --- |
+| Persistent sub-agent sessions and fixed completion contracts | Worker/subagent result contract in operator docs and session summaries | 执行拓扑层 | Do not replace current subagent/tool APIs |
+| Durable tasks, checklist, timeline, gates, artifacts | PlanSession task timeline over existing checklist/review/execution/compliance state | 决策核心层 + 执行拓扑层 | Do not create a second task database |
+| Gate evidence with summaries and log/artifact references | Release readiness and setup JSON gate evidence summaries | Documentation / Evidence / Console operations | Do not store large logs in CLI text |
+| `doctor --json` health contract | `team setup --format json` stable setup/doctor-like contract | Provider / Runtime 层 | Pretty output stays human-readable; JSON stays pure |
+| Post-edit diagnostics feedback | Lightweight compliance diagnostics and recovery hints | 决策核心层 | No full LSP runtime in this track |
+
+### Out Of Scope
+
+- No Rust TUI migration.
+- No DeepSeek-specific routing/cache implementation.
+- No plugin marketplace.
+- No full HTTP/SSE runtime server.
+- No side-git rollback implementation in this track.
+
+### CodeWhale Phase 0: Master Plan And Boundary Freeze
+
+Goal:
+
+- Land the CodeWhale integration track and freeze borrowing boundaries before implementation.
+
+Targeted test:
+
+- `pytest tests/test_docs_process.py tests/test_planning_support.py -q`
+
+Result:
+
+- Implemented in the AI Work Control Plane migration: CodeWhale boundaries are frozen under the existing governance-first product shape.
+
+### CodeWhale Phase 1: Worker / Subagent Result Contract
+
+Goal:
+
+- Standardize how this project asks parallel workers, explorers, reviewers, and verifiers to hand results back.
+- Borrow CodeWhale's compact `SUMMARY / CHANGES / EVIDENCE / RISKS / BLOCKERS` contract without changing the current subagent tool surface.
+- Make operator docs and compliance aware of the contract so parent sessions can consume bounded evidence instead of raw transcripts.
+
+Targeted test:
+
+- `pytest tests/test_team.py tests/test_planning_support.py tests/test_docs_process.py -q`
+
+Result:
+
+- Implemented in the AI Work Control Plane migration: worker/subagent handoff wording is now canonical in the operator runbook and compliance-visible role contracts.
+
+### CodeWhale Phase 2: Gate Evidence Artifact Standardization
+
+Goal:
+
+- Give release readiness and evidence reports a common gate evidence shape for targeted tests, full tests, compliance, and evidence reports.
+- Keep gate logs as artifact references or local evidence paths instead of embedding large logs in CLI output.
+- Surface gate evidence summaries through `team setup` and workflow evidence payloads.
+
+Targeted test:
+
+- `pytest tests/test_evidence.py tests/test_cli.py tests/test_cli_presenters.py -q`
+
+Result:
+
+- Implemented in the AI Work Control Plane migration: gate evidence summaries use `agent_orchestrator.gate_evidence.v1` and feed setup/release/evidence bundle surfaces.
+
+### CodeWhale Phase 3: PlanSession Task Timeline View
+
+Goal:
+
+- Add a compact operator timeline over existing PlanSession state.
+- Show phase, checklist, review/worker handoff, gate evidence, execution run, and recovery action in one view.
+- Keep PlanSession as the source of truth and avoid a second task database.
+
+Targeted test:
+
+- `pytest tests/test_team.py tests/test_planning_support.py tests/test_command.py -q`
+
+Result:
+
+- Implemented in the AI Work Control Plane migration: PlanSession task timeline remains sourced from checklist/review/execution/compliance state without a second task database.
+
+### CodeWhale Phase 4: Setup / Doctor JSON Stable Contract
+
+Goal:
+
+- Strengthen `team setup --format json` as the local doctor-style machine contract.
+- Include provider health, runtime modes, masked readiness, doc sync, compliance, release readiness, and gate evidence summaries in stable fields.
+- Keep pretty output human-readable while JSON remains pure.
+
+Targeted test:
+
+- `pytest tests/test_cli.py tests/test_team.py tests/test_command.py -q`
+
+Result:
+
+- Implemented in the AI Work Control Plane migration: `team setup --format json` exposes `agent_orchestrator.setup_doctor.v1` with stable machine fields.
+
+### CodeWhale Phase 5: Lightweight Diagnostics And Recovery Guidance
+
+Goal:
+
+- Add lightweight diagnostics for doc drift, manifest drift, targeted-test failure, provider fallback, and missing artifacts.
+- Feed diagnostics into status summaries and runbook recovery hints without introducing a full LSP runtime.
+- Keep diagnostics advisory unless existing compliance gates already make an issue blocking.
+
+Targeted test:
+
+- `pytest tests/test_planning_support.py tests/test_docs_process.py tests/test_cli_presenters.py -q`
+
+Result:
+
+- Implemented in the AI Work Control Plane migration: lightweight diagnostics feed status summaries and runbook recovery hints without adding an LSP runtime.
+
+### CodeWhale Phase 6: Documentation And Evidence Closure
+
+Goal:
+
+- Synchronize README, runbook, implementation process, release readiness, and evidence wording with the CodeWhale-inspired capabilities.
+- Explain the implemented gate evidence, task timeline, setup doctor JSON, and lightweight diagnostics surfaces without promising unimplemented runtime-server or TUI behavior.
+- Regenerate canonical process docs through the existing refresh path after updating their source specs.
+
+Targeted test:
+
+- `pytest tests/test_evidence.py tests/test_docs_process.py tests/test_planning_support.py -q`
+
+Result:
+
+- Implemented in the AI Work Control Plane migration: docs now describe gate evidence, task timeline, setup doctor JSON, diagnostics, and the control-plane artifact pipeline.

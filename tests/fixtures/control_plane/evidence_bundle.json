@@ -1,0 +1,16 @@
+{
+  "format": "agent_orchestrator.evidence_bundle.v1",
+  "status": "ready",
+  "gate_evidence": {"format": "agent_orchestrator.gate_evidence.v1", "gates": []},
+  "evidence_state": {},
+  "compliance": {"blocking": false, "blocking_reasons": [], "warnings": []},
+  "memory_recommendation": {
+    "policy": "write only durable gate outcomes, compliance results, approval resolutions, and dogfood outcomes",
+    "auto_write": false,
+    "eligible_records": [],
+    "excluded": ["transient status", "planned gates without result"],
+    "required_provenance_fields": ["source_artifacts"],
+    "external_cache_status": {"name": "explore_cache", "required": false, "status": "optional_unavailable"}
+  },
+  "created_at": "2026-05-27T00:00:00Z"
+}

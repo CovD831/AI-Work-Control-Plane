@@ -1,6 +1,6 @@
 from agent_orchestrator import Orchestrator
 from agent_orchestrator.jobs import FileJobRuntime
-from agent_orchestrator.messages import MessageRouter, MessageStore
+from agent_orchestrator.messages import MessageRouter, MessageStore, build_direct_api_tool_trace_payload
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 
 
@@ -43,6 +43,63 @@ def test_message_router_builds_review_request_result_and_handoff(tmp_path) -> No
     assert request.thread == "review"
     assert result.thread == "review"
     assert handoff.thread == "main"
+    packet = handoff.payload["handoff_packet"]
+    assert packet["format"] == "agent_orchestrator.handoff_packet.v1"
+    assert packet["summary"] == "execute"
+    assert packet["from_role"] == "lead"
+    assert packet["to_role"] == "runtime"
+
+
+def test_message_router_accepts_explicit_handoff_packet(tmp_path) -> None:
+    router = MessageRouter(MessageStore(tmp_path / "messages"))
+
+    handoff = router.build_handoff(
+        session_id="plan-1",
+        from_role="lead",
+        to_role="runtime",
+        content="execute",
+        handoff_packet={
+            "summary": "Execute approved plan",
+            "changes": ["src/example.py"],
+            "evidence": ["pytest tests/test_example.py"],
+            "risks": [],
+            "blockers": [],
+            "docs_context_snapshot_id": "docsctx-123",
+            "recommended_commands": ["python -m agent_orchestrator.cli team inspect-execution plan-1"],
+        },
+    )
+
+    packet = handoff.payload["handoff_packet"]
+    assert packet["format"] == "agent_orchestrator.handoff_packet.v1"
+    assert packet["session_id"] == "plan-1"
+    assert packet["docs_context_snapshot_id"] == "docsctx-123"
+    assert packet["recommended_commands"] == ["python -m agent_orchestrator.cli team inspect-execution plan-1"]
+
+
+def test_direct_api_tool_trace_records_intent_without_execution(tmp_path) -> None:
+    router = MessageRouter(MessageStore(tmp_path / "messages"))
+
+    trace = router.build_direct_api_tool_trace(
+        session_id="plan-1",
+        provider="claude",
+        tool_name="summarize_evidence",
+        intent="Summarize gate evidence",
+        result="Evidence summarized",
+        fallback={"fallback_from": "claude", "fallback_reason": "timeout"},
+    )
+    payload = build_direct_api_tool_trace_payload(
+        provider="codex",
+        tool_name="review_plan",
+        intent="Review plan",
+    )
+
+    assert trace.message_type == "direct_api_tool_trace"
+    assert trace.thread == "governance"
+    assert trace.payload["format"] == "agent_orchestrator.direct_api_tool_trace.v1"
+    assert trace.payload["execution_policy"].startswith("record intent and result only")
+    assert trace.payload["fallback"]["fallback_reason"] == "timeout"
+    assert trace.payload["usage_cost"]["source"] == "placeholder"
+    assert payload["runtime_mode"] == "direct_api"
 
 
 def test_team_start_writes_review_messages_and_job_metadata(tmp_path) -> None:

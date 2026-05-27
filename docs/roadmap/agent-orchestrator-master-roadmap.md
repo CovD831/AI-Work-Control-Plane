@@ -2,7 +2,15 @@
 
 ## Summary
 
-This roadmap defines the path from the current control-plane-oriented MVP to the intended v1 product: a local-first CLI orchestration system with two first-class layers:
+This roadmap now defines the path from an orchestration-centered MVP to the intended v1 product: an **AI Work Control Plane** for long-cycle local agent work.
+
+The new top-level product sequence is:
+
+```text
+WorkspaceState -> ContextPacket -> StrategyDecision -> ExecutionTopologySnapshot -> ApprovalItem -> EvidenceBundle -> MemoryRecord
+```
+
+The earlier orchestration layers remain, but they now sit underneath that control plane:
 
 - `Planning Governance Layer`
 - `Execution Strategy Layer`
@@ -25,7 +33,7 @@ This roadmap defines the path from the current control-plane-oriented MVP to the
 - `claude / codex / command runtime` 属于 Provider / Runtime 层
 - planning governance 与 execution strategy 的规则语义应尽量收敛在决策核心层
 
-The roadmap is organized as **4 product stages**. These stages replace the previous single-line strategy-only product narrative. Execution strategy remains essential, but it now lives inside a larger product whose default behavior is: `task -> planning governance loop -> approved plan -> execution strategy -> synchronized artifacts`.
+The roadmap is organized as **4 product stages** plus the AI Work Control Plane migration. Execution strategy remains essential, but it now lives inside a larger product whose default behavior is: `workspace state -> compressed context -> strategy -> topology -> approval/evidence/memory -> orchestration runtime`.
 
 ## Final Product Shape
 
@@ -33,6 +41,7 @@ The target product is:
 
 - a local CLI tool as the only first-class v1 product surface
 - optimized for the author's real workflows before broader external packaging
+- centered on durable external work state rather than model-internal planning alone
 - centered on plan governance before execution
 - centered on strategy decisions during execution
 - able to call replaceable provider, bridge, runtime, and job-backend plugins
@@ -44,6 +53,7 @@ The product is explicitly **not** trying to become:
 - a full bridge product
 - a full session manager or tmux orchestrator
 - a provider-specific shell that wins on runtime features alone
+- a classically human company org chart with CEO/employee roleplay as the core abstraction
 
 ## Current State
 
@@ -53,6 +63,31 @@ The product is explicitly **not** trying to become:
 - The repository now has a basic planning governance loop with persisted plan sessions, dual-model review rounds, gap closure, approval gating, and approved-plan-linked execution handoff.
 - Narrow documentation synchronization and hook-based compliance checks now exist for the internal-default workflow, but broader coverage and harder enforcement are still incomplete.
 - The old roadmap view overfit the execution strategy line and understated planning governance as a product layer.
+- The new risk is overfitting explicit agent orchestration; the control-plane migration moves durable value into state, context, approvals, evidence, memory provenance, and recovery.
+
+## AI Work Control Plane Migration
+
+The project now treats `agent team` and provider runtimes as execution capabilities under a higher artifact pipeline:
+
+- `WorkspaceStateSnapshot` records the current project现场: sessions, runs, jobs, evidence, approvals, provider health, dirty files, memory digest, and optional external cache status.
+- `ContextPacket` compresses selected docs, changed files, memory records, and stale warnings for model use without choosing strategy.
+- `StrategyDecision` records the next goal, rationale, tradeoffs, risks, and validation plan without executing.
+- `ExecutionTopologySnapshot` is a read-only graph over state/context/strategy/manager slots/workers/review/rescue/approval/evidence/memory.
+- `ApprovalItem` makes human intervention durable and auditable without bypassing execution gates.
+- `EvidenceBundle` standardizes gate summaries for tests, compliance, setup, and evidence reports.
+- `MemoryRecord` carries provenance, freshness, confidence, and optional explore_cache status.
+
+The first implementation remains CLI-first through `team workspace-status`, `team context-packet`, `team topology inspect`, `team approvals`, and `team evidence-gates`.
+
+The Phase 6+ hardening track turns that first implementation into a durable protocol: artifact contracts are documented, workspace index references recent artifacts, StrategyDecision appears in normal operator workflow, approvals carry reason codes, evidence bundles recommend memory writes, UI remains read-only, and a dogfood scenario pins the full chain.
+
+The long-term direction is not to keep making explicit agent choreography more elaborate forever. Short term, orchestration remains the practical execution mechanism; medium term, the control plane governs it; long term, more orchestration can move into model runtimes while external state, approvals, evidence, memory provenance, and recovery stay as stable system artifacts.
+
+The Operations Track now makes that direction operator-visible: `team workspace-status` returns Workspace / Program Index v2, approvals are treated as an inbox, topology snapshots export read-only blueprint views, run ledger records recovery state, evidence bundles expose memory promotion candidates, and runtime health/tool inventory remain control-plane inputs rather than execution shortcuts.
+
+The Live Recovery Track added Recovery Timeline, Runtime Event Stream, Recovery Recommendation, resume hints, and evidence-backed memory promotion. It closes the gap between "I can inspect the control plane" and "I can safely resume a long-running task from the control plane."
+
+The next major update is the Runtime Bridge Fidelity Track: Provider Session Snapshot, Runtime Operation Receipt, extended Runtime Event Stream, `team runtime inspect`, and read-only workspace/evidence/UI runtime fidelity summaries. It closes the gap between "the control plane recommends recovery" and "the operator can trust what the provider/runtime session actually supports."
 
 ## Product Architecture
 

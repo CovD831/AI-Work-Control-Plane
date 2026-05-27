@@ -626,11 +626,26 @@ class CommandJobRuntime(FileJobRuntime):
 
         payload = _normalize_provider_operation(adapter.send_follow_up(job, message, session), action="send")
         updated = FileJobRuntime.send(self, job_id, message)
+        payload = {
+            **payload,
+            "job_id": updated.id,
+            "provider": updated.provider,
+            "runtime_mode": updated.runtime_mode,
+            "session_id": payload.get("session_id") or updated.session_id,
+            "thread_id": payload.get("thread_id") or updated.thread_id,
+            "terminal_state": updated.status in TERMINAL_STATUSES,
+        }
+        receipts = []
+        if updated.parsed_payload and isinstance(updated.parsed_payload.get("runtime_operation_receipts"), list):
+            receipts = list(updated.parsed_payload.get("runtime_operation_receipts", []))
         refreshed = replace(
             updated,
             session_id=str(payload.get("session_id") or updated.session_id),
             thread_id=str(payload.get("thread_id") or updated.thread_id),
-            parsed_payload=_merge_payload(updated.parsed_payload, {"follow_up": payload, "operation": payload}),
+            parsed_payload=_merge_payload(
+                updated.parsed_payload,
+                {"follow_up": payload, "operation": payload, "runtime_operation_receipts": [*receipts, payload][-10:]},
+            ),
         )
         self._write_job(refreshed)
         return refreshed
@@ -652,7 +667,25 @@ class CommandJobRuntime(FileJobRuntime):
             action="cancel",
         )
         cancelled = FileJobRuntime.cancel(self, job_id)
-        refreshed = replace(cancelled, parsed_payload=_merge_payload(cancelled.parsed_payload, {"cancel": payload, "operation": payload}))
+        payload = {
+            **payload,
+            "job_id": cancelled.id,
+            "provider": cancelled.provider,
+            "runtime_mode": cancelled.runtime_mode,
+            "session_id": payload.get("session_id") or cancelled.session_id,
+            "thread_id": payload.get("thread_id") or cancelled.thread_id,
+            "terminal_state": True,
+        }
+        receipts = []
+        if cancelled.parsed_payload and isinstance(cancelled.parsed_payload.get("runtime_operation_receipts"), list):
+            receipts = list(cancelled.parsed_payload.get("runtime_operation_receipts", []))
+        refreshed = replace(
+            cancelled,
+            parsed_payload=_merge_payload(
+                cancelled.parsed_payload,
+                {"cancel": payload, "operation": payload, "runtime_operation_receipts": [*receipts, payload][-10:]},
+            ),
+        )
         self._write_job(refreshed)
         return refreshed
 
@@ -1076,11 +1109,15 @@ def _normalize_provider_operation(payload: dict[str, Any], *, action: str) -> di
     }
     detail = str(payload.get("detail") or payload.get("error") or payload.get("message") or raw_status or "Operation completed.")
     normalized = dict(payload)
+    timestamp = now_iso()
     normalized["action"] = action
     normalized["status"] = status_map.get(raw_status, "accepted")
     normalized["reason"] = str(payload.get("reason") or normalized["status"])
     normalized["detail"] = detail
-    normalized["updated_at"] = now_iso()
+    normalized["format"] = "agent_orchestrator.runtime_operation_receipt.v1"
+    normalized["id"] = str(payload.get("id") or new_job_id().replace("job-", "receipt-"))
+    normalized["records_only"] = True
+    normalized["updated_at"] = timestamp
     return normalized
 
 

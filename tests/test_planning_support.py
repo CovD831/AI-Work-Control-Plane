@@ -12,6 +12,7 @@ from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.planning_support import (
     build_compliance_status_for_session,
     build_doc_sync_status_for_project,
+    build_docs_index,
     build_session_guidance,
     canonical_process_documentation_bundle,
     repair_missing_source_headers,
@@ -40,6 +41,19 @@ def _write_required_docs(root: Path) -> None:
         "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n",
         encoding="utf-8",
     )
+    (root / "docs" / "process" / "ai-work-control-plane-master-plan.md").write_text(
+        "# AI Work Control Plane Master Plan\n\n"
+        "- AI Work Control Plane\n"
+        "- WorkspaceState -> ContextPacket -> StrategyDecision -> ExecutionTopologySnapshot -> ApprovalItem -> EvidenceBundle -> MemoryRecord\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "control-plane-artifact-contracts.md").write_text(
+        "# Control Plane Artifact Contracts\n\n"
+        "- agent_orchestrator.workspace_state.v1\n"
+        "- agent_orchestrator.context_packet.v1\n"
+        "- agent_orchestrator.strategy_decision.v1\n",
+        encoding="utf-8",
+    )
     (root / "docs" / "architecture" / "决策核心-执行拓扑-运行时分层说明.md").write_text(
         "# 决策核心-执行拓扑-运行时分层说明\n\n- 决策核心\n",
         encoding="utf-8",
@@ -56,6 +70,13 @@ def _write_required_docs(root: Path) -> None:
         "- adversarial_reviewer\n"
         "- builder\n"
         "- rescue\n"
+        "- state_keeper\n"
+        "- context_compressor\n"
+        "- strategist\n"
+        "- topology_compiler\n"
+        "- evidence_recorder\n"
+        "- memory_curator\n"
+        "- approval_gate\n"
         "- team start\n"
         "- team chat\n"
         "- team draft-ready\n"
@@ -66,10 +87,21 @@ def _write_required_docs(root: Path) -> None:
         "- team retry-adversarial-review\n"
         "- team execute\n"
         "- team inspect-blockers\n"
+        "- team inspect-docs\n"
+        "- team inspect-handoff\n"
+        "- team docs-index\n"
+        "- team workspace-status\n"
+        "- team context-packet\n"
+        "- team topology inspect\n"
+        "- team approvals list\n"
+        "- team approvals resolve\n"
+        "- team evidence-gates\n"
         "- team inspect-execution\n"
         "- team retry-review\n"
         "- team retry-adversarial-review\n"
         "- team check-compliance\n"
+        "- team setup\n"
+        "- team inspect-knowledge\n"
         "- topology_reason\n"
         "- fallback_reason\n"
         "- fallback_detail\n",
@@ -175,6 +207,57 @@ def test_changed_file_compliance_recommends_hook_install_without_blocking_tmp_re
         f"python -m agent_orchestrator.cli install-hooks --root {tmp_path}",
     ]
     assert ".agent_orchestrator/hooks.json" in compliance["checked_files"]
+
+
+def test_compliance_warns_when_decision_docs_are_missing(tmp_path) -> None:
+    _write_module(
+        tmp_path,
+        "changed.py",
+        "# DEPS: __future__\n# RESPONSIBILITY: Provide changed behavior.\n# MODULE: decision_core\n# ---",
+    )
+    _write_required_docs(tmp_path)
+
+    doc_sync = build_doc_sync_status_for_project(tmp_path, FileJobRuntime(root=tmp_path / "jobs"))
+    compliance = build_compliance_status_for_session(project_root=tmp_path, doc_sync=doc_sync)
+
+    assert compliance["blocking"] is False
+    assert compliance["status"] == "warning"
+    assert "decision docs warning: docs/decisions/ directory is missing" in compliance["warnings"]
+
+
+def test_docs_index_matches_context_docs_and_test_paths(tmp_path) -> None:
+    _write_module(
+        tmp_path,
+        "planning_support.py",
+        "# DEPS: __future__\n# RESPONSIBILITY: Provide planning support behavior.\n# MODULE: decision_core\n# ---",
+    )
+    _write_required_docs(tmp_path)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    (tests_dir / "test_planning_support.py").write_text("# tests\n", encoding="utf-8")
+    decisions_dir = tmp_path / "docs" / "decisions"
+    decisions_dir.mkdir(parents=True)
+    (decisions_dir / "0001-documentation-as-runtime-context.md").write_text(
+        "# ADR\n\n"
+        "## Status\n\nAccepted\n\n"
+        "## Context\n\ndocs context\n\n"
+        "## Decision\n\nUse docs context.\n\n"
+        "## Consequences\n\nTraceable.\n\n"
+        "## Related Commands\n\n- command\n",
+        encoding="utf-8",
+    )
+
+    payload = build_docs_index(
+        tmp_path,
+        FileJobRuntime(root=tmp_path / "jobs"),
+        query="docs context",
+        changed_files=["src/agent_orchestrator/planning_support.py"],
+    )
+
+    assert payload["format"] == "agent_orchestrator.docs_index.v1"
+    assert any(doc["id"] == "process/context-map" for doc in payload["matched_docs"])
+    assert payload["matched_decisions"][0]["path"] == "docs/decisions/0001-documentation-as-runtime-context.md"
+    assert payload["matched_tests"] == ["tests/test_planning_support.py"]
 
 
 def test_changed_file_doc_sync_warns_on_stale_hook_marker(tmp_path) -> None:

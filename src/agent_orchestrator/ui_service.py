@@ -13,6 +13,14 @@ from typing import Any
 from agent_orchestrator.actions import assert_session_action_allowed, build_session_actions, primary_action_from_registry
 from agent_orchestrator.agent_config import AgentConfig, AgentConfigStore
 from agent_orchestrator.command import ProviderHealthCheck
+from agent_orchestrator.control_plane import (
+    build_approval_queue,
+    build_evidence_bundle,
+    build_execution_topology_snapshot,
+    build_provider_session_snapshot,
+    build_workspace_index,
+    build_workspace_state_snapshot,
+)
 from agent_orchestrator.events import EventStore
 from agent_orchestrator.jobs import FileJobRuntime
 from agent_orchestrator.memory import MemoryStore
@@ -37,6 +45,7 @@ TIMELINE_STEPS = [
 ]
 
 ROLE_GROUPS = [
+    ("control_plane", "控制平面层"),
     ("decision", "决策层"),
     ("execution", "执行层"),
     ("review", "审核层"),
@@ -60,6 +69,7 @@ class DashboardService:
         self.plans_root = Path(plans_root)
         self.runs_root = Path(runs_root)
         self.jobs_root = Path(jobs_root)
+        self.project_root = Path(getattr(team, "project_root", Path.cwd()))
         self.run_store = RunStore(root=self.runs_root)
         self.job_runtime = job_runtime or FileJobRuntime(root=self.jobs_root)
         self.event_store = EventStore(root=self.plans_root.parent / "events")
@@ -103,6 +113,37 @@ class DashboardService:
             linked_run = self.run_store.read(run_id)
         graph = WorkGraphStore(self.plans_root).read_optional(session_id)
         messages = self.message_store.list_for_session(session_id, limit=50)
+        workspace_state = build_workspace_state_snapshot(
+            self.project_root,
+            plans_root=self.plans_root,
+            runs_root=self.runs_root,
+            jobs_root=self.jobs_root,
+            approvals_root=self.plans_root.parent / "approvals",
+            write_index=False,
+        )
+        workspace_index = build_workspace_index(
+            self.project_root,
+            plans_root=self.plans_root,
+            runs_root=self.runs_root,
+            jobs_root=self.jobs_root,
+            approvals_root=self.plans_root.parent / "approvals",
+        )
+        topology_snapshot = build_execution_topology_snapshot(
+            session,
+            plans_root=self.plans_root,
+            approvals_root=self.plans_root.parent / "approvals",
+            project_root=self.project_root,
+        )
+        approval_queue = build_approval_queue(
+            self.project_root,
+            plans_root=self.plans_root,
+            approvals_root=self.plans_root.parent / "approvals",
+            sessions=[session],
+        )
+        evidence_bundle = build_evidence_bundle(
+            self.project_root,
+            compliance=session.compliance if isinstance(session.compliance, dict) else None,
+        )
         return {
             "session": payload,
             "timeline": _build_timeline(payload),
@@ -118,6 +159,15 @@ class DashboardService:
             "role_groups": _build_role_groups(payload, graph, messages),
             "governance_summary": _build_governance_summary(payload),
             "operator_summary": _build_operator_summary(payload, linked_run, graph, messages),
+            "control_plane": {
+                "read_only": True,
+                "workspace_index": workspace_index,
+                "workspace_state": workspace_state,
+                "strategy_decision": topology_snapshot.get("strategy_decision", {}),
+                "topology_snapshot": topology_snapshot,
+                "approval_queue": approval_queue,
+                "evidence_bundle": evidence_bundle,
+            },
             "linked_execution": linked_run,
         }
 
@@ -218,7 +268,9 @@ class DashboardService:
         return {"jobs": [_job_card(job.to_dict(), self.jobs_root) for job in self.job_runtime.list_recent()]}
 
     def get_job(self, job_id: str) -> dict[str, object]:
-        return _job_card(self.job_runtime.status(job_id).to_dict(), self.jobs_root)
+        card = _job_card(self.job_runtime.status(job_id).to_dict(), self.jobs_root)
+        card["runtime_fidelity"] = build_provider_session_snapshot(job_id, Path.cwd(), jobs_root=self.jobs_root)
+        return card
 
     def get_job_log(self, job_id: str) -> dict[str, object]:
         path = self.jobs_root / f"{job_id}.log"
@@ -701,6 +753,12 @@ def _build_governance_summary(payload: dict[str, object]) -> dict[str, object]:
     blocking_reasons = summary.get("blocking_reasons", []) if isinstance(summary.get("blocking_reasons"), list) else []
     recommended_commands = summary.get("recommended_commands", []) if isinstance(summary.get("recommended_commands"), list) else []
     warnings = summary.get("warnings", []) if isinstance(summary.get("warnings"), list) else []
+    recovery_timeline = summary.get("recovery_timeline", {}) if isinstance(summary.get("recovery_timeline"), dict) else {}
+    blocking_summary = (
+        recovery_timeline.get("blocking_summary", {})
+        if isinstance(recovery_timeline.get("blocking_summary"), dict)
+        else {}
+    )
     return {
         "selected_topology": summary.get("selected_topology") or verdict.get("selected_topology"),
         "topology_reason": summary.get("topology_reason"),
@@ -723,6 +781,14 @@ def _build_governance_summary(payload: dict[str, object]) -> dict[str, object]:
         "recovery_provider_fallback_from": summary.get("recovery_provider_fallback_from"),
         "recovery_provider_fallback_reason": summary.get("recovery_provider_fallback_reason"),
         "recovery_provider_fallback_detail": summary.get("recovery_provider_fallback_detail"),
+        "recovery_timeline": recovery_timeline,
+        "recovery_dashboard": {
+            "current_status": recovery_timeline.get("current_status"),
+            "resume_hint": recovery_timeline.get("resume_hint"),
+            "last_checkpoint": recovery_timeline.get("last_checkpoint"),
+            "blocking_summary": blocking_summary,
+            "read_only": True,
+        },
     }
 
 
@@ -823,6 +889,7 @@ def _build_operator_summary(
             "human_intervention_reason": summary.get("human_intervention_reason"),
             "runtime_health": summary.get("runtime_health"),
             "usage_cost": summary.get("usage_cost"),
+            "recovery_timeline": summary.get("recovery_timeline"),
         },
         "compliance_snapshot": {
             "status": compliance.get("status", "unknown"),
@@ -935,6 +1002,22 @@ def _job_card(job: dict[str, object], jobs_root: Path | None = None) -> dict[str
         "last_log_excerpt": _log_excerpt(log_text),
         "last_seen_at": job.get("updated_at") or job.get("completed_at") or job.get("started_at"),
         "operation": _job_operation(job),
+        "runtime_fidelity": {
+            "format": "agent_orchestrator.provider_session_snapshot.v1",
+            "liveness": {
+                "state": "terminal" if job.get("status") in {"completed", "failed", "cancelled"} else "running" if job.get("pid") else "unknown",
+                "terminal": job.get("status") in {"completed", "failed", "cancelled"},
+                "last_seen_at": job.get("updated_at") or job.get("completed_at") or job.get("started_at"),
+            },
+            "operation_support": {
+                "send": "already_terminal" if job.get("status") in {"completed", "failed", "cancelled"} else "available",
+                "cancel": "already_terminal" if job.get("status") in {"completed", "failed", "cancelled"} else "available",
+                "attach": "available" if metadata.get("attach_available") else "unavailable",
+                "continue": "unavailable" if job.get("status") in {"completed", "failed", "cancelled"} else "available",
+            },
+            "last_operation_receipt": _job_operation(job),
+            "read_only": True,
+        },
     }
 
 

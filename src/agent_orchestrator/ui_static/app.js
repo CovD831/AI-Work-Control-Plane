@@ -71,7 +71,7 @@ function renderSession(payload) {
     linked_execution: payload.linked_execution,
   }, null, 2);
   $("evidence-summary").innerHTML = renderEvidenceSummary(payload.evidence_summary || {});
-  $("operator-summary").innerHTML = renderOperatorSummary(payload.operator_summary || {});
+  $("operator-summary").innerHTML = renderOperatorSummary(payload.operator_summary || {}, payload.control_plane || {});
   renderPlanTree(payload.plan_tree);
   $("agent-cards").innerHTML = (payload.agent_cards || []).length
     ? renderRoleGroups(payload)
@@ -414,12 +414,19 @@ function renderEvidenceSummary(summary) {
   `).join("");
 }
 
-function renderOperatorSummary(summary) {
+function renderOperatorSummary(summary, controlPlane = {}) {
   const provenance = summary.execution_provenance || {};
   const reviewPolicy = summary.review_policy || {};
   const fallback = summary.fallback_snapshot || {};
   const compliance = summary.compliance_snapshot || {};
   const graph = summary.work_graph_summary || {};
+  const workspace = controlPlane.workspace_state || {};
+  const strategy = controlPlane.strategy_decision || {};
+  const topology = controlPlane.topology_snapshot || {};
+  const approvals = controlPlane.approval_queue || {};
+  const evidenceBundle = controlPlane.evidence_bundle || {};
+  const approvalCounts = approvals.counts || {};
+  const topologyNodes = Array.isArray(topology.nodes) ? topology.nodes.length : 0;
   const messages = summary.message_timeline || [];
   const events = summary.event_timeline || [];
   return `
@@ -429,6 +436,11 @@ function renderOperatorSummary(summary) {
       <div class="operator-item"><span>Fallback</span>${escapeHtml(fallback.recovery_provider_fallback_reason || compactProvider(fallback.provider_runtime || {}) || "无")}</div>
       <div class="operator-item"><span>合规</span>${escapeHtml(complianceLabel(compliance.status))}</div>
       <div class="operator-item"><span>工作图</span>${escapeHtml(`${graph.node_count || 0} 节点 / ${graph.edge_count || 0} 边`)}</div>
+      <div class="operator-item"><span>工作现场</span>${escapeHtml(`${(workspace.plans || []).length || 0} 计划 / ${(workspace.jobs || []).length || 0} jobs`)}</div>
+      <div class="operator-item"><span>策略</span>${escapeHtml(strategy.next_goal || "未生成")}</div>
+      <div class="operator-item"><span>拓扑</span>${escapeHtml(`${topologyNodes} 节点 / ${topology.read_only ? "只读" : "未知"}`)}</div>
+      <div class="operator-item"><span>审批</span>${escapeHtml(`${approvalCounts.pending || 0} 待处理`)}</div>
+      <div class="operator-item"><span>证据包</span>${escapeHtml(evidenceBundle.status || "未知")}</div>
       <div class="operator-item"><span>消息</span>${escapeHtml(`${messages.length} 条`)}</div>
     </div>
     <div class="operator-timeline">

@@ -32,3 +32,6 @@ packages = ["src/agent_orchestrator"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "slow_integration: slower CLI/team integration scenarios kept for full release gates; skip with -m 'not slow_integration' for quick local feedback"
+]

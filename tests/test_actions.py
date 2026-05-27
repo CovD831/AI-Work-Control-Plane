@@ -71,3 +71,8 @@ def test_role_contracts_bind_skill_discipline() -> None:
     assert "team retry-review" in contracts["reviewer"].command_refs
     assert contracts["builder"].runtime_mode == "cli_inherit"
     assert "implementation_result" in contracts["builder"].required_outputs
+    assert contracts["state_keeper"].runtime_mode == "local_artifact"
+    assert "WorkspaceStateSnapshot" in contracts["state_keeper"].required_outputs
+    assert "team workspace-status" in contracts["state_keeper"].command_refs
+    assert contracts["approval_gate"].runtime_mode == "human_gate"
+    assert "bypass_execution_gate" in contracts["approval_gate"].forbidden_actions

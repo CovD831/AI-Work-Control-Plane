@@ -5,7 +5,7 @@
 - Planning Governance Progress: `decision-core-first happy path established; recovery and handoff hardening in progress`
 - Execution Strategy Progress: `iteration 4 in progress`
 - Total Product Progress: `decision-core-first happy path established with planning skeleton advancing`
-- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, operator-runbook signal compliance, a structured compliance contract with changed-file header enforcement, and explicit Provider / Runtime modes for `cli_inherit`, `cli_isolated`, and `direct_api`, but still lacks fully hardened recovery semantics, richer topology policy breadth, broader documentation coverage, stronger narrow-scope hook enforcement for the internal-default workflow, and deeper direct-API tool-loop support
+- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, operator-runbook signal compliance, a structured compliance contract with changed-file header enforcement, explicit Provider / Runtime modes for `cli_inherit`, `cli_isolated`, and `direct_api`, the first AI Work Control Plane artifact pipeline, the Operations Track operator surface, the Live Recovery Track recovery surface, and the Runtime Bridge Fidelity surface with Provider Session Snapshot, Runtime Operation Receipt, extended Runtime Event Stream, `team runtime inspect`, workspace/evidence/UI runtime fidelity summaries, and dogfood evidence. Remaining gaps are broader real-task dogfood coverage and deeper provider-specific bridge fidelity beyond the guarded command runtime boundary.
 
 ## Purpose Of This Document
 
@@ -39,6 +39,8 @@ Update this file at the end of every implementation iteration. Do not maintain a
 - [决策核心-执行拓扑-运行时分层说明](/Users/abab/Desktop/Agent-Orchestratoar/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
 - [长周期主执行计划](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/长周期主执行计划.md)
 - [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-reference-upgrade-master-plan.md)
+- [AI Work Control Plane Master Plan](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/ai-work-control-plane-master-plan.md)
+- [架构决策记录 ADR](/Users/abab/Desktop/Agent-Orchestratoar/docs/decisions/)
 
 特别说明：
 
@@ -51,6 +53,7 @@ Update this file at the end of every implementation iteration. Do not maintain a
 
 - 后续默认按“长周期主执行计划”持续推进
 - 后续实现采用“主计划驱动”，不再把每次实现包装成新的独立小计划
+- 并行 worker / subagent 交付统一使用 `SUMMARY / CHANGES / EVIDENCE / RISKS / BLOCKERS` 五段契约，父流程只整合 bounded evidence 和 artifact path
 - 每个实现段验证通过后自动进入下一段，普通进展汇报不构成停点
 - 除非发生高风险方向变化，否则不再为每个小阶段重新起一轮大计划
 
@@ -188,6 +191,8 @@ The product is not:
 - Basic root map, module manifest, and file-header contract documents exist under `docs/process/`.
 - Basic documentation refresh exists through the team documentation sync path.
 - Basic hook-based compliance checks can detect process-document drift through `team check-compliance`.
+- Agent-facing documentation context now exists through `team inspect-docs`, which returns selected canonical docs with stable doc ids and doc-sync freshness.
+- Canonical architecture decisions now live under `docs/decisions/` and separate durable product decisions from derived views.
 - Operator runbook drift for topology and provider fallback signals is now blocked by compliance.
 - Compliance output now exposes structured `warnings`, `checked_files`, `required_actions`, and `recommended_commands`, while keeping hard header enforcement scoped to changed files.
 - Richer code/header comparison coverage is still missing.

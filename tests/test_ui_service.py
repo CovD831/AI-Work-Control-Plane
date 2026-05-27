@@ -60,6 +60,14 @@ def test_dashboard_lists_sessions_and_builds_detail(tmp_path) -> None:
     assert detail["operator_summary"]["compliance_snapshot"]["status"] in {"passed", "warning", "blocked", "unknown"}
     assert detail["operator_summary"]["message_timeline"]
     assert "thread" in detail["operator_summary"]["message_timeline"][0]
+    assert detail["control_plane"]["workspace_state"]["format"] == "agent_orchestrator.workspace_state.v1"
+    assert detail["control_plane"]["workspace_index"]["format"] == "agent_orchestrator.workspace_index.v1"
+    assert detail["control_plane"]["read_only"] is True
+    assert detail["control_plane"]["strategy_decision"]["format"] == "agent_orchestrator.strategy_decision.v1"
+    assert detail["control_plane"]["strategy_decision"]["executes"] is False
+    assert detail["control_plane"]["topology_snapshot"]["format"] == "agent_orchestrator.execution_topology_snapshot.v1"
+    assert detail["control_plane"]["approval_queue"]["format"] == "agent_orchestrator.approval_queue.v1"
+    assert detail["control_plane"]["evidence_bundle"]["format"] == "agent_orchestrator.evidence_bundle.v1"
     assert detail["plan_tree"]["kind"] == "session"
     assert detail["plan_tree"]["children"]
     assert detail["evidence_summary"]["review_round_count"] >= 1
@@ -104,6 +112,8 @@ def test_dashboard_job_list_detail_and_missing_log(tmp_path) -> None:
     assert detail["output_preview"] == "ok"
     assert detail["last_log_excerpt"]
     assert detail["last_seen_at"]
+    assert detail["runtime_fidelity"]["format"] == "agent_orchestrator.provider_session_snapshot.v1"
+    assert detail["runtime_fidelity"]["liveness"]["state"] == "terminal"
     assert "ok" in service.get_job_log(job.id)["log"]
     assert missing_log["log"] == ""
 
@@ -126,6 +136,7 @@ def test_dashboard_job_send_cancel_surface_operation_status(tmp_path) -> None:
     missing = service.send_job("missing-job", "continue")
 
     assert sent["operation"]["status"] == "accepted"
+    assert sent["runtime_fidelity"]["last_operation_receipt"]["format"] == "agent_orchestrator.runtime_operation_receipt.v1"
     assert cancelled["operation"]["status"] == "accepted"
     assert missing["operation"]["status"] == "session_missing"
 
@@ -286,6 +297,8 @@ def test_dashboard_governance_summary_surfaces_topology_and_recovery(tmp_path) -
     assert isinstance(summary["blocking"], bool)
     assert isinstance(summary["recovery_actions"], list)
     assert summary["recovery_action_count"] == len(summary["recovery_actions"])
+    assert summary["recovery_dashboard"]["read_only"] is True
+    assert "current_status" in summary["recovery_dashboard"]
     assert summary["gate_status"] in {"open", "approved", "blocked", "needs_revision", "completed"}
     assert summary["review_intensity"] in {"standard", "reviewed", "strict"}
     assert isinstance(summary["recommended_commands"], list)
