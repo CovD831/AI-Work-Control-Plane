@@ -220,3 +220,29 @@ Workspace / Program Index v2
 The next product work should not be another reframe. It should be broader real-task dogfood and evidence: use this control plane on more local tasks, record where recovery/runtime fidelity actually helps, and only then deepen provider-specific bridge behavior.
 
 Current real-task dogfood baseline: the committed evidence matrix now covers standard implementation, follow-up recovery, high-risk migration, parallel validation, UI workflow, compliance blocking, runtime fidelity, and interruption recovery. Evidence reports include recovery coverage, runtime fidelity coverage, compliance blocking coverage, postmortem readiness, and cost/latency readiness.
+
+## Provider Runtime Bridge Evaluation Track
+
+The next line after Runtime Measurement RC packaging is the **AI Work Control Plane Provider Runtime Bridge Evaluation Track**. It evaluates real provider runtime bridge capability before any full provider bridge implementation:
+
+```text
+Provider CLI / Runtime Evidence
+  -> Capability Matrix
+  -> Ownership Boundary
+  -> ProviderRuntimeAdapter Contract Draft
+  -> Pilot Candidate Selection
+```
+
+This track builds on the completed Runtime Bridge Fidelity and Runtime Measurement RC work. It does not claim persistent provider session ownership, token/cost measurement, provider-native send/cancel guarantees, plugin marketplace packaging, or a direct-API patch engine.
+
+Track plan:
+
+- `docs/process/ai-work-control-plane-provider-runtime-bridge-evaluation-plan.md`
+
+Phase records:
+
+- `docs/process/ai-work-control-plane-provider-runtime-bridge-evaluation-phase-0-boundary.md`
+- `docs/process/ai-work-control-plane-provider-runtime-bridge-evaluation-phase-1-capability-matrix.md`
+- `docs/process/ai-work-control-plane-provider-runtime-bridge-evaluation-phase-2-ownership-boundary.md`
+- `docs/process/ai-work-control-plane-provider-runtime-bridge-evaluation-phase-3-adapter-contract.md`
+- `docs/process/ai-work-control-plane-provider-runtime-bridge-evaluation-phase-4-pilot-selection.md`

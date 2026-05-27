@@ -1,10 +1,14 @@
 # Agent Orchestrator
 
-Agent Orchestrator is a local-first **AI Work Control Plane** for long-cycle agent work. It keeps plans, context, execution topology, approvals, evidence, memory provenance, runtime measurements, and recovery state outside the model so they can be inspected, resumed, and audited.
+Agent Orchestrator is an **AI Work Control Plane for long-cycle local agent work**. It keeps plans, context, execution topology, approvals, evidence, memory provenance, runtime measurements, and recovery state outside the model so they can be inspected, resumed, and audited.
 
 Current status: **Runtime Measurement Ready for `v1.0.0-rc.1` evaluation**.
 
+Current workflow target: **internal default** for the author's local long-cycle agent work.
+
 This repository is not trying to be a provider-native bridge, a persistent provider session owner, a tmux replacement, or a human-org-chart agent simulator. The product center is the control plane above those runtimes.
+
+Explicit orchestration may become less visible over time, while state, evidence, approvals, memory, and recovery stay outside the model as auditable system responsibilities.
 
 ## What It Does
 
@@ -95,6 +99,8 @@ The project is organized as:
 - [长周期主执行计划](docs/process/长周期主执行计划.md)
 - [Operator Runbook](docs/process/agent-team-operator-runbook.md)
 - [Architecture Decision Records](docs/decisions/)
+
+默认执行节奏：按长周期主计划推进，验证通过后自动进入下一段。
 
 ## Main CLI Surfaces
 
