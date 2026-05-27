@@ -74,6 +74,11 @@ PYTHONPATH=src python -m agent_orchestrator.cli team evidence-gates --format jso
 
 The current release checklist is [docs/process/v1-candidate-release-checklist.md](docs/process/v1-candidate-release-checklist.md). The short canonical readiness process is [docs/process/v1x-release-readiness.md](docs/process/v1x-release-readiness.md).
 
+RC packaging docs:
+
+- [v1.0.0-rc.1 release notes](docs/releases/v1.0.0-rc.1.md)
+- [v1.0.0-rc.1 evidence packet](docs/process/v1.0.0-rc.1-evidence-packet.md)
+
 ## Product Layers
 
 The project is organized as:
