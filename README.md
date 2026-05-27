@@ -343,6 +343,8 @@ Case files are JSON lists with `label`, `requirement`, `scenario_type`, `mode`, 
 
 Evidence reports include real-task dogfood metrics for recovery coverage, runtime fidelity coverage, compliance blocking coverage, postmortem readiness, and cost/latency readiness. Cost/latency values remain placeholders until a provider/runtime supplies trustworthy measurements.
 
+Runtime measurement reports local facts when they exist: command start/end timestamps, duration, exit code, provider/runtime mode, provider availability, degraded reasons, and operation receipts. This makes the CLI measurement-ready for RC checks, but it does not claim provider-native bridge or persistent session ownership.
+
 ## Release Readiness
 
 Before calling a build release-ready, check:
@@ -351,6 +353,7 @@ Before calling a build release-ready, check:
 2. targeted tests for the touched stage
 3. evidence report/trend outputs
 4. compliance status from `team check-compliance`
+5. runtime measurement readiness from `team setup --runtime command --format json`
 
 The CLI does not pretend to be a package marketplace or plugin installer; it only reports local readiness honestly.
 

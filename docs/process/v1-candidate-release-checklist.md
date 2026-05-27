@@ -14,6 +14,9 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 - Confirm `codex`, `claude`, and `mock` provider states are visible.
 - Confirm unavailable real providers report honest fallback detail.
 - Treat provider health as PATH/cache dependent; use `health --refresh` when validating the current machine.
+- Confirm `release_readiness.runtime_measurement` is present.
+- Confirm `release_readiness.checklist.runtime_measurement` is true.
+- Treat runtime measurement as local command/runtime evidence, not provider-native bridge readiness.
 
 ## Evidence Freeze
 
@@ -29,6 +32,7 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 - Confirm at least one start/next/execute/inspect-execution path is recorded.
 - Confirm at least one friction/fix path is recorded.
 - Confirm runtime/provider limitations remain explicit.
+- Confirm evidence report and trend include runtime measurement metrics and measured-vs-placeholder language.
 
 ## Targeted Tests
 
@@ -49,3 +53,4 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 - v1.x command runtime captures stdout, stderr, exit code, and local job lifecycle state.
 - `send` and `cancel` are local session/job controls, not a guarantee of provider-native interactive session support.
 - v1.x remains a guarded local runtime, not a full Codex/Claude bridge or persistent session manager.
+- Runtime measurement records local timestamps, duration, exit code, provider availability, degraded reasons, and operation receipts when available; token/cost values remain placeholder unless reported by a provider runtime.

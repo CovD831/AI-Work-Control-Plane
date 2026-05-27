@@ -43,26 +43,44 @@
 - postmortem_ready_cases: 9
 - cost_latency_ready_cases: 9
 
+## Runtime Measurement Metrics
+
+- measured_runtime_cases: 9
+- placeholder_runtime_cases: 0
+- provider_available_cases: 0
+- degraded_runtime_cases: 0
+- command_duration_available_cases: 9
+- rc_readiness_blockers: 0
+
 ## Cases
 
 - standard_plan_artifact: scenario=standard, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=6
 - followup_checklist_recovery: scenario=followup, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=6
 - high_risk_auth_migration: scenario=high_risk, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=6
 - parallel_validation_modules: scenario=parallel, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=4
 - cli_workflow_hardening: scenario=standard, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=6
 - ui_operator_console_flow: scenario=ui_workflow, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=6
 - compliance_blocking_recovery: scenario=compliance_blocking, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=6
 - runtime_fidelity_inspection: scenario=runtime_fidelity, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=6
 - interrupted_task_resume: scenario=interruption_recovery, benefit_score=17
   - postmortem: matched_expected_signals=4, runtime_fidelity=True, cost_latency_ready=True
+  - runtime_measurement: status=measured, duration_available=True, jobs=6
 
 ## Takeaways
 

@@ -492,7 +492,10 @@ def test_runtime_event_stream_records_runtime_intent_result_and_fallback(tmp_pat
     assert job_event["degraded_capability_reason"] == "auth missing"
     assert job_event["session_liveness"]["state"] == "terminal"
     assert job_event["operation_support"]["send"] == "already_terminal"
+    assert job_event["runtime_measurement"]["measurement_status"] == "measured"
+    assert job_event["runtime_measurement"]["exit_code"] is None
     assert job_event["usage_cost"]["source"] == "placeholder"
+    assert job_event["usage_cost"]["measurement_status"] == "placeholder"
     assert payload["provider_session_snapshots"][0]["format"] == "agent_orchestrator.provider_session_snapshot.v1"
     index = json.loads((tmp_path / ".agent_orchestrator" / "workspace" / "index.json").read_text(encoding="utf-8"))
     assert index["artifacts"]["runtime_event_stream"]["format"] == "agent_orchestrator.runtime_event_stream.v1"
@@ -518,6 +521,8 @@ def test_provider_session_snapshot_records_liveness_and_receipts(tmp_path) -> No
     assert payload["job_id"] == job.id
     assert payload["runtime_mode"] == "cli_isolated"
     assert payload["liveness"]["state"] == "unknown"
+    assert payload["runtime_measurement"]["format"] == "agent_orchestrator.runtime_measurement.v1"
+    assert payload["runtime_measurement"]["measurement_status"] == "placeholder"
     assert payload["operation_support"]["send"] == "available"
     assert payload["last_operation_receipt"]["format"] == "agent_orchestrator.runtime_operation_receipt.v1"
     assert payload["last_operation_receipt"]["status"] == "accepted"

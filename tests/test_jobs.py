@@ -192,6 +192,32 @@ def test_job_request_and_persisted_job_record_runtime_mode(tmp_path) -> None:
     stored = json.loads((tmp_path / f"{job.id}.json").read_text(encoding="utf-8"))
     assert job.runtime_mode == "cli_isolated"
     assert stored["runtime_mode"] == "cli_isolated"
+    assert stored["runtime_measurement"]["format"] == "agent_orchestrator.runtime_measurement.v1"
+    assert stored["runtime_measurement"]["measurement_status"] == "placeholder"
+    assert stored["runtime_measurement"]["runtime_mode"] == "cli_isolated"
+
+
+def test_completed_job_record_includes_measured_runtime_duration(tmp_path) -> None:
+    runtime = FileJobRuntime(tmp_path)
+    job = runtime.start(
+        JobRequest(
+            task_id="work-measurement",
+            provider="codex",
+            kind="implementation",
+            prompt="Implement this",
+            cwd="/tmp/project",
+        )
+    )
+    completed = runtime.complete(job.id, summary="done", exit_code=0)
+
+    stored = json.loads((tmp_path / f"{job.id}.json").read_text(encoding="utf-8"))
+    measurement = stored["runtime_measurement"]
+
+    assert completed.exit_code == 0
+    assert measurement["measurement_status"] == "measured"
+    assert measurement["exit_code"] == 0
+    assert measurement["duration_seconds"] is not None
+    assert measurement["usage_cost"]["measurement_status"] == "placeholder"
 
 
 def test_read_only_job_kinds_reject_writable_sandbox() -> None:

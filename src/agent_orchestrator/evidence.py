@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -199,6 +200,18 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
     ]:
         lines.append(f"- {key}: {real_task_metrics.get(key, 0)}")
 
+    runtime_metrics = summary.get("runtime_measurement_metrics", {}) if isinstance(summary.get("runtime_measurement_metrics"), dict) else {}
+    lines.extend(["", "## Runtime Measurement Metrics", ""])
+    for key in [
+        "measured_runtime_cases",
+        "placeholder_runtime_cases",
+        "provider_available_cases",
+        "degraded_runtime_cases",
+        "command_duration_available_cases",
+        "rc_readiness_blockers",
+    ]:
+        lines.append(f"- {key}: {runtime_metrics.get(key, 0)}")
+
     lines.extend(["", "## Cases", ""])
     for case in cases:
         if not isinstance(case, dict):
@@ -215,6 +228,13 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
                 f"  - postmortem: matched_expected_signals={postmortem.get('matched_expected_signal_count', 0)}, "
                 f"runtime_fidelity={postmortem.get('runtime_fidelity_represented', False)}, "
                 f"cost_latency_ready={postmortem.get('cost_latency_ready', False)}"
+            )
+        runtime = case.get("runtime_measurement", {}) if isinstance(case.get("runtime_measurement"), dict) else {}
+        if runtime:
+            lines.append(
+                f"  - runtime_measurement: status={runtime.get('measurement_status', 'unknown')}, "
+                f"duration_available={runtime.get('command_duration_available', False)}, "
+                f"jobs={runtime.get('job_count', 0)}"
             )
     lines.extend(
         [
@@ -271,6 +291,10 @@ def compare_workflow_evidence(baseline: dict[str, object], current: dict[str, ob
             "real_task_metrics": _count_deltas(
                 baseline_summary.get("real_task_metrics", {}),
                 current_summary.get("real_task_metrics", {}),
+            ),
+            "runtime_measurement_metrics": _count_deltas(
+                baseline_summary.get("runtime_measurement_metrics", {}),
+                current_summary.get("runtime_measurement_metrics", {}),
             ),
             "scenario_aggregates": _scenario_deltas(
                 baseline_report.get("scenario_aggregates", {}),
@@ -336,6 +360,8 @@ def render_workflow_evidence_trend_markdown(payload: dict[str, object]) -> str:
     lines.extend(_count_delta_lines(deltas.get("signal_counts", {})))
     lines.extend(["", "## Real-Task Metric Deltas", ""])
     lines.extend(_count_delta_lines(deltas.get("real_task_metrics", {})))
+    lines.extend(["", "## Runtime Measurement Deltas", ""])
+    lines.extend(_count_delta_lines(deltas.get("runtime_measurement_metrics", {})))
     lines.extend(["", "## Team Advantage Deltas", ""])
     lines.extend(_count_delta_lines(deltas.get("team_advantage_counts", {})))
     lines.extend(["", "## Direct Limitation Deltas", ""])
@@ -471,6 +497,7 @@ def _capture_case(
             "gate_evidence": _case_gate_evidence(team_session, execution_payload),
         },
         "signals": signals,
+        "runtime_measurement": _case_runtime_measurement(execution_payload, team_summary),
         "postmortem": _postmortem_signals(case, signals, team_summary, execution_payload),
         "comparison": {
             "team_advantages": team_advantages,
@@ -815,6 +842,7 @@ def _build_summary(cases: list[dict[str, object]]) -> dict[str, object]:
         "signal_counts": _signal_counts(signals),
         "reference_advantage_counts": _tag_counts(comparisons, "team_advantages"),
         "real_task_metrics": _real_task_metrics(cases),
+        "runtime_measurement_metrics": _runtime_measurement_metrics(cases),
     }
 
 
@@ -845,7 +873,66 @@ def _build_report(cases: list[dict[str, object]]) -> dict[str, object]:
             if isinstance(item, dict) and "recovery_guidance" in list(item.get("team_advantages", []))
         ),
         "postmortem_signal_counts": _postmortem_signal_counts(cases),
+        "runtime_measurement_status_counts": _runtime_measurement_status_counts(cases),
     }
+
+
+def _case_runtime_measurement(
+    execution_payload: dict[str, object] | None,
+    status_summary: dict[str, object],
+) -> dict[str, object]:
+    lifecycle_items = _execution_lifecycle_items(execution_payload)
+    durations = [
+        duration
+        for duration in (
+            _duration_seconds(item.get("started_at"), item.get("completed_at"))
+            for item in lifecycle_items
+            if isinstance(item, dict)
+        )
+        if duration is not None
+    ]
+    runtime_health = status_summary.get("runtime_health", {}) if isinstance(status_summary.get("runtime_health"), dict) else {}
+    usage_cost = status_summary.get("usage_cost", {}) if isinstance(status_summary.get("usage_cost"), dict) else {}
+    job_count = len(lifecycle_items) or int(runtime_health.get("job_count", 0) or 0)
+    measured = bool(durations)
+    return {
+        "format": "agent_orchestrator.runtime_measurement_summary.v1",
+        "measurement_status": "measured" if measured else "placeholder" if job_count else "unavailable",
+        "job_count": job_count,
+        "measured_job_count": len(durations),
+        "command_duration_available": measured,
+        "duration_seconds_total": round(sum(durations), 6) if durations else None,
+        "duration_seconds_max": round(max(durations), 6) if durations else None,
+        "provider_available": None,
+        "degraded_runtime": bool(runtime_health.get("failed_job_count")),
+        "usage_cost_measurement_status": usage_cost.get("measurement_status") or "placeholder",
+        "rc_readiness_blockers": [],
+        "policy": "local runtime duration is measured when lifecycle timestamps are available; provider cost remains placeholder unless reported",
+    }
+
+
+def _execution_lifecycle_items(execution_payload: dict[str, object] | None) -> list[dict[str, object]]:
+    if not isinstance(execution_payload, dict):
+        return []
+    items: list[dict[str, object]] = []
+    for result in execution_payload.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        lifecycle = result.get("job_lifecycle", [])
+        if isinstance(lifecycle, list):
+            items.extend(item for item in lifecycle if isinstance(item, dict))
+    return items
+
+
+def _duration_seconds(started_at: object, completed_at: object) -> float | None:
+    if not isinstance(started_at, str) or not isinstance(completed_at, str):
+        return None
+    try:
+        start = datetime.fromisoformat(started_at)
+        end = datetime.fromisoformat(completed_at)
+    except ValueError:
+        return None
+    return round(max(0.0, (end - start).total_seconds()), 6)
 
 
 def _postmortem_signals(
@@ -917,6 +1004,32 @@ def _real_task_metrics(cases: list[dict[str, object]]) -> dict[str, int]:
         "cost_latency_ready_cases": sum(1 for item in postmortems if item.get("cost_latency_ready")),
         "execution_artifact_cases": sum(1 for item in postmortems if item.get("execution_artifact_recorded")),
     }
+
+
+def _runtime_measurement_metrics(cases: list[dict[str, object]]) -> dict[str, int]:
+    measurements = [case.get("runtime_measurement", {}) for case in cases if isinstance(case.get("runtime_measurement", {}), dict)]
+    return {
+        "measured_runtime_cases": sum(1 for item in measurements if item.get("measurement_status") == "measured"),
+        "placeholder_runtime_cases": sum(1 for item in measurements if item.get("measurement_status") == "placeholder"),
+        "unavailable_runtime_cases": sum(1 for item in measurements if item.get("measurement_status") == "unavailable"),
+        "provider_available_cases": sum(1 for item in measurements if item.get("provider_available") is True),
+        "degraded_runtime_cases": sum(1 for item in measurements if item.get("degraded_runtime")),
+        "command_duration_available_cases": sum(1 for item in measurements if item.get("command_duration_available")),
+        "rc_readiness_blockers": sum(
+            len(item.get("rc_readiness_blockers", []))
+            for item in measurements
+            if isinstance(item.get("rc_readiness_blockers"), list)
+        ),
+    }
+
+
+def _runtime_measurement_status_counts(cases: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for case in cases:
+        measurement = case.get("runtime_measurement", {}) if isinstance(case.get("runtime_measurement"), dict) else {}
+        status = str(measurement.get("measurement_status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
 
 
 def _postmortem_signal_counts(cases: list[dict[str, object]]) -> dict[str, int]:

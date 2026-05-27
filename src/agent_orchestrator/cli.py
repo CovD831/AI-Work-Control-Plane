@@ -1287,6 +1287,7 @@ def _team_setup_snapshot(team: TeamOrchestrator, args: argparse.Namespace) -> di
     agent_config = AgentConfigStore().read()
     role_profiles = _role_profile_snapshot(agent_config)
     readiness = _build_setup_readiness(project_root, health_snapshot, doc_sync, compliance, role_profiles=role_profiles)
+    runtime_measurement = _runtime_measurement_readiness(project_root)
     return {
         "contract": {
             "format": "agent_orchestrator.setup_doctor.v1",
@@ -1299,7 +1300,8 @@ def _team_setup_snapshot(team: TeamOrchestrator, args: argparse.Namespace) -> di
         "doc_sync": doc_sync,
         "compliance": compliance,
         "readiness": readiness,
-        "release_readiness": _build_release_readiness(project_root, health_snapshot, doc_sync, compliance, readiness),
+        "runtime_measurement": runtime_measurement,
+        "release_readiness": _build_release_readiness(project_root, health_snapshot, doc_sync, compliance, readiness, runtime_measurement),
         "stable_fields": [
             "contract",
             "provider_health",
@@ -1308,6 +1310,7 @@ def _team_setup_snapshot(team: TeamOrchestrator, args: argparse.Namespace) -> di
             "doc_sync",
             "compliance",
             "readiness",
+            "runtime_measurement",
             "release_readiness",
             "recommended_commands",
         ],
@@ -1359,6 +1362,7 @@ def _build_release_readiness(
     doc_sync: dict[str, object],
     compliance: dict[str, object],
     readiness: dict[str, object],
+    runtime_measurement: dict[str, object] | None = None,
 ) -> dict[str, object]:
     warnings = list(readiness.get("compliance_status", {}).get("warnings", [])) if isinstance(readiness.get("compliance_status"), dict) else []
     blocking_reasons = list(readiness.get("compliance_status", {}).get("blocking_reasons", [])) if isinstance(readiness.get("compliance_status"), dict) else []
@@ -1374,12 +1378,14 @@ def _build_release_readiness(
         "evidence_cases_present": (project_root / "docs" / "process" / "evidence-cases.json").exists(),
     }
     gate_evidence = _build_gate_evidence_summary(project_root, compliance, evidence_state)
+    runtime_measurement = runtime_measurement or _runtime_measurement_readiness(project_root)
     checklist = {
         "version_sync": bool(version_sync["version_file_present"]),
         "tests": "pytest" in " ".join(_release_readiness_commands()),
         "evidence": all(evidence_state.values()),
         "compliance": not blocking_reasons,
         "gate_evidence": bool(gate_evidence.get("available", False)),
+        "runtime_measurement": bool(runtime_measurement.get("measurement_surface_available", False)),
     }
     return {
         "project_root": str(project_root),
@@ -1388,6 +1394,7 @@ def _build_release_readiness(
         "provider_states": provider_states,
         "evidence_state": evidence_state,
         "gate_evidence": gate_evidence,
+        "runtime_measurement": runtime_measurement,
         "checklist": checklist,
         "warnings": warnings,
         "blocking_reasons": blocking_reasons,
@@ -1514,6 +1521,44 @@ def _build_setup_readiness(
             "required_actions": list(compliance.get("required_actions", [])) if isinstance(compliance.get("required_actions"), list) else [],
             "recommended_commands": list(compliance.get("recommended_commands", [])) if isinstance(compliance.get("recommended_commands"), list) else [],
         },
+    }
+
+
+def _runtime_measurement_readiness(project_root: Path) -> dict[str, object]:
+    jobs_root = project_root / ".agent_orchestrator" / "jobs"
+    jobs = []
+    if jobs_root.exists():
+        for path in sorted(jobs_root.glob("job-*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                jobs.append(payload)
+    measurements = [
+        job.get("runtime_measurement", {})
+        for job in jobs
+        if isinstance(job.get("runtime_measurement", {}), dict)
+    ]
+    measured = [item for item in measurements if item.get("measurement_status") == "measured"]
+    placeholder = [item for item in measurements if item.get("measurement_status") == "placeholder"]
+    unavailable = [item for item in measurements if item.get("measurement_status") == "unavailable"]
+    command_duration = [item for item in measurements if item.get("duration_seconds") is not None]
+    degraded = [item for item in measurements if item.get("degraded_reason")]
+    return {
+        "format": "agent_orchestrator.runtime_measurement_readiness.v1",
+        "measurement_surface_available": True,
+        "job_count": len(jobs),
+        "measurement_count": len(measurements),
+        "measured_count": len(measured),
+        "placeholder_count": len(placeholder),
+        "unavailable_count": len(unavailable),
+        "command_duration_available_count": len(command_duration),
+        "degraded_runtime_count": len(degraded),
+        "measurement_status": "measured" if measured else "placeholder" if placeholder or jobs else "unavailable",
+        "rc_blocking": False,
+        "rc_blockers": [],
+        "policy": "runtime measurement is required as a surface; provider token/cost remains placeholder unless reported by runtime",
     }
 
 

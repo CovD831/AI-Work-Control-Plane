@@ -17,6 +17,7 @@ This document records the continuous v1.0 candidate freeze run. Each phase start
 - Phase-targeted tests pass at the end of each phase.
 - Evidence report and trend are regenerated from committed cases.
 - `team setup --runtime command --format json` reports honest readiness and release readiness.
+- Runtime measurement readiness is visible in `team setup --runtime command --format json`.
 - Full `pytest` passes.
 - `team check-compliance` passes.
 - `git status --short` is clean after the final commit.
@@ -218,6 +219,16 @@ RC1 Phase 4 result:
 - `team setup --runtime command --format json` reported package version `1.0.0rc1` and release_readiness true.
 - Evidence report and trend were regenerated from current committed cases and benchmark comparison.
 - Confirmed RC-critical evidence conclusion fields remain present.
+
+## Runtime Measurement RC Track
+
+After the Real-Task Dogfood Evidence Track, the runtime-measurement readiness line adds a local measurement gate before RC tagging:
+
+- `team runtime inspect <job_id> --format json` must expose `runtime_measurement`.
+- `team setup --runtime command --format json` must expose `runtime_measurement` and `release_readiness.checklist.runtime_measurement`.
+- Evidence report and trend must include runtime measurement metrics.
+- Provider token/cost remains placeholder unless reported by a runtime; this does not block RC by itself.
+- This is measurement readiness, not provider bridge readiness.
 - Runtime/provider targeted test passed: `32 passed`.
 - Evidence/CLI targeted test passed: `81 passed`.
 

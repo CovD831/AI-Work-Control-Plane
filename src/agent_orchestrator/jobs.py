@@ -160,6 +160,7 @@ class AgentJob:
     delegation_chain: list[DelegationStep] = field(default_factory=list)
     messages: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    runtime_measurement: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -193,6 +194,17 @@ class AgentJob:
             "delegation_chain": [list(step) for step in self.delegation_chain],
             "messages": self.messages,
             "metadata": self.metadata,
+            "runtime_measurement": runtime_measurement_payload(
+                provider=self.provider,
+                runtime_mode=self.runtime_mode,
+                status=self.status,
+                started_at=self.started_at,
+                completed_at=self.completed_at,
+                exit_code=self.exit_code,
+                error=self.error,
+                metadata=self.metadata,
+                parsed_payload=self.parsed_payload,
+            ),
         }
 
     @classmethod
@@ -228,6 +240,7 @@ class AgentJob:
             delegation_chain=[tuple(step) for step in data.get("delegation_chain", [])],
             messages=list(data.get("messages", [])),
             metadata=dict(data.get("metadata", {})),
+            runtime_measurement=data.get("runtime_measurement") if isinstance(data.get("runtime_measurement"), dict) else None,
         )
 
     def result(self) -> JobResult:
@@ -675,3 +688,73 @@ def _with_operation(
         receipts = []
     parsed_payload["runtime_operation_receipts"] = [*receipts, operation][-10:]
     return replace(job, parsed_payload=parsed_payload, updated_at=timestamp)
+
+
+def runtime_measurement_payload(
+    *,
+    provider: Provider | str | None,
+    runtime_mode: RuntimeMode | str | None,
+    status: JobStatus | str | None,
+    started_at: str | None,
+    completed_at: str | None,
+    exit_code: int | None,
+    error: str | None,
+    metadata: dict[str, Any] | None = None,
+    parsed_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the local runtime measurement payload without estimating usage or cost."""
+    metadata = metadata or {}
+    parsed_payload = parsed_payload or {}
+    duration = _duration_seconds(started_at, completed_at)
+    usage = parsed_payload.get("usage", {}) if isinstance(parsed_payload.get("usage"), dict) else {}
+    usage_source = str(usage.get("source") or "placeholder")
+    usage_measured = usage_source not in {"placeholder", "not_reported", "unknown", ""}
+    if duration is not None or exit_code is not None:
+        measurement_status = "measured"
+    elif started_at:
+        measurement_status = "placeholder"
+    else:
+        measurement_status = "unavailable"
+    degraded_reason = error or _metadata_text(metadata, "degraded_capability_reason") or _metadata_text(metadata, "fallback_reason")
+    provider_health = metadata.get("provider_health") if isinstance(metadata.get("provider_health"), dict) else {}
+    return {
+        "format": "agent_orchestrator.runtime_measurement.v1",
+        "measurement_status": measurement_status,
+        "provider": provider or "unknown",
+        "runtime_mode": runtime_mode or "unknown",
+        "result_status": status or "unknown",
+        "command_started_at": started_at,
+        "command_completed_at": completed_at,
+        "duration_seconds": duration,
+        "exit_code": exit_code,
+        "provider_available": provider_health.get("available") if provider_health else None,
+        "provider_availability_detail": provider_health.get("detail") if provider_health else None,
+        "degraded_reason": degraded_reason,
+        "fallback_reason": _metadata_text(metadata, "fallback_reason"),
+        "usage_cost": {
+            "measurement_status": "measured" if usage_measured else "placeholder",
+            "usage_available": usage_measured,
+            "cost_available": bool(usage.get("estimated_cost_usd") is not None),
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "estimated_cost_usd": usage.get("estimated_cost_usd"),
+            "source": usage_source,
+            "policy": "do not estimate provider usage or cost without runtime-reported data",
+        },
+    }
+
+
+def _duration_seconds(started_at: str | None, completed_at: str | None) -> float | None:
+    if not started_at or not completed_at:
+        return None
+    try:
+        start = datetime.fromisoformat(started_at)
+        end = datetime.fromisoformat(completed_at)
+    except ValueError:
+        return None
+    return round(max(0.0, (end - start).total_seconds()), 6)
+
+
+def _metadata_text(metadata: dict[str, Any], key: str) -> str | None:
+    value = metadata.get(key)
+    return str(value) if value is not None else None

@@ -285,6 +285,8 @@ def test_team_setup_reports_readiness_and_recommendations(capsys, tmp_path, monk
         assert {profile["runtime_mode"] for profile in out["role_profiles"]} >= {"cli_inherit", "direct_api"}
         assert out["readiness"]["ready"] is True
         assert out["readiness"]["provider_states"]
+        assert out["runtime_measurement"]["format"] == "agent_orchestrator.runtime_measurement_readiness.v1"
+        assert out["release_readiness"]["checklist"]["runtime_measurement"] is True
         assert out["release_readiness"]["version_sync"]["package_version"] == "1.0.0rc1"
         assert out["release_readiness"]["checklist"]["version_sync"] is True
         assert out["release_readiness"]["evidence_state"]["benchmark_report_present"] is True
@@ -330,6 +332,7 @@ def test_team_setup_json_mode_remains_machine_readable(capsys, tmp_path, monkeyp
         assert output.lstrip().startswith("{")
         payload = json.loads(output)
         assert payload["release_readiness"]["version_sync"]["package_version"] == "1.0.0rc1"
+        assert payload["release_readiness"]["runtime_measurement"]["measurement_surface_available"] is True
     finally:
         cli._build_team_orchestrator = original_builder
         cli.argparse.ArgumentParser.parse_args = original

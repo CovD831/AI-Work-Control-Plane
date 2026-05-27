@@ -45,6 +45,16 @@
 - recovery_recommendation_coverage: +5
 - runtime_fidelity_coverage: +5
 
+## Runtime Measurement Deltas
+
+- command_duration_available_cases: +5
+- degraded_runtime_cases: +0
+- measured_runtime_cases: +5
+- placeholder_runtime_cases: +0
+- provider_available_cases: +0
+- rc_readiness_blockers: +0
+- unavailable_runtime_cases: +0
+
 ## Team Advantage Deltas
 
 - approval_observability: +5

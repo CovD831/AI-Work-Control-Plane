@@ -91,6 +91,8 @@ def test_capture_workflow_evidence_accepts_structured_cases_and_builds_report(tm
     assert payload["report"]["scenario_aggregates"]
     assert payload["report"]["postmortem_signal_counts"] == {}
     assert payload["summary"]["real_task_metrics"]["recovery_recommendation_coverage"] == 2
+    assert payload["summary"]["runtime_measurement_metrics"]["measured_runtime_cases"] == 2
+    assert payload["report"]["runtime_measurement_status_counts"]["measured"] == 2
 
 
 def test_capture_workflow_evidence_reports_scenario_aggregates(tmp_path) -> None:
@@ -187,6 +189,8 @@ def test_capture_workflow_evidence_records_real_task_postmortem_signals(tmp_path
     assert case["real_task"]["operator_goal"] == "prove recovery recommendation quality"
     assert case["postmortem"]["recovery_recommendation_actionable"] is True
     assert case["postmortem"]["cost_latency_ready"] is True
+    assert case["runtime_measurement"]["measurement_status"] == "measured"
+    assert case["runtime_measurement"]["command_duration_available"] is True
     assert "recovery_guidance" in case["postmortem"]["matched_expected_signals"]
     assert payload["summary"]["real_task_metrics"]["postmortem_ready_cases"] == 1
     assert payload["summary"]["real_task_metrics"]["cost_latency_ready_cases"] == 1
@@ -233,6 +237,8 @@ def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path)
     assert "runtime_limitation:" in markdown
     assert "fixed_template_advantage:" in markdown
     assert "## Real-Task Dogfood Metrics" in markdown
+    assert "## Runtime Measurement Metrics" in markdown
+    assert "measured_runtime_cases" in markdown
     assert "postmortem_ready_cases" in markdown
     assert "## Takeaways" in markdown
 
@@ -261,10 +267,12 @@ def test_compare_workflow_evidence_reports_trend_deltas(tmp_path) -> None:
     assert trend["deltas"]["team_advantage_counts"]["recovery_guidance"] == 1
     assert trend["deltas"]["signal_counts"]["doc_sync_present"] == 1
     assert trend["deltas"]["real_task_metrics"]["postmortem_ready_cases"] == 1
+    assert trend["deltas"]["runtime_measurement_metrics"]["measured_runtime_cases"] == 1
     assert "# v1.x Evidence Trend" in markdown
     assert "average_benefit_score_delta" in render_workflow_evidence_trend_markdown(trend)
     assert "current_version_assessment: better" in markdown
     assert "## Version Assessment" in markdown
     assert "current_is_better: yes" in markdown
     assert "## Real-Task Metric Deltas" in markdown
+    assert "## Runtime Measurement Deltas" in markdown
     assert "## Interpretation" in markdown

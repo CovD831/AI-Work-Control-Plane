@@ -16,7 +16,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Literal
 
 from agent_orchestrator.events import EventStore
-from agent_orchestrator.jobs import AgentJob, FileJobRuntime, now_iso
+from agent_orchestrator.jobs import AgentJob, FileJobRuntime, now_iso, runtime_measurement_payload
 from agent_orchestrator.memory import MemoryRecord, MemoryStore
 from agent_orchestrator.planning import PlanSession
 from agent_orchestrator.planning_support import build_document_context_package
@@ -633,6 +633,7 @@ def _tool_inventory_payload(project_root: Path | None = None) -> dict[str, objec
 def _usage_cost_placeholder() -> dict[str, object]:
     return {
         "source": "placeholder",
+        "measurement_status": "placeholder",
         "usage_available": False,
         "cost_available": False,
         "policy": "record provider usage/cost here when runtime supplies it",
@@ -1681,6 +1682,7 @@ def _provider_session_snapshot_from_job(job: dict[str, object]) -> dict[str, obj
         or _metadata_value(job, "fallback_reason")
     )
     support = _runtime_operation_support(job, liveness_state=liveness_state)
+    measurement = _runtime_measurement_from_job(job)
     return {
         "format": CONTROL_PLANE_FORMATS["provider_session_snapshot"],
         "job_id": job.get("id"),
@@ -1708,6 +1710,7 @@ def _provider_session_snapshot_from_job(job: dict[str, object]) -> dict[str, obj
             "degraded_reason": degraded_reason,
             "checked_at": now_iso(),
         },
+        "runtime_measurement": measurement,
         "operation_support": support,
         "operation_receipts": [_runtime_operation_receipt(item, job) for item in receipts if isinstance(item, dict)][-10:],
         "last_operation_receipt": _runtime_operation_receipt(operation, job) if isinstance(operation, dict) else None,
@@ -1722,6 +1725,7 @@ def _runtime_event_for_session_snapshot(snapshot: dict[str, object]) -> dict[str
     status = str(snapshot.get("status") or "unknown")
     liveness = snapshot.get("liveness", {}) if isinstance(snapshot.get("liveness"), dict) else {}
     support = snapshot.get("operation_support", {}) if isinstance(snapshot.get("operation_support"), dict) else {}
+    measurement = snapshot.get("runtime_measurement", {}) if isinstance(snapshot.get("runtime_measurement"), dict) else {}
     degraded = liveness.get("degraded_reason")
     return {
         "id": _stable_id("runtime-event", "job", str(snapshot.get("job_id"))),
@@ -1739,15 +1743,35 @@ def _runtime_event_for_session_snapshot(snapshot: dict[str, object]) -> dict[str
         "degraded_capability_reason": degraded,
         "session_liveness": liveness,
         "operation_support": support,
+        "runtime_measurement": measurement,
         "operation_receipts": snapshot.get("operation_receipts", []),
         "attachable": support.get("attach") == "available",
         "continuation_supported": support.get("continue") == "available",
         "recovery_safe_next_command": snapshot.get("recommended_recovery_command"),
         "artifact_refs": snapshot.get("artifact_refs", []),
-        "usage_cost": _usage_cost_placeholder(),
+        "usage_cost": measurement.get("usage_cost") if isinstance(measurement.get("usage_cost"), dict) else _usage_cost_placeholder(),
         "records_only": True,
         "created_at": liveness.get("last_seen_at") or now_iso(),
     }
+
+
+def _runtime_measurement_from_job(job: dict[str, object]) -> dict[str, object]:
+    existing = job.get("runtime_measurement")
+    if isinstance(existing, dict):
+        return existing
+    metadata = job.get("metadata", {}) if isinstance(job.get("metadata"), dict) else {}
+    parsed = job.get("parsed_payload", {}) if isinstance(job.get("parsed_payload"), dict) else {}
+    return runtime_measurement_payload(
+        provider=str(job.get("provider") or "unknown"),
+        runtime_mode=str(job.get("runtime_mode") or "unknown"),
+        status=str(job.get("status") or "unknown"),
+        started_at=job.get("started_at") if isinstance(job.get("started_at"), str) else None,
+        completed_at=job.get("completed_at") if isinstance(job.get("completed_at"), str) else None,
+        exit_code=job.get("exit_code") if isinstance(job.get("exit_code"), int) else None,
+        error=job.get("error") if isinstance(job.get("error"), str) else None,
+        metadata=metadata,
+        parsed_payload=parsed,
+    )
 
 
 def _runtime_operation_receipt(operation: dict[str, object] | None, job: dict[str, object]) -> dict[str, object] | None:

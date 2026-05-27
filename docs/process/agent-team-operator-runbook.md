@@ -64,6 +64,7 @@ Live Recovery dogfood 以 `docs/process/ai-work-control-plane-live-recovery-dogf
 Runtime Bridge Fidelity Track 继续补齐 provider/runtime 会话保真度：
 
 - `team runtime inspect <job_id>` 生成只读 `agent_orchestrator.provider_session_snapshot.v1`。
+- `team runtime inspect <job_id>` 同时展示 `runtime_measurement`：本地 command start/end、duration、exit code、provider/runtime mode、degraded reason 和 operation receipts；这只是 measurement，不代表 provider-native bridge。
 - runtime operation receipt 使用 `agent_orchestrator.runtime_operation_receipt.v1`，记录 send/cancel/terminal/missing-session/auth/provider-unavailable 等结果。
 - Runtime Event Stream 应包含 session liveness、operation receipts、attachability、continuation support、degraded reason 和 recovery-safe next command。
 - workspace status、evidence gates 和 UI 只读消费 runtime fidelity 摘要，不拥有 provider 会话，也不绕过 approved-plan gate。
@@ -314,6 +315,7 @@ PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
 - evidence cases 覆盖 standard、followup、high_risk、parallel 四类场景。
 - `v1x-hardening-workflow-report.md` 记录真实 friction 和修复，不只记录 happy path。
 - 发布候选判断以 `team setup` 的 release_readiness、candidate checklist、evidence report、targeted tests 和 compliance 共同为准。
+- 发布候选还要检查 `team setup --runtime command --format json` 中的 `release_readiness.runtime_measurement` 和 `release_readiness.checklist.runtime_measurement`；token/cost placeholder 本身不阻塞 RC，除非 provider runtime 声称可上报却缺失。
 
 ## 标准验收场景
 
