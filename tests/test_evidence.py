@@ -1,7 +1,8 @@
-# DEPS: agent_orchestrator, json, pathlib
+# DEPS: __future__, agent_orchestrator, json, test_support
 # RESPONSIBILITY: Verify workflow evidence harness output and persisted artifact shape.
 # MODULE: tests
 # ---
+
 
 from __future__ import annotations
 
@@ -88,6 +89,8 @@ def test_capture_workflow_evidence_accepts_structured_cases_and_builds_report(tm
     assert payload["report"]["scenario_type_counts"]
     assert payload["report"]["average_benefit_score_by_scenario"]
     assert payload["report"]["scenario_aggregates"]
+    assert payload["report"]["postmortem_signal_counts"] == {}
+    assert payload["summary"]["real_task_metrics"]["recovery_recommendation_coverage"] == 2
 
 
 def test_capture_workflow_evidence_reports_scenario_aggregates(tmp_path) -> None:
@@ -140,6 +143,10 @@ def test_load_workflow_evidence_cases_accepts_real_task_case_file(tmp_path) -> N
                     "requirement": "Implement auth migration across multiple services",
                     "scenario_type": "high_risk",
                     "mode": "speed_first",
+                    "risk_profile": "security",
+                    "operator_goal": "validate review and recovery signals",
+                    "expected_signals": ["recovery_guidance", "doc_sync", "runtime_fidelity"],
+                    "runtime_expectation": "records provider/runtime fidelity without bridge ownership",
                 }
             ]
         ),
@@ -151,15 +158,61 @@ def test_load_workflow_evidence_cases_accepts_real_task_case_file(tmp_path) -> N
     assert cases[0].label == "real-task"
     assert cases[0].scenario_type == "high_risk"
     assert cases[0].mode.value == "speed_first"
+    assert cases[0].risk_profile == "security"
+    assert cases[0].operator_goal == "validate review and recovery signals"
+    assert cases[0].expected_signals == ("recovery_guidance", "doc_sync", "runtime_fidelity")
+    assert cases[0].runtime_expectation == "records provider/runtime fidelity without bridge ownership"
+
+
+def test_capture_workflow_evidence_records_real_task_postmortem_signals(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    payload = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(
+                requirement="Recover an interrupted local implementation task",
+                label="interruption",
+                scenario_type="interruption_recovery",
+                risk_profile="medium",
+                operator_goal="prove recovery recommendation quality",
+                expected_signals=("recovery_guidance", "doc_sync", "interruption_recovery", "cost_latency"),
+                runtime_expectation="local command runtime metadata only",
+            )
+        ],
+        project_root=tmp_path,
+    )
+
+    case = payload["cases"][0]
+    assert case["real_task"]["risk_profile"] == "medium"
+    assert case["real_task"]["operator_goal"] == "prove recovery recommendation quality"
+    assert case["postmortem"]["recovery_recommendation_actionable"] is True
+    assert case["postmortem"]["cost_latency_ready"] is True
+    assert "recovery_guidance" in case["postmortem"]["matched_expected_signals"]
+    assert payload["summary"]["real_task_metrics"]["postmortem_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["cost_latency_ready_cases"] == 1
 
 
 def test_repository_evidence_cases_are_loadable() -> None:
     cases = load_workflow_evidence_cases("docs/process/evidence-cases.json")
 
-    assert {case.scenario_type for case in cases} == {"standard", "followup", "high_risk", "parallel"}
+    assert {case.scenario_type for case in cases} == {
+        "standard",
+        "followup",
+        "high_risk",
+        "parallel",
+        "ui_workflow",
+        "compliance_blocking",
+        "runtime_fidelity",
+        "interruption_recovery",
+    }
     assert "cli_workflow_hardening" in {case.label for case in cases}
+    assert len(cases) >= 8
     assert all(case.label for case in cases)
     assert all(case.requirement for case in cases)
+    assert all(case.risk_profile for case in cases)
+    assert all(case.operator_goal for case in cases)
+    assert all(case.expected_signals for case in cases)
+    assert all(case.runtime_expectation for case in cases)
 
 
 def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path) -> None:
@@ -179,6 +232,8 @@ def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path)
     assert "rescue_quality:" in markdown
     assert "runtime_limitation:" in markdown
     assert "fixed_template_advantage:" in markdown
+    assert "## Real-Task Dogfood Metrics" in markdown
+    assert "postmortem_ready_cases" in markdown
     assert "## Takeaways" in markdown
 
 
@@ -205,9 +260,11 @@ def test_compare_workflow_evidence_reports_trend_deltas(tmp_path) -> None:
     assert trend["deltas"]["scenario_aggregates"]["standard"]["case_count"] == 1
     assert trend["deltas"]["team_advantage_counts"]["recovery_guidance"] == 1
     assert trend["deltas"]["signal_counts"]["doc_sync_present"] == 1
+    assert trend["deltas"]["real_task_metrics"]["postmortem_ready_cases"] == 1
     assert "# v1.x Evidence Trend" in markdown
     assert "average_benefit_score_delta" in render_workflow_evidence_trend_markdown(trend)
     assert "current_version_assessment: better" in markdown
     assert "## Version Assessment" in markdown
     assert "current_is_better: yes" in markdown
+    assert "## Real-Task Metric Deltas" in markdown
     assert "## Interpretation" in markdown

@@ -28,6 +28,10 @@ class WorkflowEvidenceCase:
     mode: OrchestrationMode = OrchestrationMode.SUCCESS_FIRST
     label: str | None = None
     scenario_type: str | None = None
+    risk_profile: str | None = None
+    operator_goal: str | None = None
+    expected_signals: tuple[str, ...] = ()
+    runtime_expectation: str | None = None
 
 
 def benchmark_evidence_cases() -> list[WorkflowEvidenceCase]:
@@ -81,6 +85,12 @@ def load_workflow_evidence_cases(path: Path | str) -> list[WorkflowEvidenceCase]
                 mode=mode,
                 label=str(item.get("label") or requirement),
                 scenario_type=str(item.get("scenario_type") or _infer_scenario_type(requirement)),
+                risk_profile=str(item.get("risk_profile") or item.get("scenario_type") or "normal"),
+                operator_goal=str(item.get("operator_goal") or ""),
+                expected_signals=tuple(str(signal) for signal in item.get("expected_signals", []))
+                if isinstance(item.get("expected_signals"), list)
+                else (),
+                runtime_expectation=str(item.get("runtime_expectation") or ""),
             )
         )
     return cases
@@ -178,6 +188,17 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
     ]:
         lines.append(f"- {key}: {signal_counts.get(key, 0)}")
 
+    real_task_metrics = summary.get("real_task_metrics", {}) if isinstance(summary.get("real_task_metrics"), dict) else {}
+    lines.extend(["", "## Real-Task Dogfood Metrics", ""])
+    for key in [
+        "recovery_recommendation_coverage",
+        "runtime_fidelity_coverage",
+        "compliance_blocking_coverage",
+        "postmortem_ready_cases",
+        "cost_latency_ready_cases",
+    ]:
+        lines.append(f"- {key}: {real_task_metrics.get(key, 0)}")
+
     lines.extend(["", "## Cases", ""])
     for case in cases:
         if not isinstance(case, dict):
@@ -188,6 +209,13 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
             f"scenario={case.get('scenario_type', 'unknown')}, "
             f"benefit_score={comparison.get('benefit_score', 0)}"
         )
+        postmortem = case.get("postmortem", {}) if isinstance(case.get("postmortem"), dict) else {}
+        if postmortem:
+            lines.append(
+                f"  - postmortem: matched_expected_signals={postmortem.get('matched_expected_signal_count', 0)}, "
+                f"runtime_fidelity={postmortem.get('runtime_fidelity_represented', False)}, "
+                f"cost_latency_ready={postmortem.get('cost_latency_ready', False)}"
+            )
     lines.extend(
         [
             "",
@@ -239,6 +267,10 @@ def compare_workflow_evidence(baseline: dict[str, object], current: dict[str, ob
             "signal_counts": _count_deltas(
                 baseline_summary.get("signal_counts", {}),
                 current_summary.get("signal_counts", {}),
+            ),
+            "real_task_metrics": _count_deltas(
+                baseline_summary.get("real_task_metrics", {}),
+                current_summary.get("real_task_metrics", {}),
             ),
             "scenario_aggregates": _scenario_deltas(
                 baseline_report.get("scenario_aggregates", {}),
@@ -302,6 +334,8 @@ def render_workflow_evidence_trend_markdown(payload: dict[str, object]) -> str:
         lines.append("- none")
     lines.extend(["", "## Signal Deltas", ""])
     lines.extend(_count_delta_lines(deltas.get("signal_counts", {})))
+    lines.extend(["", "## Real-Task Metric Deltas", ""])
+    lines.extend(_count_delta_lines(deltas.get("real_task_metrics", {})))
     lines.extend(["", "## Team Advantage Deltas", ""])
     lines.extend(_count_delta_lines(deltas.get("team_advantage_counts", {})))
     lines.extend(["", "## Direct Limitation Deltas", ""])
@@ -399,6 +433,12 @@ def _capture_case(
         "requirement": case.requirement,
         "mode": case.mode.value,
         "scenario_type": case.scenario_type or _infer_scenario_type(case.requirement),
+        "real_task": {
+            "risk_profile": case.risk_profile or case.scenario_type or "normal",
+            "operator_goal": case.operator_goal or "exercise governed local workflow",
+            "expected_signals": list(case.expected_signals),
+            "runtime_expectation": case.runtime_expectation or "local control-plane evidence",
+        },
         "direct_run": {
             "run_id": direct_run.run_id,
             "accepted": direct_run.accepted,
@@ -431,6 +471,7 @@ def _capture_case(
             "gate_evidence": _case_gate_evidence(team_session, execution_payload),
         },
         "signals": signals,
+        "postmortem": _postmortem_signals(case, signals, team_summary, execution_payload),
         "comparison": {
             "team_advantages": team_advantages,
             "direct_limitations": direct_limitations,
@@ -773,6 +814,7 @@ def _build_summary(cases: list[dict[str, object]]) -> dict[str, object]:
         ),
         "signal_counts": _signal_counts(signals),
         "reference_advantage_counts": _tag_counts(comparisons, "team_advantages"),
+        "real_task_metrics": _real_task_metrics(cases),
     }
 
 
@@ -802,7 +844,89 @@ def _build_report(cases: list[dict[str, object]]) -> dict[str, object]:
             for item in comparisons
             if isinstance(item, dict) and "recovery_guidance" in list(item.get("team_advantages", []))
         ),
+        "postmortem_signal_counts": _postmortem_signal_counts(cases),
     }
+
+
+def _postmortem_signals(
+    case: WorkflowEvidenceCase,
+    signals: dict[str, object],
+    status_summary: dict[str, object],
+    execution_payload: dict[str, object] | None,
+) -> dict[str, object]:
+    recovery = signals.get("recovery", {}) if isinstance(signals.get("recovery"), dict) else {}
+    doc_sync = signals.get("doc_sync", {}) if isinstance(signals.get("doc_sync"), dict) else {}
+    fallback = signals.get("fallback", {}) if isinstance(signals.get("fallback"), dict) else {}
+    expected = set(case.expected_signals)
+    runtime_health = status_summary.get("runtime_health", {}) if isinstance(status_summary.get("runtime_health"), dict) else {}
+    usage_cost = status_summary.get("usage_cost", {}) if isinstance(status_summary.get("usage_cost"), dict) else {}
+    approval_state = status_summary.get("approval_state", {}) if isinstance(status_summary.get("approval_state"), dict) else {}
+    matched = sorted(signal for signal in expected if _expected_signal_matched(signal, recovery, doc_sync, fallback, status_summary))
+    return {
+        "expected_signals": sorted(expected),
+        "matched_expected_signals": matched,
+        "matched_expected_signal_count": len(matched),
+        "recovery_recommendation_actionable": bool(recovery.get("has_guidance")),
+        "compliance_blocking_represented": "compliance_blocking" in expected or doc_sync.get("status") == "blocking",
+        "runtime_fidelity_represented": "runtime_fidelity" in expected or bool(runtime_health),
+        "interruption_recovery_represented": "interruption_recovery" in expected or bool(recovery.get("resume_action")),
+        "fallback_represented": "provider_fallback" in expected or bool(fallback.get("present")),
+        "human_intervention_observable": bool(approval_state),
+        "cost_latency_ready": bool(usage_cost),
+        "execution_artifact_recorded": bool(execution_payload),
+        "postmortem_ready": bool(recovery.get("has_guidance")) and bool(usage_cost),
+        "notes": "local dogfood evidence; large logs remain in linked artifacts",
+    }
+
+
+def _expected_signal_matched(
+    signal: str,
+    recovery: dict[str, object],
+    doc_sync: dict[str, object],
+    fallback: dict[str, object],
+    status_summary: dict[str, object],
+) -> bool:
+    if signal == "recovery_guidance":
+        return bool(recovery.get("has_guidance"))
+    if signal == "doc_sync":
+        return bool(doc_sync.get("present"))
+    if signal == "compliance_blocking":
+        return bool(doc_sync.get("blocking_reason_count")) or doc_sync.get("status") in {"blocking", "passed"}
+    if signal == "runtime_fidelity":
+        return bool(status_summary.get("runtime_health")) or "selected_provider_runtime" in fallback
+    if signal == "provider_fallback":
+        return "selected_provider_runtime" in fallback
+    if signal == "interruption_recovery":
+        return bool(recovery.get("resume_action")) or bool(recovery.get("recommended_commands"))
+    if signal == "approval_observability":
+        return bool(status_summary.get("approval_state"))
+    if signal == "cost_latency":
+        return bool(status_summary.get("usage_cost"))
+    return False
+
+
+def _real_task_metrics(cases: list[dict[str, object]]) -> dict[str, int]:
+    postmortems = [case.get("postmortem", {}) for case in cases if isinstance(case.get("postmortem", {}), dict)]
+    return {
+        "recovery_recommendation_coverage": sum(1 for item in postmortems if item.get("recovery_recommendation_actionable")),
+        "runtime_fidelity_coverage": sum(1 for item in postmortems if item.get("runtime_fidelity_represented")),
+        "compliance_blocking_coverage": sum(1 for item in postmortems if item.get("compliance_blocking_represented")),
+        "interruption_recovery_coverage": sum(1 for item in postmortems if item.get("interruption_recovery_represented")),
+        "fallback_coverage": sum(1 for item in postmortems if item.get("fallback_represented")),
+        "postmortem_ready_cases": sum(1 for item in postmortems if item.get("postmortem_ready")),
+        "cost_latency_ready_cases": sum(1 for item in postmortems if item.get("cost_latency_ready")),
+        "execution_artifact_cases": sum(1 for item in postmortems if item.get("execution_artifact_recorded")),
+    }
+
+
+def _postmortem_signal_counts(cases: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for case in cases:
+        postmortem = case.get("postmortem", {}) if isinstance(case.get("postmortem"), dict) else {}
+        for signal in postmortem.get("matched_expected_signals", []):
+            name = str(signal)
+            counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def _signal_counts(signals: list[object]) -> dict[str, int]:

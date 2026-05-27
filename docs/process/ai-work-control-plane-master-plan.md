@@ -188,6 +188,16 @@ The implementation focus is provider/runtime fidelity for existing local command
 
 Runtime Bridge dogfood evidence is recorded in `docs/process/ai-work-control-plane-runtime-bridge-dogfood-evidence.md`.
 
+## Real-Task Dogfood Evidence Track
+
+The next line after Runtime Bridge Fidelity is the **AI Work Control Plane Real-Task Dogfood Evidence Track**. It proves the frozen baseline against a broader local task matrix:
+
+`RealTaskCase -> PlanSession -> Workspace / Program Index -> Recovery Recommendation -> Runtime Fidelity Summary -> EvidenceBundle -> Postmortem Signals -> Evidence Trend`.
+
+This track keeps the product direction fixed. It expands evidence cases, report metrics, trend metrics, and postmortem/cost-latency readiness without building a full provider bridge or persistent session manager.
+
+The committed case matrix is `docs/process/evidence-cases.json`. The generated evidence artifacts are `docs/process/v1x-evidence-report.md`, `docs/process/v1x-evidence-trend.md`, and `.agent_orchestrator/evidence/real-tasks.json`.
+
 ## Frozen Control-Plane Baseline
 
 Current baseline: the product center has moved to **AI Work Control Plane**. Explicit `agent team` orchestration, provider runtimes, command jobs, direct API calls, and UI surfaces remain implementation capabilities underneath the control plane.
@@ -208,3 +218,5 @@ Workspace / Program Index v2
 ```
 
 The next product work should not be another reframe. It should be broader real-task dogfood and evidence: use this control plane on more local tasks, record where recovery/runtime fidelity actually helps, and only then deepen provider-specific bridge behavior.
+
+Current real-task dogfood baseline: the committed evidence matrix now covers standard implementation, follow-up recovery, high-risk migration, parallel validation, UI workflow, compliance blocking, runtime fidelity, and interruption recovery. Evidence reports include recovery coverage, runtime fidelity coverage, compliance blocking coverage, postmortem readiness, and cost/latency readiness.

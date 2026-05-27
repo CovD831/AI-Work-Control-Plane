@@ -3,30 +3,90 @@
     "label": "standard_plan_artifact",
     "requirement": "Build a persisted plan artifact for a routine implementation task",
     "scenario_type": "standard",
-    "mode": "success_first"
+    "mode": "success_first",
+    "risk_profile": "low",
+    "operator_goal": "confirm routine governed workflow still produces approved plan and execution provenance",
+    "expected_signals": ["recovery_guidance", "doc_sync", "approval_observability", "cost_latency"],
+    "runtime_expectation": "local mock-safe execution with linked run artifact"
   },
   {
     "label": "followup_checklist_recovery",
     "requirement": "Build plan with followup checklist and recovery guidance",
     "scenario_type": "followup",
-    "mode": "success_first"
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "confirm follow-up work carries next-step and recovery guidance",
+    "expected_signals": ["recovery_guidance", "doc_sync", "interruption_recovery", "cost_latency"],
+    "runtime_expectation": "local control-plane recovery metadata only"
   },
   {
     "label": "high_risk_auth_migration",
     "requirement": "Implement auth migration across multiple services with security review",
     "scenario_type": "high_risk",
-    "mode": "success_first"
+    "mode": "success_first",
+    "risk_profile": "high",
+    "operator_goal": "confirm high-risk work remains review-gated and explainable",
+    "expected_signals": ["recovery_guidance", "doc_sync", "approval_observability", "runtime_fidelity"],
+    "runtime_expectation": "records provider/runtime selection without claiming bridge ownership"
   },
   {
     "label": "parallel_validation_modules",
     "requirement": "Coordinate parallel independent validation tasks across multiple modules",
     "scenario_type": "parallel",
-    "mode": "speed_first"
+    "mode": "speed_first",
+    "risk_profile": "medium",
+    "operator_goal": "confirm topology and task visibility stay useful for parallel work",
+    "expected_signals": ["recovery_guidance", "doc_sync", "runtime_fidelity", "cost_latency"],
+    "runtime_expectation": "records runtime evidence as local artifacts"
   },
   {
     "label": "cli_workflow_hardening",
     "requirement": "Harden CLI setup summary for release readiness and validate the operator workflow evidence path",
     "scenario_type": "standard",
-    "mode": "success_first"
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "confirm CLI readiness evidence and operator commands stay understandable",
+    "expected_signals": ["recovery_guidance", "doc_sync", "runtime_fidelity", "cost_latency"],
+    "runtime_expectation": "setup and release-readiness records remain local"
+  },
+  {
+    "label": "ui_operator_console_flow",
+    "requirement": "Validate a read-only operator console workflow with workspace status, evidence, and recovery summaries",
+    "scenario_type": "ui_workflow",
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "confirm UI-facing summaries can be explained from control-plane artifacts",
+    "expected_signals": ["recovery_guidance", "doc_sync", "runtime_fidelity", "cost_latency"],
+    "runtime_expectation": "UI consumes read-only JSON summaries without mutation"
+  },
+  {
+    "label": "compliance_blocking_recovery",
+    "requirement": "Recover from a compliance blocking condition after process docs and changed-file checks drift",
+    "scenario_type": "compliance_blocking",
+    "mode": "success_first",
+    "risk_profile": "high",
+    "operator_goal": "confirm compliance blockers appear as recoverable evidence rather than hidden failure",
+    "expected_signals": ["recovery_guidance", "doc_sync", "compliance_blocking", "approval_observability"],
+    "runtime_expectation": "compliance remains a control-plane gate before execution"
+  },
+  {
+    "label": "runtime_fidelity_inspection",
+    "requirement": "Inspect runtime fidelity for a local command-runtime job and explain attachability, receipts, and degraded reasons",
+    "scenario_type": "runtime_fidelity",
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "confirm provider session snapshots and operation receipts stay inspectable",
+    "expected_signals": ["recovery_guidance", "runtime_fidelity", "provider_fallback", "cost_latency"],
+    "runtime_expectation": "records fidelity without persistent provider session ownership"
+  },
+  {
+    "label": "interrupted_task_resume",
+    "requirement": "Resume an interrupted long-running local implementation task from recovery recommendation and run ledger evidence",
+    "scenario_type": "interruption_recovery",
+    "mode": "success_first",
+    "risk_profile": "high",
+    "operator_goal": "confirm interrupted work can be resumed from external artifacts",
+    "expected_signals": ["recovery_guidance", "interruption_recovery", "doc_sync", "runtime_fidelity"],
+    "runtime_expectation": "resume guidance is recommendation-only and stays gated by approved execution"
   }
 ]

@@ -339,7 +339,9 @@ python -m agent_orchestrator.cli evidence report --output docs/process/v1x-evide
 python -m agent_orchestrator.cli evidence report --case-file docs/process/evidence-cases.json --output docs/process/v1x-evidence-report.md --json-output .agent_orchestrator/evidence/real-tasks.json
 ```
 
-Case files are JSON lists with `label`, `requirement`, `scenario_type`, and `mode`.
+Case files are JSON lists with `label`, `requirement`, `scenario_type`, `mode`, `risk_profile`, `operator_goal`, `expected_signals`, and `runtime_expectation`. The committed matrix in `docs/process/evidence-cases.json` covers standard implementation, follow-up recovery, high-risk migration, parallel validation, UI workflow, compliance blocking, runtime fidelity, and interruption recovery.
+
+Evidence reports include real-task dogfood metrics for recovery coverage, runtime fidelity coverage, compliance blocking coverage, postmortem readiness, and cost/latency readiness. Cost/latency values remain placeholders until a provider/runtime supplies trustworthy measurements.
 
 ## Release Readiness
 

@@ -89,6 +89,8 @@ The Live Recovery Track added Recovery Timeline, Runtime Event Stream, Recovery 
 
 The next major update is the Runtime Bridge Fidelity Track: Provider Session Snapshot, Runtime Operation Receipt, extended Runtime Event Stream, `team runtime inspect`, and read-only workspace/evidence/UI runtime fidelity summaries. It closes the gap between "the control plane recommends recovery" and "the operator can trust what the provider/runtime session actually supports."
 
+The current post-baseline update is the Real-Task Dogfood Evidence Track. It expands the committed evidence matrix and reports recovery coverage, runtime fidelity coverage, compliance blocking coverage, postmortem readiness, and cost/latency readiness. This is deliberately evidence-first: deepen provider-specific bridge behavior only after local dogfood shows which runtime gaps matter.
+
 ## Product Architecture
 
 ### Planning Governance Layer
@@ -259,6 +261,7 @@ The repository now extends the completed v1 baseline with:
 - fallback-aware provider health snapshots for `codex`, `claude`, and `mock`
 - controlled review policy CLI overrides that preserve `auto` defaults
 - evidence CLI commands for built-in benchmarks, real task case files, and markdown phase reports
+- expanded real-task dogfood reports with recovery, runtime fidelity, compliance blocking, postmortem, and cost/latency readiness metrics
 - an expanded Agent Team Console for provenance, governance, review policy, fallback, compliance, events, messages, work graph, and job controls
 - NUL-delimited hook staged-file handling for paths containing spaces
 - `team refresh-docs` and `team repair-compliance` repair commands
@@ -286,6 +289,7 @@ The reference-informed upgrade is complete, but the v1.0 candidate should stay o
 - Run and record the Phase 5 targeted suite: `pytest tests/test_docs_process.py tests/test_planning_support.py tests/test_team.py -q`.
 - Run final `team check-compliance` after any docs/evidence refresh.
 - Freeze the committed evidence paths: `docs/process/evidence-cases.json`, `docs/process/v1x-evidence-report.md`, and `docs/process/v1x-evidence-trend.md`.
+- Confirm the committed evidence matrix still covers standard, follow-up, high-risk, parallel, UI workflow, compliance blocking, runtime fidelity, and interruption recovery cases.
 - Re-check `docs/process/v1x-hardening-workflow-report.md` so the candidate carries both happy-path and friction/fix evidence.
 - Confirm `team setup` still reports version sync, provider/runtime health, evidence status, tests, and compliance in the release_readiness snapshot.
 - Keep the runtime limitation explicit: v1.x has a guarded command runtime and job controls, not a full Codex/Claude bridge or persistent session manager.
