@@ -3233,6 +3233,65 @@ def test_team_evidence_gates_json_outputs_bundle(tmp_path, capsys, monkeypatch) 
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
+def test_team_governance_bundle_export_and_inspect_json(tmp_path, capsys, monkeypatch) -> None:
+    from agent_orchestrator import cli
+
+    class _FakeTeam:
+        def check_compliance(self):
+            return {"blocking": False, "blocking_reasons": [], "warnings": []}
+
+    write_minimal_process_docs(tmp_path)
+    output_path = tmp_path / "governance-bundle.json"
+    monkeypatch.chdir(tmp_path)
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: _FakeTeam()
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="governance-bundle",
+            governance_bundle_command="export",
+            output=str(output_path),
+            query="externalized governance",
+            changed_file=["src/agent_orchestrator/control_plane.py"],
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            jobs_root=str(tmp_path / "jobs"),
+            approvals_root=str(tmp_path / "approvals"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        exported = json.loads(capsys.readouterr().out)
+        assert output_path.exists()
+        assert exported["format"] == "agent_orchestrator.governance_bundle.v1"
+        assert exported["externalization"]["offline_inspectable"] is True
+        assert exported["boundaries"]["provider_session_ownership"] == "provider_owned_refs_are_evidence_only"
+
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="governance-bundle",
+            governance_bundle_command="inspect",
+            bundle_path=str(output_path),
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            runtime="mock",
+            provider=None,
+            format="json",
+        )
+        cli.main()
+        inspection = json.loads(capsys.readouterr().out)
+        assert inspection["format"] == "agent_orchestrator.governance_bundle_inspection.v1"
+        assert inspection["complete"] is True
+        assert inspection["auditable"] is True
+        assert inspection["blocking"] is False
+        assert inspection["artifact_formats"]["workspace_index"] == "agent_orchestrator.workspace_index.v1"
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
 def test_evidence_capture_command_writes_case_file_output(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
 

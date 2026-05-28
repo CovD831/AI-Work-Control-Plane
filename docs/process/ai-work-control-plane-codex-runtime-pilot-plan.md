@@ -104,3 +104,36 @@ codex exec --json
 ```
 
 without claiming provider-native session ownership or live-provider determinism.
+
+## Post-Pilot v1 Final Externalization Hardening
+
+After the Codex Runtime Pilot closes, the next stage is to prove that governance is externally portable, not just locally visible.
+
+This stage adds a portable bundle path:
+
+```text
+workspace-status / context-packet / evidence-gates / approvals / provider evidence
+  -> team governance-bundle export
+  -> saved agent_orchestrator.governance_bundle.v1
+  -> team governance-bundle inspect
+  -> offline completeness, auditability, and boundary verdict
+```
+
+Result artifact:
+
+- `docs/process/ai-work-control-plane-v1-final-externalization-hardening.md`
+
+Targeted tests:
+
+```bash
+pytest tests/test_control_plane.py tests/test_cli.py tests/test_docs_process.py -q
+```
+
+Final commands:
+
+```bash
+pytest
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
+```
+
+This is the bar for saying the system has reached an externalized governance shape: an external reviewer can receive a read-only JSON bundle, inspect it without a live workspace, and see the runtime/provider boundaries without asking the orchestrator to resume or own a provider session.

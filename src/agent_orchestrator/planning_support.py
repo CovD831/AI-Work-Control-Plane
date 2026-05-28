@@ -204,6 +204,7 @@ def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumen
                 "approval items use `agent_orchestrator.approval_item.v1` and resolution never bypasses execution gates",
                 "evidence bundles use `agent_orchestrator.evidence_bundle.v1` for gate summaries",
                 "provider evidence summaries use `agent_orchestrator.provider_evidence_summary.v1` without claiming provider session ownership",
+                "governance bundles use `agent_orchestrator.governance_bundle.v1` for portable offline inspection",
                 "control-plane artifact contracts are documented in `docs/process/control-plane-artifact-contracts.md`",
                 "approval reason codes and evidence memory recommendations are part of the stable control-plane contract",
                 "documentation context packages use `agent_orchestrator.docs_context.v1` and include selected canonical docs only",

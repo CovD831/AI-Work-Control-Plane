@@ -47,11 +47,13 @@ from agent_orchestrator.control_plane import (
     build_context_packet,
     build_evidence_bundle,
     build_execution_topology_snapshot,
+    build_governance_bundle,
     build_provider_evidence_summary,
     build_provider_session_snapshot,
     build_recovery_recommendation,
     build_workspace_index,
     build_workspace_state_snapshot,
+    inspect_governance_bundle,
     resolve_approval_item,
 )
 from agent_orchestrator.orchestrator import Orchestrator
@@ -541,6 +543,30 @@ def main() -> None:
     team_evidence_gates.add_argument("--runtime", choices=["mock", "command"], default="mock")
     team_evidence_gates.add_argument("--provider", choices=["codex", "claude"])
     team_evidence_gates.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    team_governance_bundle = team_subparsers.add_parser(
+        "governance-bundle",
+        help="Export or inspect a portable AI Work Control Plane governance bundle.",
+    )
+    team_governance_bundle_subparsers = team_governance_bundle.add_subparsers(dest="governance_bundle_command")
+    team_governance_bundle_export = team_governance_bundle_subparsers.add_parser("export", help="Export a portable governance bundle JSON file.")
+    team_governance_bundle_export.add_argument("--output", required=True)
+    team_governance_bundle_export.add_argument("--query", default="governance externalization")
+    team_governance_bundle_export.add_argument("--changed-file", action="append", default=[])
+    team_governance_bundle_export.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_governance_bundle_export.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_governance_bundle_export.add_argument("--jobs-root", default=".agent_orchestrator/jobs")
+    team_governance_bundle_export.add_argument("--approvals-root", default=".agent_orchestrator/approvals")
+    team_governance_bundle_export.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_governance_bundle_export.add_argument("--provider", choices=["codex", "claude"])
+    team_governance_bundle_export.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    team_governance_bundle_inspect = team_governance_bundle_subparsers.add_parser("inspect", help="Inspect a governance bundle JSON file.")
+    team_governance_bundle_inspect.add_argument("bundle_path")
+    team_governance_bundle_inspect.add_argument("--plans-root", default=".agent_orchestrator/plans")
+    team_governance_bundle_inspect.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    team_governance_bundle_inspect.add_argument("--runtime", choices=["mock", "command"], default="mock")
+    team_governance_bundle_inspect.add_argument("--provider", choices=["codex", "claude"])
+    team_governance_bundle_inspect.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
     args = parser.parse_args()
 
     if args.command == "health":
@@ -840,6 +866,36 @@ def main() -> None:
                 _print_evidence_bundle_summary(payload)
             _emit_json(payload, args)
             return
+        if args.team_command == "governance-bundle":
+            if args.governance_bundle_command == "export":
+                compliance = team.check_compliance()
+                payload = build_governance_bundle(
+                    Path.cwd(),
+                    query=getattr(args, "query", "governance externalization"),
+                    changed_files=list(getattr(args, "changed_file", []) or []),
+                    plans_root=getattr(args, "plans_root", ".agent_orchestrator/plans"),
+                    runs_root=getattr(args, "runs_root", ".agent_orchestrator/runs"),
+                    jobs_root=getattr(args, "jobs_root", ".agent_orchestrator/jobs"),
+                    approvals_root=getattr(args, "approvals_root", ".agent_orchestrator/approvals"),
+                    output_path=args.output,
+                    compliance=compliance,
+                )
+                if not _json_only(args):
+                    print(f"governance_bundle: wrote {args.output}")
+                _emit_json(payload, args)
+                return
+            if args.governance_bundle_command == "inspect":
+                payload = inspect_governance_bundle(args.bundle_path)
+                if not _json_only(args):
+                    print(
+                        "governance_bundle: "
+                        f"complete={'yes' if payload.get('complete') else 'no'} "
+                        f"auditable={'yes' if payload.get('auditable') else 'no'} "
+                        f"blocking={'yes' if payload.get('blocking') else 'no'}"
+                    )
+                _emit_json(payload, args)
+                return
+            parser.error("a team governance-bundle subcommand is required")
         parser.error("a team subcommand is required")
 
     if run_job_command(args):

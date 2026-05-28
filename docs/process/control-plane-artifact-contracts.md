@@ -127,6 +127,24 @@ These contracts pin the minimum stable shape for AI Work Control Plane artifacts
 - Stable fields: `job_count`, `provider_session_ref_count`, `provider_owned_ref_count`, `continuation_provider_owned_count`, `codex_exec_json_job_count`, `codex_json_event_count`, `codex_malformed_event_count`, `final_message_artifact_count`, `provider_reported_usage_count`, `usage_cost_measurement_status`, `session_ownership_claim`, `policy`
 - Rule: the summary makes provider evidence consumable without creating provider-specific control-plane branches or claiming persistent session ownership.
 
+## GovernanceBundle
+
+- Format: `agent_orchestrator.governance_bundle.v1`
+- Producer: `team governance-bundle export`
+- Consumers: offline operator review, external evaluation, handoff and release evidence
+- Lifecycle: portable read-only JSON bundle assembled from current control-plane surfaces
+- Stable fields: `schema_version`, `project_root`, `created_at`, `query`, `changed_files`, `artifacts`, `artifact_manifest`, `externalization`, `boundaries`
+- Rule: a bundle is an inspection and handoff artifact; exporting or inspecting it must not mutate plan state, resume work, or claim provider session ownership.
+
+## GovernanceBundleInspection
+
+- Format: `agent_orchestrator.governance_bundle_inspection.v1`
+- Producer: `team governance-bundle inspect`
+- Consumers: external evaluators and release gates
+- Lifecycle: read-only verdict derived from a saved governance bundle
+- Stable fields: `bundle_path`, `bundle_format`, `complete`, `auditable`, `blocking`, `blocking_reasons`, `warnings`, `artifact_formats`, `boundary_summary`, `externalization`
+- Rule: inspection validates portability and boundary clarity without requiring the original workspace to be live.
+
 ## RuntimeOperationReceipt
 
 - Format: `agent_orchestrator.runtime_operation_receipt.v1`

@@ -8,6 +8,7 @@ from agent_orchestrator.control_plane import (
     build_context_packet,
     build_evidence_bundle,
     build_execution_topology_snapshot,
+    build_governance_bundle,
     build_provider_evidence_summary,
     build_provider_session_snapshot,
     build_recovery_recommendation,
@@ -16,6 +17,7 @@ from agent_orchestrator.control_plane import (
     build_runtime_event_stream,
     build_workspace_index,
     build_workspace_state_snapshot,
+    inspect_governance_bundle,
     resolve_approval_item,
 )
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
@@ -184,6 +186,34 @@ def test_workspace_index_summarizes_codex_pilot_provider_evidence(tmp_path) -> N
     assert summary["final_message_artifact_count"] == 1
     assert summary["usage_cost_measurement_status"] == "placeholder"
     assert summary["session_ownership_claim"] == "provider_owned"
+
+
+def test_governance_bundle_exports_portable_externalized_artifacts(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    _ = build_governance_bundle(
+        tmp_path,
+        query="externalized governance",
+        changed_files=["src/agent_orchestrator/control_plane.py"],
+        output_path=tmp_path / "governance-bundle.json",
+        compliance={"blocking": False, "blocking_reasons": [], "warnings": []},
+    )
+
+    payload = json.loads((tmp_path / "governance-bundle.json").read_text(encoding="utf-8"))
+    inspection = inspect_governance_bundle(tmp_path / "governance-bundle.json")
+
+    assert payload["format"] == "agent_orchestrator.governance_bundle.v1"
+    assert payload["externalization"]["portable"] is True
+    assert payload["externalization"]["offline_inspectable"] is True
+    assert payload["boundaries"]["provider_session_ownership"] == "provider_owned_refs_are_evidence_only"
+    assert payload["artifacts"]["workspace_index"]["format"] == "agent_orchestrator.workspace_index.v1"
+    assert payload["artifacts"]["context_packet"]["format"] == "agent_orchestrator.context_packet.v1"
+    assert payload["artifacts"]["evidence_bundle"]["format"] == "agent_orchestrator.evidence_bundle.v1"
+    assert payload["artifacts"]["approval_queue"]["format"] == "agent_orchestrator.approval_queue.v1"
+    assert payload["artifacts"]["provider_evidence_summary"]["format"] == "agent_orchestrator.provider_evidence_summary.v1"
+    assert inspection["format"] == "agent_orchestrator.governance_bundle_inspection.v1"
+    assert inspection["complete"] is True
+    assert inspection["auditable"] is True
+    assert inspection["blocking"] is False
 
 
 def test_context_packet_combines_docs_and_memory_without_strategy(tmp_path) -> None:

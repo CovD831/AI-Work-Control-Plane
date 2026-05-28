@@ -36,3 +36,9 @@ Completion signal:
 - provider evidence summaries are consumed by setup readiness, workspace status, and evidence gates;
 - no test or compliance gate requires a live Codex call;
 - the track does not claim persistent provider session ownership.
+
+Post-pilot continuation:
+
+- The next approved stage is v1 Final Externalization Hardening.
+- The goal is to make the already-consumed governance state portable through `team governance-bundle export` and independently checkable through `team governance-bundle inspect`.
+- The continuation remains outside provider-native session ownership; provider refs are still evidence, not control handles.

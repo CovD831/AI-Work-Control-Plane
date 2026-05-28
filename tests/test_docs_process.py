@@ -44,6 +44,8 @@ def test_control_plane_artifact_contracts_document_stable_formats() -> None:
     assert "agent_orchestrator.approval_item.v1" in text
     assert "agent_orchestrator.evidence_bundle.v1" in text
     assert "agent_orchestrator.provider_evidence_summary.v1" in text
+    assert "agent_orchestrator.governance_bundle.v1" in text
+    assert "agent_orchestrator.governance_bundle_inspection.v1" in text
     assert "Unknown fields must be ignored" in text
 
 
@@ -51,6 +53,7 @@ def test_release_readiness_mentions_provider_evidence_summary() -> None:
     text = Path("docs/process/v1x-release-readiness.md").read_text(encoding="utf-8")
 
     assert "agent_orchestrator.provider_evidence_summary.v1" in text
+    assert "agent_orchestrator.governance_bundle.v1" in text
     assert "without claiming provider session ownership" in text
 
 

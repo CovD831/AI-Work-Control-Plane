@@ -46,6 +46,9 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 
 - Run full `pytest`.
 - Run `PYTHONPATH=src python -m agent_orchestrator.cli team setup --runtime command --format json`.
+- Run `PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle export --output .agent_orchestrator/governance/v1-final-externalization-bundle.json --query "v1 final externalization hardening" --format json`.
+- Run `PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle inspect .agent_orchestrator/governance/v1-final-externalization-bundle.json --format json`.
+- Confirm governance bundle inspection reports `complete: true`, `auditable: true`, and `blocking: false`.
 - Run `PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance`.
 - Confirm `git status --short` is clean after the final commit.
 
@@ -56,3 +59,4 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 - v1.x remains a guarded local runtime, not a full Codex/Claude bridge or persistent session manager.
 - Runtime measurement records local timestamps, duration, exit code, provider availability, degraded reasons, and operation receipts when available; token/cost values remain placeholder unless reported by a provider runtime.
 - Codex Runtime Pilot evidence is consumed through provider evidence summaries and remains opt-in, fake-runner-testable, and provider-owned at the session boundary.
+- Governance bundle export/inspect is the v1 externalization proof; it is a portable review artifact, not a provider session control surface.
