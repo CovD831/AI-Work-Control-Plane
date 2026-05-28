@@ -33,3 +33,14 @@
 - Console: no blocker found in current service/server payload tests
 - Runtime: Phase 3 health, fallback, stdout/stderr/exit-code, and send/cancel behavior validated through CLI probes and focused tests; remaining limitation is lack of a full Codex/Claude bridge/session manager
 - Docs/Evidence: deferred to evidence and release-candidate phases
+
+## Codex Runtime Pilot Follow-up
+
+- validation date: 2026-05-28
+- Codex Runtime Pilot Phase 4/5 added provider evidence summaries for opt-in `codex exec --json` job payloads.
+- Consumer surfaces now include `team setup --format json`, `team workspace-status --format json`, and `team evidence-gates --format json`.
+- Provider-owned refs remain read-only evidence; the runtime still does not claim persistent Codex session ownership.
+- Evidence freeze commands were rerun from `docs/process/evidence-cases.json`; `docs/process/v1x-evidence-report.md` and `docs/process/v1x-evidence-trend.md` stayed stable.
+- Targeted hardening suite passed: `pytest tests/test_docs_process.py tests/test_planning_support.py tests/test_team.py -q` reported 150 passed.
+- Setup readiness smoke passed with `release_ready: true`, package version `1.0.0rc1`, `codex`/`claude`/`mock` visible, runtime measurement `measured`, and provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`.
+- Compliance passed with `blocking: false`.

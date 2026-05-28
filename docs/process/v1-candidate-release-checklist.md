@@ -16,6 +16,7 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 - Treat provider health as PATH/cache dependent; use `health --refresh` when validating the current machine.
 - Confirm `release_readiness.runtime_measurement` is present.
 - Confirm `release_readiness.checklist.runtime_measurement` is true.
+- Confirm `runtime_measurement.provider_evidence_summary` is present; Codex pilot evidence may be summarized there, but provider-owned refs do not imply Agent Orchestrator session ownership.
 - Treat runtime measurement as local command/runtime evidence, not provider-native bridge readiness.
 
 ## Evidence Freeze
@@ -54,3 +55,4 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 - `send` and `cancel` are local session/job controls, not a guarantee of provider-native interactive session support.
 - v1.x remains a guarded local runtime, not a full Codex/Claude bridge or persistent session manager.
 - Runtime measurement records local timestamps, duration, exit code, provider availability, degraded reasons, and operation receipts when available; token/cost values remain placeholder unless reported by a provider runtime.
+- Codex Runtime Pilot evidence is consumed through provider evidence summaries and remains opt-in, fake-runner-testable, and provider-owned at the session boundary.
