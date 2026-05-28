@@ -301,3 +301,9 @@ The reference-informed upgrade is complete, but the v1.0 candidate should stay o
 - Phase 5 targeted suite passed: `pytest tests/test_docs_process.py tests/test_planning_support.py tests/test_team.py -q` reported 150 passed.
 - `team setup --runtime command --format json` reported package version `1.0.0rc1`, release readiness true, `codex`/`claude`/`mock` visible, runtime measurement `measured`, and provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`; this follow-up is now being sealed as `v1.0.0-rc.2` with package version `1.0.0rc2`.
 - `team check-compliance` passed with `blocking: false`.
+
+RC2 external evaluation result:
+
+- `v1.0.0-rc.2` passed setup, workspace status, evidence gates, compliance, and Codex pilot evidence-consumption checks in an external clone.
+- Dogfood found one README quickstart blocker: the governed workflow skipped `team draft-ready` and `team submit-review` before `team approve`.
+- Prepare `v1.0.0-rc.3` as a documentation-blocker fix only.

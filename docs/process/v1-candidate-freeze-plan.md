@@ -307,3 +307,62 @@ RC2 Phase 2 result:
 - `team evidence-gates --format json` exited 0 and returned status `ready` with provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`.
 - `team check-compliance` passed with no blocking reasons.
 - Ready to commit `Prepare v1.0.0-rc.2` and create local annotated tag `v1.0.0-rc.2`.
+
+## RC2 External Evaluation Result
+
+- External clone path: `/private/tmp/agent-orchestrator-rc2-eval-20260528`.
+- `v1.0.0-rc.2` resolved to commit `45051c98760823749fa5574ed72a6d168fbe2d06`.
+- Setup, workspace status, evidence gates, and compliance all exited 0.
+- Fresh clone runtime measurement was honestly `unavailable` because no job history existed, while the measurement surface and provider evidence summary remained present and non-blocking.
+- Fake Codex pilot evidence was consumed by workspace status and evidence gates through `agent_orchestrator.provider_evidence_summary.v1`.
+- Dogfood exposed a documentation blocker: README skipped `team draft-ready` and `team submit-review` before `team approve`.
+- Decision: preserve rc.2 as evaluated, do not promote it, and prepare rc.3 as a documentation-blocker fix only.
+
+## RC3 Phase 1 Plan: Quickstart Blocker Fix
+
+- Update README governed workflow quickstart to include `team draft-ready` and `team submit-review`.
+- Update package version to `1.0.0rc3`.
+- Add `docs/releases/v1.0.0-rc.3.md` and `docs/process/v1.0.0-rc.3-evidence-packet.md`.
+- Record the rc.2 external evaluation in `docs/process/ai-work-control-plane-rc2-external-evaluation-dogfood.md`.
+- Keep runtime and provider boundaries unchanged.
+
+RC3 Phase 1 targeted test:
+
+```bash
+pytest tests/test_cli.py tests/test_docs_process.py -q
+```
+
+RC3 Phase 1 result:
+
+- Targeted test passed: `107 passed`.
+
+## RC3 Phase 2 Plan: Final Gate, Commit, and Local Tag
+
+- Run full `pytest`.
+- Run `team setup --runtime command --format json`.
+- Run `team workspace-status --format json`.
+- Run `team evidence-gates --format json`.
+- Run `team check-compliance`.
+- Confirm `git status --short`.
+- Commit with `Prepare v1.0.0-rc.3`.
+- Create local annotated tag `v1.0.0-rc.3`.
+
+RC3 Phase 2 final gate:
+
+```bash
+pytest
+PYTHONPATH=src python -m agent_orchestrator.cli team setup --runtime command --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team workspace-status --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team evidence-gates --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
+git status --short
+```
+
+RC3 Phase 2 result:
+
+- Full test suite passed: `421 passed`.
+- `team setup --runtime command --format json` reported package version `1.0.0rc3`, readiness true, release_readiness true, runtime measurement `measured`, provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`, and `rc_blocking: false`.
+- `team workspace-status --format json` exited 0 and returned `agent_orchestrator.workspace_index.v1` with provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`.
+- `team evidence-gates --format json` exited 0 and returned status `ready` with provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`.
+- `team check-compliance` passed with no blocking reasons.
+- Ready to commit `Prepare v1.0.0-rc.3` and create local annotated tag `v1.0.0-rc.3`.
