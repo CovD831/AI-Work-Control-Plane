@@ -2,7 +2,7 @@
 
 Agent Orchestrator is an **AI Work Control Plane for long-cycle local agent work**. It keeps plans, context, execution topology, approvals, evidence, memory provenance, runtime measurements, and recovery state outside the model so they can be inspected, resumed, and audited.
 
-Current status: **Runtime Measurement + Codex Pilot Evidence Ready for `v1.0.0-rc.3` evaluation**.
+Current status: **`v1.0.0` local-first AI Work Control Plane release sealed**.
 
 Current workflow target: **internal default** for the author's local long-cycle agent work.
 
@@ -19,7 +19,7 @@ Explicit orchestration may become less visible over time, while state, evidence,
 - Supports local command-runtime jobs with measured duration, exit status, provider/runtime metadata, degraded reasons, and operation receipts.
 - Reports release readiness through setup, compliance, evidence, workspace, and gate surfaces.
 
-## Current RC Boundary
+## Current v1 Boundary
 
 The current candidate is **measurement-ready**, not provider bridge-ready.
 
@@ -33,7 +33,7 @@ Runtime measurement reports local facts when they exist:
 - degraded reasons
 - operation receipts
 
-Token and cost fields remain placeholders unless a runtime reports trustworthy values directly. That is intentional and is not an RC blocker for this track.
+Token and cost fields remain placeholders unless a runtime reports trustworthy values directly. That is intentional and is not a v1 blocker for this track.
 
 ## Quickstart
 
@@ -68,7 +68,7 @@ PYTHONPATH=src python -m agent_orchestrator.cli run "Review this workspace and r
 
 ## Release Checks
 
-Before calling a candidate ready, run:
+Before calling the release ready, run:
 
 ```bash
 pytest
@@ -76,14 +76,17 @@ PYTHONPATH=src python -m agent_orchestrator.cli team setup --runtime command --f
 PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
 PYTHONPATH=src python -m agent_orchestrator.cli team workspace-status --format json
 PYTHONPATH=src python -m agent_orchestrator.cli team evidence-gates --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle export --output .agent_orchestrator/governance/v1.0.0-final-bundle.json --query "v1.0.0 final release seal" --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle inspect .agent_orchestrator/governance/v1.0.0-final-bundle.json --format json
 ```
 
 The current release checklist is [docs/process/v1-candidate-release-checklist.md](docs/process/v1-candidate-release-checklist.md). The short canonical readiness process is [docs/process/v1x-release-readiness.md](docs/process/v1x-release-readiness.md).
 
-RC packaging docs:
+Release packaging docs:
 
+- [v1.0.0 release notes](docs/releases/v1.0.0.md)
+- [v1.0.0 evidence packet](docs/process/v1.0.0-evidence-packet.md)
 - [v1.0.0-rc.3 release notes](docs/releases/v1.0.0-rc.3.md)
-- [v1.0.0-rc.3 evidence packet](docs/process/v1.0.0-rc.3-evidence-packet.md)
 
 ## Product Layers
 

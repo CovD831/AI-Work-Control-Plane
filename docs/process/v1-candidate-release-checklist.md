@@ -1,10 +1,10 @@
-# v1.0 Candidate Release Checklist
+# v1.0 Final Release Checklist
 
-Use this checklist after the v1.x hardening evidence is current and before calling a build `v1.0.0-rc.3`. The Python package version for this candidate is `1.0.0rc3`; the local git tag uses the release label `v1.0.0-rc.3`. The canonical release-readiness process document remains `docs/process/v1x-release-readiness.md`; this file is the detailed operator checklist.
+Use this checklist after the v1.x hardening evidence is current and before calling the final build `v1.0.0`. The Python package version and local git tag both use `v1.0.0` / `1.0.0`. The canonical release-readiness process document remains `docs/process/v1x-release-readiness.md`; this file is the detailed operator checklist.
 
 ## Version Sync
 
-- Confirm `pyproject.toml` carries `1.0.0rc3` for `v1.0.0-rc.3`.
+- Confirm `pyproject.toml` carries `1.0.0` for `v1.0.0`.
 - Confirm README and process docs do not claim a distribution shape beyond the local package state.
 - Do not imply plugin-marketplace or external distribution support.
 
@@ -46,8 +46,8 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 
 - Run full `pytest`.
 - Run `PYTHONPATH=src python -m agent_orchestrator.cli team setup --runtime command --format json`.
-- Run `PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle export --output .agent_orchestrator/governance/v1-final-externalization-bundle.json --query "v1 final externalization hardening" --format json`.
-- Run `PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle inspect .agent_orchestrator/governance/v1-final-externalization-bundle.json --format json`.
+- Run `PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle export --output .agent_orchestrator/governance/v1.0.0-final-bundle.json --query "v1.0.0 final release seal" --format json`.
+- Run `PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle inspect .agent_orchestrator/governance/v1.0.0-final-bundle.json --format json`.
 - Confirm governance bundle inspection reports `complete: true`, `auditable: true`, and `blocking: false`.
 - Run `PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance`.
 - Confirm `git status --short` is clean after the final commit.

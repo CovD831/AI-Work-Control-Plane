@@ -272,7 +272,7 @@ def test_team_setup_reports_readiness_and_recommendations(capsys, tmp_path, monk
     from agent_orchestrator import cli
 
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "pyproject.toml").write_text('version = "1.0.0rc3"\n', encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text('version = "1.0.0"\n', encoding="utf-8")
     (tmp_path / "README.md").write_text("# Agent Orchestrator\n", encoding="utf-8")
     (tmp_path / "docs/process").mkdir(parents=True)
     (tmp_path / "docs/architecture").mkdir(parents=True)
@@ -334,7 +334,7 @@ def test_team_setup_reports_readiness_and_recommendations(capsys, tmp_path, monk
         assert out["readiness"]["provider_states"]
         assert out["runtime_measurement"]["format"] == "agent_orchestrator.runtime_measurement_readiness.v1"
         assert out["release_readiness"]["checklist"]["runtime_measurement"] is True
-        assert out["release_readiness"]["version_sync"]["package_version"] == "1.0.0rc3"
+        assert out["release_readiness"]["version_sync"]["package_version"] == "1.0.0"
         assert out["release_readiness"]["checklist"]["version_sync"] is True
         assert out["release_readiness"]["evidence_state"]["benchmark_report_present"] is True
         assert out["recommended_commands"][0].endswith("team check-compliance")
@@ -348,7 +348,7 @@ def test_team_setup_json_mode_remains_machine_readable(capsys, tmp_path, monkeyp
 
     monkeypatch.chdir(tmp_path)
     _write_codex_pilot_job(tmp_path / ".agent_orchestrator" / "jobs", tmp_path)
-    (tmp_path / "pyproject.toml").write_text('version = "1.0.0rc3"\n', encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text('version = "1.0.0"\n', encoding="utf-8")
     (tmp_path / "docs/process").mkdir(parents=True)
     (tmp_path / "docs/process" / "v1x-evidence-report.md").write_text("# Stub\n", encoding="utf-8")
     (tmp_path / "docs/process" / "v1x-evidence-trend.md").write_text("# Stub\n", encoding="utf-8")
@@ -379,7 +379,7 @@ def test_team_setup_json_mode_remains_machine_readable(capsys, tmp_path, monkeyp
         output = capsys.readouterr().out
         assert output.lstrip().startswith("{")
         payload = json.loads(output)
-        assert payload["release_readiness"]["version_sync"]["package_version"] == "1.0.0rc3"
+        assert payload["release_readiness"]["version_sync"]["package_version"] == "1.0.0"
         assert payload["release_readiness"]["runtime_measurement"]["measurement_surface_available"] is True
         summary = payload["runtime_measurement"]["provider_evidence_summary"]
         assert summary["format"] == "agent_orchestrator.provider_evidence_summary.v1"
