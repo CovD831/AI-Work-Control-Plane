@@ -299,5 +299,5 @@ The reference-informed upgrade is complete, but the v1.0 candidate should stay o
 - Codex Runtime Pilot Phase 4/5 was committed as a checkpoint.
 - Evidence report and trend were regenerated from `docs/process/evidence-cases.json` and stayed stable.
 - Phase 5 targeted suite passed: `pytest tests/test_docs_process.py tests/test_planning_support.py tests/test_team.py -q` reported 150 passed.
-- `team setup --runtime command --format json` reported package version `1.0.0rc1`, release readiness true, `codex`/`claude`/`mock` visible, runtime measurement `measured`, and provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`.
+- `team setup --runtime command --format json` reported package version `1.0.0rc1`, release readiness true, `codex`/`claude`/`mock` visible, runtime measurement `measured`, and provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`; this follow-up is now being sealed as `v1.0.0-rc.2` with package version `1.0.0rc2`.
 - `team check-compliance` passed with `blocking: false`.

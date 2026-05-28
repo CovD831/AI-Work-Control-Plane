@@ -257,3 +257,53 @@ RC1 Phase 5 result:
 - `team setup --runtime command --format json` reported package version `1.0.0rc1`, readiness true, and release_readiness true.
 - `team check-compliance` passed with no blocking reasons.
 - Ready to commit `Prepare v1.0.0-rc.1` and create local annotated tag `v1.0.0-rc.1`.
+
+## RC2 Phase 1 Plan: Codex Pilot Seal
+
+- Preserve the existing `v1.0.0-rc.1` tag as historical release-candidate evidence.
+- Seal the post-rc.1 Codex Runtime Pilot and v1 candidate hardening follow-up as `v1.0.0-rc.2`.
+- Update the package version to `1.0.0rc2`.
+- Add `docs/releases/v1.0.0-rc.2.md` and `docs/process/v1.0.0-rc.2-evidence-packet.md`.
+- Keep the scope fixed: runtime measurement and Codex pilot evidence consumption, not provider bridge readiness.
+- Run the targeted docs/CLI version checks before final gates.
+
+RC2 Phase 1 targeted test:
+
+```bash
+pytest tests/test_cli.py tests/test_docs_process.py -q
+```
+
+RC2 Phase 1 result:
+
+- Targeted test passed: `107 passed`.
+
+## RC2 Phase 2 Plan: Final Gate, Commit, and Local Tag
+
+- Run full `pytest`.
+- Run `team setup --runtime command --format json`.
+- Run `team workspace-status --format json`.
+- Run `team evidence-gates --format json`.
+- Run `team check-compliance`.
+- Confirm `git status --short`.
+- Commit with `Prepare v1.0.0-rc.2`.
+- Create local annotated tag `v1.0.0-rc.2`.
+
+RC2 Phase 2 final gate:
+
+```bash
+pytest
+PYTHONPATH=src python -m agent_orchestrator.cli team setup --runtime command --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team workspace-status --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team evidence-gates --format json
+PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
+git status --short
+```
+
+RC2 Phase 2 result:
+
+- Full test suite passed: `421 passed`.
+- `team setup --runtime command --format json` reported package version `1.0.0rc2`, readiness true, release_readiness true, runtime measurement `measured`, provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`, and `rc_blocking: false`.
+- `team workspace-status --format json` exited 0 and returned `agent_orchestrator.workspace_index.v1` with provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`.
+- `team evidence-gates --format json` exited 0 and returned status `ready` with provider evidence summary format `agent_orchestrator.provider_evidence_summary.v1`.
+- `team check-compliance` passed with no blocking reasons.
+- Ready to commit `Prepare v1.0.0-rc.2` and create local annotated tag `v1.0.0-rc.2`.

@@ -2,7 +2,7 @@
 
 Agent Orchestrator is an **AI Work Control Plane for long-cycle local agent work**. It keeps plans, context, execution topology, approvals, evidence, memory provenance, runtime measurements, and recovery state outside the model so they can be inspected, resumed, and audited.
 
-Current status: **Runtime Measurement Ready for `v1.0.0-rc.1` evaluation**.
+Current status: **Runtime Measurement + Codex Pilot Evidence Ready for `v1.0.0-rc.2` evaluation**.
 
 Current workflow target: **internal default** for the author's local long-cycle agent work.
 
@@ -80,8 +80,8 @@ The current release checklist is [docs/process/v1-candidate-release-checklist.md
 
 RC packaging docs:
 
-- [v1.0.0-rc.1 release notes](docs/releases/v1.0.0-rc.1.md)
-- [v1.0.0-rc.1 evidence packet](docs/process/v1.0.0-rc.1-evidence-packet.md)
+- [v1.0.0-rc.2 release notes](docs/releases/v1.0.0-rc.2.md)
+- [v1.0.0-rc.2 evidence packet](docs/process/v1.0.0-rc.2-evidence-packet.md)
 
 ## Product Layers
 
