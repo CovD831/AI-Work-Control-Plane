@@ -442,6 +442,7 @@ def build_workspace_index(
             **({"recovery_recommendation": _artifact_ref(recovery_recommendation)} if recovery_recommendation else {}),
         },
     )
+    payload["provider_evidence_summary"] = build_provider_evidence_summary(jobs_path)
     payload.update(dashboard)
     return index.write_index(payload)
 
@@ -1164,6 +1165,7 @@ def build_evidence_bundle(project_root: Path | str = ".", compliance: dict[str, 
         "evidence_state": evidence_state,
         "recovery_refs": _evidence_recovery_refs(root),
         "runtime_fidelity": _evidence_runtime_fidelity(root),
+        "provider_evidence_summary": build_provider_evidence_summary(root / ".agent_orchestrator" / "jobs"),
         "compliance": {
             "blocking": bool(compliance_payload.get("blocking", False)),
             "blocking_reasons": list(compliance_payload.get("blocking_reasons", []))
@@ -1181,6 +1183,56 @@ def build_evidence_bundle(project_root: Path | str = ".", compliance: dict[str, 
     }
     WorkspaceIndexStore(root / ".agent_orchestrator" / "workspace").record_artifact("evidence_bundle", payload)
     return payload
+
+
+def build_provider_evidence_summary(jobs_root: Path | str) -> dict[str, object]:
+    jobs = _read_job_payloads(Path(jobs_root))
+    provider_session_refs: list[dict[str, object]] = []
+    codex_payloads: list[dict[str, object]] = []
+    codex_pilots: list[dict[str, object]] = []
+    usage_payloads: list[dict[str, object]] = []
+    for job in jobs:
+        parsed = job.get("parsed_payload", {}) if isinstance(job.get("parsed_payload"), dict) else {}
+        provider_ref = parsed.get("provider_session_ref") if isinstance(parsed.get("provider_session_ref"), dict) else None
+        codex_json = parsed.get("codex_exec_json") if isinstance(parsed.get("codex_exec_json"), dict) else None
+        codex_pilot = parsed.get("codex_pilot") if isinstance(parsed.get("codex_pilot"), dict) else None
+        usage = parsed.get("usage") if isinstance(parsed.get("usage"), dict) else None
+        if provider_ref:
+            provider_session_refs.append(provider_ref)
+        if codex_json:
+            codex_payloads.append(codex_json)
+            if isinstance(codex_json.get("usage"), dict) and usage is None:
+                usage_payloads.append(codex_json["usage"])
+        if codex_pilot:
+            codex_pilots.append(codex_pilot)
+        if usage:
+            usage_payloads.append(usage)
+    final_message_artifact_count = sum(
+        1
+        for pilot in codex_pilots
+        if pilot.get("output_last_message") and pilot.get("final_message_source") == "output_last_message"
+    )
+    codex_json_event_count = sum(int(payload.get("event_count", 0) or 0) for payload in codex_payloads)
+    malformed_event_count = sum(int(payload.get("malformed_event_count", 0) or 0) for payload in codex_payloads)
+    provider_owned_ref_count = sum(1 for ref in provider_session_refs if ref.get("provider_owned") is True)
+    continuation_provider_owned_count = sum(
+        1 for ref in provider_session_refs if ref.get("continuation_guarantee") == "provider_owned"
+    )
+    return {
+        "format": "agent_orchestrator.provider_evidence_summary.v1",
+        "job_count": len(jobs),
+        "provider_session_ref_count": len(provider_session_refs),
+        "provider_owned_ref_count": provider_owned_ref_count,
+        "continuation_provider_owned_count": continuation_provider_owned_count,
+        "codex_exec_json_job_count": len(codex_payloads),
+        "codex_json_event_count": codex_json_event_count,
+        "codex_malformed_event_count": malformed_event_count,
+        "final_message_artifact_count": final_message_artifact_count,
+        "provider_reported_usage_count": len(usage_payloads),
+        "usage_cost_measurement_status": "measured" if usage_payloads else "placeholder",
+        "session_ownership_claim": "provider_owned" if provider_owned_ref_count else "none",
+        "policy": "provider evidence is read-only; provider-owned refs do not imply persistent session ownership",
+    }
 
 
 def _workspace_index_payload(

@@ -267,3 +267,5 @@ Track plan:
 Phase records:
 
 - `docs/process/ai-work-control-plane-codex-runtime-pilot-phase-1-3-json-path.md`
+- `docs/process/ai-work-control-plane-codex-runtime-pilot-phase-4-evidence-consumption.md`
+- `docs/process/ai-work-control-plane-codex-runtime-pilot-phase-5-final-convergence.md`

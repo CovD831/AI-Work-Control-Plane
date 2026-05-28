@@ -61,6 +61,53 @@ class _FakeClaudeRunner:
         )
 
 
+def _write_codex_pilot_job(jobs_root: Path, cwd: Path) -> str:
+    final_message_path = cwd / "codex-final-message.txt"
+    final_message_path.write_text("Codex pilot final message.\n", encoding="utf-8")
+    runtime = FileJobRuntime(jobs_root)
+    job = runtime.start(
+        JobRequest(
+            task_id="cli-codex-evidence",
+            provider="codex",
+            kind="implementation",
+            prompt="Collect Codex pilot evidence",
+            cwd=str(cwd),
+        )
+    )
+    runtime.complete(
+        job.id,
+        summary="Codex pilot evidence collected.",
+        parsed_payload={
+            "codex_exec_json": {
+                "format": "agent_orchestrator.codex_exec_json.v1",
+                "event_count": 3,
+                "malformed_event_count": 1,
+                "event_types": {"session.started": 1, "message": 2},
+                "session_id": "codex-session-cli",
+                "thread_id": "codex-thread-cli",
+            },
+            "provider_session_ref": {
+                "format": "agent_orchestrator.provider_session_ref.v1",
+                "provider": "codex",
+                "runtime_id": "codex_exec_json",
+                "session_id": "codex-session-cli",
+                "thread_id": "codex-thread-cli",
+                "cwd": str(cwd),
+                "provider_owned": True,
+                "continuation_guarantee": "provider_owned",
+            },
+            "codex_pilot": {
+                "runtime_id": "codex_exec_json",
+                "json_events": True,
+                "output_last_message": str(final_message_path),
+                "final_message_source": "output_last_message",
+            },
+        },
+        exit_code=0,
+    )
+    return job.id
+
+
 def test_auto_mode_high_risk_routes_to_success_first() -> None:
     run = Orchestrator(router=PolicyRouter()).run("Urgent auth refactor today", None)
 
@@ -300,6 +347,7 @@ def test_team_setup_json_mode_remains_machine_readable(capsys, tmp_path, monkeyp
     from agent_orchestrator import cli
 
     monkeypatch.chdir(tmp_path)
+    _write_codex_pilot_job(tmp_path / ".agent_orchestrator" / "jobs", tmp_path)
     (tmp_path / "pyproject.toml").write_text('version = "1.0.0rc1"\n', encoding="utf-8")
     (tmp_path / "docs/process").mkdir(parents=True)
     (tmp_path / "docs/process" / "v1x-evidence-report.md").write_text("# Stub\n", encoding="utf-8")
@@ -333,6 +381,12 @@ def test_team_setup_json_mode_remains_machine_readable(capsys, tmp_path, monkeyp
         payload = json.loads(output)
         assert payload["release_readiness"]["version_sync"]["package_version"] == "1.0.0rc1"
         assert payload["release_readiness"]["runtime_measurement"]["measurement_surface_available"] is True
+        summary = payload["runtime_measurement"]["provider_evidence_summary"]
+        assert summary["format"] == "agent_orchestrator.provider_evidence_summary.v1"
+        assert summary["provider_owned_ref_count"] == 1
+        assert summary["codex_exec_json_job_count"] == 1
+        assert summary["codex_json_event_count"] == 3
+        assert summary["session_ownership_claim"] == "provider_owned"
     finally:
         cli._build_team_orchestrator = original_builder
         cli.argparse.ArgumentParser.parse_args = original
@@ -2928,6 +2982,7 @@ def test_team_workspace_status_json_outputs_control_plane_snapshot(tmp_path, cap
     from agent_orchestrator import cli
 
     write_minimal_process_docs(tmp_path)
+    _write_codex_pilot_job(tmp_path / "jobs", tmp_path)
     monkeypatch.chdir(tmp_path)
 
     original_parse_args = cli.argparse.ArgumentParser.parse_args
@@ -2951,6 +3006,14 @@ def test_team_workspace_status_json_outputs_control_plane_snapshot(tmp_path, cap
         assert "active_artifacts" in payload
         assert payload["recovery_timeline"]["format"] == "agent_orchestrator.recovery_timeline.v1"
         assert payload["runtime_events"]["format"] == "agent_orchestrator.runtime_event_stream.v1"
+        summary = payload["provider_evidence_summary"]
+        assert summary["format"] == "agent_orchestrator.provider_evidence_summary.v1"
+        assert summary["provider_owned_ref_count"] == 1
+        assert summary["codex_exec_json_job_count"] == 1
+        assert summary["codex_json_event_count"] == 3
+        assert summary["codex_malformed_event_count"] == 1
+        assert summary["final_message_artifact_count"] == 1
+        assert summary["session_ownership_claim"] == "provider_owned"
         assert "blocking_summary" in payload
         assert "resume_hint" in payload
         assert (tmp_path / ".agent_orchestrator" / "workspace" / "index.json").exists()
@@ -3127,13 +3190,15 @@ def test_team_approvals_list_and_resolve_json_outputs_contracts(tmp_path, capsys
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
-def test_team_evidence_gates_json_outputs_bundle(tmp_path, capsys) -> None:
+def test_team_evidence_gates_json_outputs_bundle(tmp_path, capsys, monkeypatch) -> None:
     from agent_orchestrator import cli
 
     class _FakeTeam:
         def check_compliance(self):
             return {"blocking": False, "blocking_reasons": [], "warnings": []}
 
+    _write_codex_pilot_job(tmp_path / ".agent_orchestrator" / "jobs", tmp_path)
+    monkeypatch.chdir(tmp_path)
     original_build_team = cli._build_team_orchestrator
     original_parse_args = cli.argparse.ArgumentParser.parse_args
     try:
@@ -3152,6 +3217,13 @@ def test_team_evidence_gates_json_outputs_bundle(tmp_path, capsys) -> None:
         assert payload["format"] == "agent_orchestrator.evidence_bundle.v1"
         assert payload["gate_evidence"]["format"] == "agent_orchestrator.gate_evidence.v1"
         assert payload["runtime_health"]["records_only"] is True
+        summary = payload["provider_evidence_summary"]
+        assert summary["format"] == "agent_orchestrator.provider_evidence_summary.v1"
+        assert summary["provider_owned_ref_count"] == 1
+        assert summary["codex_exec_json_job_count"] == 1
+        assert summary["codex_json_event_count"] == 3
+        assert summary["codex_malformed_event_count"] == 1
+        assert summary["session_ownership_claim"] == "provider_owned"
         assert payload["tool_inventory"]["mutation_policy"].startswith("inventory only")
         assert payload["memory_recommendation"]["auto_write"] is False
         assert payload["memory_recommendation"]["candidate_count"] == 9

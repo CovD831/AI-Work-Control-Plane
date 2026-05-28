@@ -109,6 +109,24 @@ These contracts pin the minimum stable shape for AI Work Control Plane artifacts
 - Stable fields: `job_id`, `provider`, `runtime_id`, `session_id`, `thread_id`, `cwd`, `pid`, `command`, `provider_owned`, `continuation_guarantee`, `created_at`
 - Rule: a ref points at provider/runtime state; it does not transfer ownership of that state to Agent Orchestrator.
 
+## CodexExecJson
+
+- Format: `agent_orchestrator.codex_exec_json.v1`
+- Producer: `CodexCliAdapter` when the opt-in Codex Runtime Pilot path runs with `codex exec --json`
+- Consumers: provider evidence summary, provider session ref creation, future structured-output pilots
+- Lifecycle: stored inside job parsed payloads and summarized through workspace/evidence surfaces
+- Stable fields: `event_count`, `malformed_event_count`, `event_types`, `events`, `final_message`, `final_message_source`, `session_id`, `thread_id`, `usage`
+- Rule: JSON events are provider evidence; usage/cost remains placeholder unless the provider reports usage directly.
+
+## ProviderEvidenceSummary
+
+- Format: `agent_orchestrator.provider_evidence_summary.v1`
+- Producer: workspace status, evidence gates, and setup readiness
+- Consumers: operator status surfaces, evidence policy, release-readiness checks
+- Lifecycle: generated read-only from recent job records and provider parsed payloads
+- Stable fields: `job_count`, `provider_session_ref_count`, `provider_owned_ref_count`, `continuation_provider_owned_count`, `codex_exec_json_job_count`, `codex_json_event_count`, `codex_malformed_event_count`, `final_message_artifact_count`, `provider_reported_usage_count`, `usage_cost_measurement_status`, `session_ownership_claim`, `policy`
+- Rule: the summary makes provider evidence consumable without creating provider-specific control-plane branches or claiming persistent session ownership.
+
 ## RuntimeOperationReceipt
 
 - Format: `agent_orchestrator.runtime_operation_receipt.v1`

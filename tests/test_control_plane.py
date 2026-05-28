@@ -8,6 +8,7 @@ from agent_orchestrator.control_plane import (
     build_context_packet,
     build_evidence_bundle,
     build_execution_topology_snapshot,
+    build_provider_evidence_summary,
     build_provider_session_snapshot,
     build_recovery_recommendation,
     build_recovery_timeline,
@@ -130,6 +131,59 @@ def test_workspace_index_v2_surfaces_operator_current_state(tmp_path) -> None:
     assert "blocking" in payload["blocking_summary"]
     assert payload["resume_hint"]
     assert payload["last_checkpoint"]["status"] == "checkpointed"
+
+
+def test_workspace_index_summarizes_codex_pilot_provider_evidence(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    runtime = FileJobRuntime(tmp_path / "jobs")
+    job = runtime.start(
+        JobRequest(
+            task_id="task-codex-evidence",
+            provider="codex",
+            kind="implementation",
+            prompt="build",
+            cwd=str(tmp_path),
+        )
+    )
+    runtime.complete(
+        job.id,
+        summary="done",
+        parsed_payload={
+            "codex_exec_json": {
+                "format": "agent_orchestrator.codex_exec_json.v1",
+                "event_count": 2,
+                "malformed_event_count": 0,
+                "session_id": "codex-session-1",
+            },
+            "provider_session_ref": {
+                "format": "agent_orchestrator.provider_session_ref.v1",
+                "provider": "codex",
+                "runtime_id": "codex_exec_json",
+                "session_id": "codex-session-1",
+                "provider_owned": True,
+                "continuation_guarantee": "provider_owned",
+            },
+            "codex_pilot": {
+                "runtime_id": "codex_exec_json",
+                "json_events": True,
+                "output_last_message": str(tmp_path / "codex-final.txt"),
+                "final_message_source": "output_last_message",
+            },
+        },
+        exit_code=0,
+    )
+
+    payload = build_workspace_index(tmp_path, jobs_root=tmp_path / "jobs")
+    summary = payload["provider_evidence_summary"]
+
+    assert summary["format"] == "agent_orchestrator.provider_evidence_summary.v1"
+    assert summary["provider_session_ref_count"] == 1
+    assert summary["provider_owned_ref_count"] == 1
+    assert summary["codex_exec_json_job_count"] == 1
+    assert summary["codex_json_event_count"] == 2
+    assert summary["final_message_artifact_count"] == 1
+    assert summary["usage_cost_measurement_status"] == "placeholder"
+    assert summary["session_ownership_claim"] == "provider_owned"
 
 
 def test_context_packet_combines_docs_and_memory_without_strategy(tmp_path) -> None:
@@ -258,6 +312,8 @@ def test_evidence_bundle_reports_gate_evidence_shape(tmp_path) -> None:
     assert payload["format"] == "agent_orchestrator.evidence_bundle.v1"
     assert payload["gate_evidence"]["format"] == "agent_orchestrator.gate_evidence.v1"
     assert payload["runtime_health"]["records_only"] is True
+    assert payload["provider_evidence_summary"]["format"] == "agent_orchestrator.provider_evidence_summary.v1"
+    assert payload["provider_evidence_summary"]["usage_cost_measurement_status"] == "placeholder"
     assert payload["tool_inventory"]["source"] == "control_plane_placeholder"
     assert payload["usage_cost"]["source"] == "placeholder"
     assert "recovery_refs" in payload

@@ -64,6 +64,10 @@ pytest tests/test_command.py tests/test_control_plane.py tests/test_cli.py -q
 
 Verify workspace and evidence surfaces consume the pilot job through existing runtime fidelity paths without Codex-specific control-plane branching.
 
+Result artifact:
+
+- `docs/process/ai-work-control-plane-codex-runtime-pilot-phase-4-evidence-consumption.md`
+
 Targeted tests:
 
 ```bash
@@ -73,6 +77,10 @@ pytest tests/test_control_plane.py tests/test_cli.py tests/test_team.py -q
 ### Phase 5: Final Convergence
 
 Record pilot evidence and run final validation.
+
+Result artifact:
+
+- `docs/process/ai-work-control-plane-codex-runtime-pilot-phase-5-final-convergence.md`
 
 Final commands:
 
@@ -96,4 +104,3 @@ codex exec --json
 ```
 
 without claiming provider-native session ownership or live-provider determinism.
-
