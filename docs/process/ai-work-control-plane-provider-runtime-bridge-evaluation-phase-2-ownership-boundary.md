@@ -8,30 +8,30 @@ The control plane should make provider runtimes inspectable without absorbing pr
 
 ## Ownership Categories
 
-### Agent Orchestrator Owned
+### AI-Work-Control-Plane Owned
 
-These fields are created or interpreted by Agent Orchestrator and can be used in stable local contracts:
+These fields are created or interpreted by AI-Work-Control-Plane and can be used in stable local contracts:
 
 | Field | Owner | Notes |
 | --- | --- | --- |
-| `job_id` | Agent Orchestrator | Local durable job identity. |
-| `task_id` | Agent Orchestrator | Local task/work-unit identity. |
-| `provider` | Agent Orchestrator | Local label such as `codex`, `claude`, or `mock`. |
-| `kind` | Agent Orchestrator | Local job kind: research, implementation, review, adversarial review, rescue. |
-| `runtime_mode` | Agent Orchestrator | Local execution mode: `cli_inherit`, `cli_isolated`, `direct_api`. |
-| `cwd` | Agent Orchestrator | Requested working directory. |
-| `command` | Agent Orchestrator | Command argv built by the adapter. |
-| `created_at` / `started_at` / `completed_at` | Agent Orchestrator | Local lifecycle timestamps. |
-| `status` / `phase` | Agent Orchestrator | Local lifecycle interpretation. |
-| `stdout` / `stderr` / `raw_output` | Agent Orchestrator | Captured local process output. |
-| `exit_code` | Agent Orchestrator | Local process exit code when available. |
-| `runtime_measurement` | Agent Orchestrator | Local measured/placeholder/unavailable classification. |
-| `operation_receipts` | Agent Orchestrator | Local records of send/cancel/terminal operations. |
-| `degraded_reason` | Agent Orchestrator | Local explanation assembled from errors, fallback, provider health, or missing capability. |
+| `job_id` | AI-Work-Control-Plane | Local durable job identity. |
+| `task_id` | AI-Work-Control-Plane | Local task/work-unit identity. |
+| `provider` | AI-Work-Control-Plane | Local label such as `codex`, `claude`, or `mock`. |
+| `kind` | AI-Work-Control-Plane | Local job kind: research, implementation, review, adversarial review, rescue. |
+| `runtime_mode` | AI-Work-Control-Plane | Local execution mode: `cli_inherit`, `cli_isolated`, `direct_api`. |
+| `cwd` | AI-Work-Control-Plane | Requested working directory. |
+| `command` | AI-Work-Control-Plane | Command argv built by the adapter. |
+| `created_at` / `started_at` / `completed_at` | AI-Work-Control-Plane | Local lifecycle timestamps. |
+| `status` / `phase` | AI-Work-Control-Plane | Local lifecycle interpretation. |
+| `stdout` / `stderr` / `raw_output` | AI-Work-Control-Plane | Captured local process output. |
+| `exit_code` | AI-Work-Control-Plane | Local process exit code when available. |
+| `runtime_measurement` | AI-Work-Control-Plane | Local measured/placeholder/unavailable classification. |
+| `operation_receipts` | AI-Work-Control-Plane | Local records of send/cancel/terminal operations. |
+| `degraded_reason` | AI-Work-Control-Plane | Local explanation assembled from errors, fallback, provider health, or missing capability. |
 
 ### Observed Provider Facts
 
-These fields can be recorded when a runtime exposes them, but Agent Orchestrator must not treat them as owned:
+These fields can be recorded when a runtime exposes them, but AI-Work-Control-Plane must not treat them as owned:
 
 | Field | Status | Notes |
 | --- | --- | --- |
@@ -49,9 +49,9 @@ These fields remain provider-owned unless a future adapter proves otherwise:
 
 | Field | Owner | Notes |
 | --- | --- | --- |
-| model internal state | provider | Never owned by Agent Orchestrator. |
+| model internal state | provider | Never owned by AI-Work-Control-Plane. |
 | provider-native conversation continuity | provider | Can be referenced only through provider-supported resume/session features. |
-| provider-native tool execution semantics | provider | Agent Orchestrator records local permissions but cannot redefine provider behavior. |
+| provider-native tool execution semantics | provider | AI-Work-Control-Plane records local permissions but cannot redefine provider behavior. |
 | provider-native send/cancel guarantees | provider | Current send/cancel are local operation receipts unless proven by a pilot. |
 | token usage | provider | Placeholder unless provider reports it. |
 | cost | provider | Placeholder unless provider reports it. |
@@ -74,7 +74,7 @@ These fields should be reported as unavailable rather than inferred:
 - provider-native send support for non-interactive Codex CLI
 - provider-native cancel support for non-interactive Codex CLI
 - provider-native send support for non-interactive Claude `-p` outside stream-json or agent flows
-- durable provider session ownership by Agent Orchestrator
+- durable provider session ownership by AI-Work-Control-Plane
 - provider cost when no runtime-reported value is present
 
 ## Adapter Boundary Rule

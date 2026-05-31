@@ -16,7 +16,7 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 - Treat provider health as PATH/cache dependent; use `health --refresh` when validating the current machine.
 - Confirm `release_readiness.runtime_measurement` is present.
 - Confirm `release_readiness.checklist.runtime_measurement` is true.
-- Confirm `runtime_measurement.provider_evidence_summary` is present; Codex pilot evidence may be summarized there, but provider-owned refs do not imply Agent Orchestrator session ownership.
+- Confirm `runtime_measurement.provider_evidence_summary` is present; Codex pilot evidence may be summarized there, but provider-owned refs do not imply AI-Work-Control-Plane session ownership.
 - Treat runtime measurement as local command/runtime evidence, not provider-native bridge readiness.
 
 ## Evidence Freeze

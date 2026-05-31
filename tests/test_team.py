@@ -4,7 +4,6 @@
 # ---
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -14,7 +13,6 @@ from agent_orchestrator.command import ClaudeCodeAdapter, CodexCliAdapter, Comma
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.planning import (
     PlanChecklistItem,
-    PlanGap,
     PlanReviewRound,
     PlanSession,
     PlanStore,
@@ -22,7 +20,6 @@ from agent_orchestrator.planning import (
     RoundController,
     StructuredPlanBrief,
     TeamOrchestrator,
-    build_session_guidance,
 )
 from agent_orchestrator.review import Finding
 from test_support import write_minimal_process_docs

@@ -20,7 +20,7 @@ This means the next track should not reimplement runtime fidelity. It should eva
 
 ## Boundary
 
-Agent Orchestrator owns:
+AI-Work-Control-Plane owns:
 
 - job id
 - task id

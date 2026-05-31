@@ -8,11 +8,21 @@
 - `agent_config.py`: Configurable agent profiles for provider, model, and prompt selection.
 - `cli.py`: Command line interface for the orchestration MVP.
 - `cli_common.py`: Shared helpers for command-line presenters.
-- `cli_evidence.py`: Evidence command handlers for the Agent Orchestrator CLI.
-- `cli_jobs.py`: Job command handlers for the Agent Orchestrator CLI.
+- `cli_evidence.py`: Evidence command handlers for the AI-Work-Control-Plane CLI.
+- `cli_jobs.py`: Job command handlers for the AI-Work-Control-Plane CLI.
 - `cli_presenters.py`: Formatting helpers for CLI session and execution output.
+- `cli_team.py`: Team command dispatch for the CLI.
 - `command.py`: Command-based provider integration for real Claude/Codex runs.
 - `control_plane.py`: AI Work Control Plane artifact models and snapshot builders.
+- `control_plane_approvals.py`: Approval item models and persistence for the control plane.
+- `control_plane_artifacts.py`: Artifact references and JSON helpers for the control plane.
+- `control_plane_constants.py`: Stable constants for AI Work Control Plane artifacts.
+- `control_plane_governance.py`: Governance bundle export and inspection for the control plane.
+- `control_plane_ledger.py`: Run ledger builder for control-plane recovery artifacts.
+- `control_plane_recovery.py`: Recovery timeline and recommendation builders for the control plane.
+- `control_plane_runtime.py`: Runtime event stream and provider session snapshots for the control plane.
+- `control_plane_topology.py`: Execution topology snapshot builder for the control plane.
+- `control_plane_workspace.py`: Workspace state and index models for the control plane.
 - `events.py`: Append-only event store for orchestration state changes.
 - `evidence.py`: Versioned evidence harness and benchmark reports for team workflow comparisons.
 - `failure.py`: Failure detection and reroute decisions for whole-run upgrades.  This router only supports full-run escalation between modes. It does not attempt partial DAG rollback, branch splitting, or multi-path replay.

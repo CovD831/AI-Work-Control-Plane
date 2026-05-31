@@ -29,7 +29,7 @@ External clone path:
 Source:
 
 ```text
-git clone --branch v1.0.0-rc.1 /Users/abab/Desktop/Agent-Orchestratoar /private/tmp/agent-orchestrator-rc1-eval
+git clone --branch v1.0.0-rc.1 /Users/abab/Desktop/AI-Work-Control-Plane /private/tmp/agent-orchestrator-rc1-eval
 ```
 
 Resolved candidate commit:

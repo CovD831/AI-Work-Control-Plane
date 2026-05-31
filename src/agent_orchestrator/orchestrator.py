@@ -31,9 +31,9 @@ from agent_orchestrator.tasks import (
     DecisionSignals,
     ExecutionContract,
     OrchestrationAttempt,
-    OrchestrationAttemptHandle,
     OrchestrationRun,
     OrchestrationRunHandle,
+    TaskContract,
     WorkUnit,
     WorkUnitResult,
 )
@@ -51,11 +51,13 @@ class Orchestrator:
     router: PolicyRouter = field(default_factory=PolicyRouter)
     failure_router: FailureRouter = field(default_factory=FailureRouter)
     run_store: RunStore = field(default_factory=RunStore)
+    restore_pending_on_init: bool = False
     _run_threads: dict[str, threading.Thread] = field(default_factory=dict, init=False, repr=False)
     _run_locks: dict[str, threading.Lock] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.restore_pending_runs()
+        if self.restore_pending_on_init:
+            self.restore_pending_runs()
 
     def start_run(
         self,

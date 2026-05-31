@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This plan shifts Agent Orchestrator from an orchestration-centered product to an **AI Work Control Plane** for long-cycle local agent work.
+This plan shifts AI-Work-Control-Plane from an orchestration-centered product to an **AI Work Control Plane** for long-cycle local agent work.
 
 The goal is not to discard orchestration. Explicit agent planning, review, rescue, jobs, and provider runtimes remain necessary in the short term. The shift is that orchestration becomes an execution capability under a higher control plane:
 

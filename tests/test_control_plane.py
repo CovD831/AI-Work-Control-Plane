@@ -9,7 +9,6 @@ from agent_orchestrator.control_plane import (
     build_evidence_bundle,
     build_execution_topology_snapshot,
     build_governance_bundle,
-    build_provider_evidence_summary,
     build_provider_session_snapshot,
     build_recovery_recommendation,
     build_recovery_timeline,

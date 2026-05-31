@@ -1,6 +1,6 @@
 # Context Map
 
-- CODEBASE_MAP-style orientation for the Agent Orchestrator repository
+- CODEBASE_MAP-style orientation for the AI-Work-Control-Plane repository
 - root map
 - module manifest
 - file-header contract

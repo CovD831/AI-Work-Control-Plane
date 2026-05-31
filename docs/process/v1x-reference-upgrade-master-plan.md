@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This plan turns targeted lessons from local reference projects into staged upgrades for Agent Orchestrator.
+This plan turns targeted lessons from local reference projects into staged upgrades for AI-Work-Control-Plane.
 
 The goal is not to become a bridge product, session manager, or plugin marketplace. The goal is to strengthen the existing product shape:
 
@@ -38,7 +38,7 @@ All implementation work remains mapped to the repository's three Chinese impleme
 | Task Master pattern | PRD-to-task breakdown, dependencies, next executable task | Checklist dependency/status/next-item visibility inside PlanSession | 决策核心层 + 执行拓扑层 | Borrow task structure, not a second task database |
 | Ralph / Swarm / OpenSwarm patterns | Fresh-session loops, runtime decoupling, structured logs, unified approval signals | Fresh/resume execution guidance, cost/usage placeholders, approval/intervention observability | 执行拓扑层 + Provider / Runtime 层 | Borrow safeguards and observability, not a standalone dashboard |
 | OpenAI `codex-plugin-cc` pattern represented by local plugin docs | Productized `review`, `adversarial-review`, `rescue`, `status`, `result`, `cancel`, `setup` verbs | Standard action taxonomy for team sessions, direct job commands, review/rescue gates | 决策核心层 + 执行拓扑层 | Borrow action grammar and UX, keep local governance-first semantics |
-| Current Agent Orchestrator | Persisted plan sessions, adversarial gap closure, approved-plan execution contract, compliance and evidence reports | Unique product core that reference projects do not replace | 决策核心层 | Keep as differentiator and avoid reducing the project to runtime wrappers |
+| Current AI-Work-Control-Plane | Persisted plan sessions, adversarial gap closure, approved-plan execution contract, compliance and evidence reports | Unique product core that reference projects do not replace | 决策核心层 | Keep as differentiator and avoid reducing the project to runtime wrappers |
 
 ## Frozen Product Boundaries
 
@@ -295,7 +295,7 @@ Targeted test:
 
 ## Reference-Informed Product Upgrade Track
 
-This track turns the reference-project lessons into product capabilities while keeping Agent Orchestrator centered on planning governance, execution strategy, and provider/runtime boundaries.
+This track turns the reference-project lessons into product capabilities while keeping AI-Work-Control-Plane centered on planning governance, execution strategy, and provider/runtime boundaries.
 
 Execution protocol:
 
@@ -428,7 +428,7 @@ Targeted test:
 
 ### Execution Protocol
 
-- This track absorbs CodeWhale's useful engineering patterns while preserving Agent Orchestrator's governance-first product shape.
+- This track absorbs CodeWhale's useful engineering patterns while preserving AI-Work-Control-Plane's governance-first product shape.
 - Each phase starts by appending a short phase plan here before code or doc changes.
 - During a phase, run only the targeted test command listed for that phase.
 - If targeted tests pass, continue directly into the next phase without waiting for additional confirmation.

@@ -30,7 +30,7 @@ def _client(tmp_path, runtime: FileJobRuntime | None = None):
 def test_global_stream_returns_event_stream_frames(tmp_path) -> None:
     runtime = FileJobRuntime(root=tmp_path / "jobs")
     client, service = _client(tmp_path, runtime=runtime)
-    session = service.create_session("Build dashboard")
+    service.create_session("Build dashboard")
     job = runtime.start(
         JobRequest(
             task_id="ui-stream-job",

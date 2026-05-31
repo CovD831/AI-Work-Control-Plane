@@ -14,7 +14,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Literal, TypedDict
 from uuid import uuid4
 
-from agent_orchestrator.agent_config import AgentConfig, AgentProfile
+from agent_orchestrator.agent_config import AgentConfig
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest, JobRuntime
 from agent_orchestrator.guards import (
     validate_artifact_write,
@@ -29,9 +29,7 @@ from agent_orchestrator.messages import MessageRouter, MessageStore
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode, get_policy
 from agent_orchestrator.planning_support import (
-    ProcessDocumentationBundle,
-    ProcessDocumentSpec,
-    SessionGuidance,
+    ProcessDocumentSpec as ProcessDocumentSpec,
     build_docs_index,
     build_compliance_status_for_session,
     build_doc_sync_status_for_project,
@@ -44,10 +42,7 @@ from agent_orchestrator.planning_support import (
     compliance_blocking_reasons as _compliance_blocking_reasons_support,
     compliance_warnings as _compliance_warnings_support,
     canonical_process_documentation_bundle,
-    delegated_round_family as _delegated_round_family_support,
-    execution_block_detail,
     extract_job_id as _extract_job_id_support,
-    has_failed_delegated_family as _has_failed_delegated_family_support,
     latest_round as _latest_round_support,
     read_delegated_job_status as _read_delegated_job_status_support,
     resume_guidance_command as _resume_guidance_command_support,

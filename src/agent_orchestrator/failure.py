@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from agent_orchestrator.jobs import JobStatus
 from agent_orchestrator.policies import OrchestrationMode, get_policy
 
 FailureAction = Literal["retry_same_mode", "upgrade_mode", "partial_rescue", "abort"]

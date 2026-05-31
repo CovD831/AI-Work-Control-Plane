@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-orchestrator"
 version = "1.0.0"
-description = "Adaptive Claude-Codex-Claude orchestration framework MVP."
+description = "Local-first AI Work Control Plane for long-cycle agent work."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -16,7 +16,8 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0"
+  "pytest>=8.0",
+  "ruff>=0.8"
 ]
 ui = [
   "fastapi>=0.115",
@@ -35,3 +36,10 @@ pythonpath = ["src"]
 markers = [
   "slow_integration: slower CLI/team integration scenarios kept for full release gates; skip with -m 'not slow_integration' for quick local feedback"
 ]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 140
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

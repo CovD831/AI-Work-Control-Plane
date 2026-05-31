@@ -1,4 +1,4 @@
-# Agent Orchestrator Product Process
+# AI-Work-Control-Plane Product Process
 
 ## Header
 - Current Dual-Layer Stage: `Stage 2 - Planning Governance Skeleton`
@@ -36,11 +36,11 @@ Update this file at the end of every implementation iteration. Do not maintain a
 
 对应中文基准说明见：
 
-- [决策核心-执行拓扑-运行时分层说明](/Users/abab/Desktop/Agent-Orchestratoar/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
-- [长周期主执行计划](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/长周期主执行计划.md)
-- [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-reference-upgrade-master-plan.md)
-- [AI Work Control Plane Master Plan](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/ai-work-control-plane-master-plan.md)
-- [架构决策记录 ADR](/Users/abab/Desktop/Agent-Orchestratoar/docs/decisions/)
+- [决策核心-执行拓扑-运行时分层说明](/Users/abab/Desktop/AI-Work-Control-Plane/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
+- [长周期主执行计划](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/长周期主执行计划.md)
+- [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/v1x-reference-upgrade-master-plan.md)
+- [AI Work Control Plane Master Plan](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/ai-work-control-plane-master-plan.md)
+- [架构决策记录 ADR](/Users/abab/Desktop/AI-Work-Control-Plane/docs/decisions/)
 
 特别说明：
 

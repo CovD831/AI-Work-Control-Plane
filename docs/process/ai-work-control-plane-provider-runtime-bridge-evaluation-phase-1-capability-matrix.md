@@ -8,7 +8,7 @@ Record the currently observed provider/runtime capabilities so a later adapter c
 
 - `supported`: implemented locally or exposed by current CLI help.
 - `observed`: visible as local metadata or command behavior, but not a durable provider contract.
-- `records_only`: Agent Orchestrator can record the fact, but does not control provider behavior.
+- `records_only`: AI-Work-Control-Plane can record the fact, but does not control provider behavior.
 - `placeholder`: field exists but no trustworthy provider value is available.
 - `unavailable`: not exposed by the current runtime path.
 - `unknown`: not evaluated yet.

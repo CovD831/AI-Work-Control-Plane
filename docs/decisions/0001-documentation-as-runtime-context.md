@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Agent Orchestrator depends on agents that need current project knowledge during long-running work. Static docs are not enough when planning, execution, compliance, and recovery all need the same source of truth.
+AI-Work-Control-Plane depends on agents that need current project knowledge during long-running work. Static docs are not enough when planning, execution, compliance, and recovery all need the same source of truth.
 
 ## Decision
 

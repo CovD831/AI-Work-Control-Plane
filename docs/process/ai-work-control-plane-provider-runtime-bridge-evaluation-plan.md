@@ -12,14 +12,14 @@ In scope:
 
 - Evaluate Codex CLI, Claude Code, current command runtime, file/mock runtime, direct API runtime, and tmux runtime as provider/runtime candidates.
 - Produce a capability matrix for start, resume, send, cancel, status, logs, artifacts, session identity, cwd/workspace, exit code, usage/cost, permissions, and structured output.
-- Define ownership boundaries between Agent Orchestrator and provider runtimes.
+- Define ownership boundaries between AI-Work-Control-Plane and provider runtimes.
 - Draft a minimal `ProviderRuntimeAdapter` contract for a later implementation track.
 - Select one provider pilot candidate with a narrow next-stage acceptance line.
 
 Out of scope:
 
 - Full provider-native bridge implementation.
-- Persistent provider session ownership by Agent Orchestrator.
+- Persistent provider session ownership by AI-Work-Control-Plane.
 - Provider ping-pong loops.
 - Direct-API patch engine.
 - Plugin marketplace packaging.
@@ -66,7 +66,7 @@ pytest tests/test_command.py tests/test_jobs.py tests/test_tmux_runtime.py -q
 
 ### Phase 2: Ownership Boundary
 
-Document which fields Agent Orchestrator owns, which fields are provider-owned, and which fields are explicitly observed or placeholder.
+Document which fields AI-Work-Control-Plane owns, which fields are provider-owned, and which fields are explicitly observed or placeholder.
 
 Candidate output:
 

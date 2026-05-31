@@ -25,9 +25,9 @@ from agent_orchestrator.events import EventStore
 from agent_orchestrator.jobs import FileJobRuntime
 from agent_orchestrator.memory import MemoryStore
 from agent_orchestrator.messages import MessageStore
-from agent_orchestrator.planning import PlanStore, TeamOrchestrator, build_operator_runbook
+from agent_orchestrator.planning import TeamOrchestrator, build_operator_runbook
 from agent_orchestrator.policies import OrchestrationMode
-from agent_orchestrator.roles import DEFAULT_AGENT_ROLES, LAYER_LABELS, get_agent_role, role_for_job_kind
+from agent_orchestrator.roles import DEFAULT_AGENT_ROLES, get_agent_role, role_for_job_kind
 from agent_orchestrator.run_store import RunStore
 from agent_orchestrator.tmux_runtime import TmuxJobRuntime
 from agent_orchestrator.work_graph import WorkGraphStore, WorkUnitGraph, graph_to_plan_tree, schedulable_nodes
@@ -645,7 +645,6 @@ def _attach_message_counts(cards: list[dict[str, object]], messages: list[dict[s
 
 def _build_graph_agent_cards(payload: dict[str, object], graph: WorkUnitGraph | None) -> list[dict[str, object]]:
     cards_by_role: dict[str, dict[str, object]] = {}
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
     if graph:
         for node in graph.nodes:
             role = get_agent_role(node.owner_role)

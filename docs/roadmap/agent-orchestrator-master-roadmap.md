@@ -1,4 +1,4 @@
-# Agent Orchestrator Master Roadmap
+# AI-Work-Control-Plane Master Roadmap
 
 ## Summary
 
@@ -25,7 +25,7 @@ The earlier orchestration layers remain, but they now sit underneath that contro
 
 对应中文说明见：
 
-- [决策核心-执行拓扑-运行时分层说明](/Users/abab/Desktop/Agent-Orchestratoar/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
+- [决策核心-执行拓扑-运行时分层说明](/Users/abab/Desktop/AI-Work-Control-Plane/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
 
 其中：
 
@@ -248,11 +248,11 @@ The roadmap is complete when:
 
 The v1.x backlog was organized by a reference-informed master plan:
 
-- [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-reference-upgrade-master-plan.md)
+- [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/v1x-reference-upgrade-master-plan.md)
 
 Status: **completed for the v1.x reference-informed upgrade scope**.
 
-The completed upgrade borrows targeted strengths from local reference repositories while preserving Agent Orchestrator's boundaries: it strengthens job observability, review/rescue/setup action grammar, context recovery, packaging discipline, and evidence reporting without turning the product into a bridge, session manager, or plugin marketplace.
+The completed upgrade borrows targeted strengths from local reference repositories while preserving AI-Work-Control-Plane's boundaries: it strengthens job observability, review/rescue/setup action grammar, context recovery, packaging discipline, and evidence reporting without turning the product into a bridge, session manager, or plugin marketplace.
 
 ## v1.x Convergence
 
@@ -279,8 +279,8 @@ Release readiness is deliberately local and honest:
 
 Pre-release checklist source of truth:
 
-- [v1.0 Candidate Release Checklist](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1-candidate-release-checklist.md)
-- [v1.x Release Readiness](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/v1x-release-readiness.md) remains the short canonical process document.
+- [v1.0 Candidate Release Checklist](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/v1-candidate-release-checklist.md)
+- [v1.x Release Readiness](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/v1x-release-readiness.md) remains the short canonical process document.
 
 ## v1.0 Candidate Remaining Hardening
 

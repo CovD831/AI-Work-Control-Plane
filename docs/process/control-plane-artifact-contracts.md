@@ -107,7 +107,7 @@ These contracts pin the minimum stable shape for AI Work Control Plane artifacts
 - Consumers: provider session snapshot, runtime event stream, future provider pilots
 - Lifecycle: stored inside job parsed payloads and surfaced read-only through provider session snapshots
 - Stable fields: `job_id`, `provider`, `runtime_id`, `session_id`, `thread_id`, `cwd`, `pid`, `command`, `provider_owned`, `continuation_guarantee`, `created_at`
-- Rule: a ref points at provider/runtime state; it does not transfer ownership of that state to Agent Orchestrator.
+- Rule: a ref points at provider/runtime state; it does not transfer ownership of that state to AI-Work-Control-Plane.
 
 ## CodexExecJson
 

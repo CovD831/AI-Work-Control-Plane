@@ -25,7 +25,7 @@ codex exec --json
 - Keep session ownership explicit:
   - `provider_owned_ref_count` counts observed provider-owned refs.
   - `session_ownership_claim` remains `provider_owned` or `none`.
-  - No field claims persistent Agent Orchestrator ownership of a Codex session.
+  - No field claims persistent AI-Work-Control-Plane ownership of a Codex session.
 
 ## Boundary
 

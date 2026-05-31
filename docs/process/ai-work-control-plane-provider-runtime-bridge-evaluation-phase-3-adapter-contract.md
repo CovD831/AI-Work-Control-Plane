@@ -29,8 +29,8 @@ Every capability must report one of:
 
 - `supported_by_adapter`: implemented and tested in the adapter.
 - `observed_from_provider`: visible in provider CLI/API evidence but not integrated as an adapter guarantee.
-- `records_only`: Agent Orchestrator records a local event but cannot prove provider-native behavior.
-- `provider_owned`: provider controls the behavior; Agent Orchestrator can store references only.
+- `records_only`: AI-Work-Control-Plane records a local event but cannot prove provider-native behavior.
+- `provider_owned`: provider controls the behavior; AI-Work-Control-Plane can store references only.
 - `placeholder`: field exists but has no trustworthy value yet.
 - `unavailable`: not exposed or not supported in the current path.
 - `unknown`: not evaluated.
@@ -80,7 +80,7 @@ Stable fields:
 - `continuation_guarantee`
 - `created_at`
 
-Rule: `session_id` and `thread_id` are references. They are not proof that Agent Orchestrator owns a provider-native session.
+Rule: `session_id` and `thread_id` are references. They are not proof that AI-Work-Control-Plane owns a provider-native session.
 
 ### ProviderRuntimeMeasurement
 

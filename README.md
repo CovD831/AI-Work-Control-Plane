@@ -1,6 +1,6 @@
-# Agent Orchestrator
+# AI-Work-Control-Plane
 
-Agent Orchestrator is an **AI Work Control Plane for long-cycle local agent work**. It keeps plans, context, execution topology, approvals, evidence, memory provenance, runtime measurements, and recovery state outside the model so they can be inspected, resumed, and audited.
+AI-Work-Control-Plane is an **AI Work Control Plane for long-cycle local agent work**. It keeps plans, context, execution topology, approvals, evidence, memory provenance, runtime measurements, and recovery state outside the model so they can be inspected, resumed, and audited.
 
 Current status: **`v1.0.0` local-first AI Work Control Plane release sealed**.
 
@@ -40,7 +40,7 @@ Token and cost fields remain placeholders unless a runtime reports trustworthy v
 Run commands from the repository root:
 
 ```bash
-cd /Users/abab/Desktop/Agent-Orchestratoar
+cd /Users/abab/Desktop/AI-Work-Control-Plane
 PYTHONPATH=src python -m agent_orchestrator.cli health
 PYTHONPATH=src python -m agent_orchestrator.cli team setup --runtime command --format json
 PYTHONPATH=src python -m agent_orchestrator.cli team workspace-status --format json
@@ -154,7 +154,7 @@ The console is a local operator surface for sessions, governance signals, execut
 For quick feedback:
 
 ```bash
-pytest -m "not slow_integration"
+make ci
 ```
 
 For final stage closeout:
@@ -162,6 +162,14 @@ For final stage closeout:
 ```bash
 pytest
 PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
+```
+
+The CI-equivalent local gate runs `ruff check src tests` and `pytest -m "not slow_integration"`. Individual commands are also available:
+
+```bash
+make lint
+make test-quick
+make ui-build
 ```
 
 Install repository-managed hooks:

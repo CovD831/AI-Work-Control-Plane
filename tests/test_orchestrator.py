@@ -84,6 +84,21 @@ def test_success_first_uses_full_parent_architecture() -> None:
     assert run.attempts and run.attempts[0].attempt_index == 0
 
 
+def test_orchestrator_restore_pending_runs_is_explicit(monkeypatch) -> None:
+    calls = []
+
+    def fake_restore(self) -> None:
+        calls.append(self)
+
+    monkeypatch.setattr(Orchestrator, "restore_pending_runs", fake_restore)
+
+    Orchestrator()
+    assert calls == []
+
+    Orchestrator(restore_pending_on_init=True)
+    assert len(calls) == 1
+
+
 def test_speed_first_adds_aggressive_parallelism() -> None:
     run = Orchestrator().run("Build dashboard", OrchestrationMode.SPEED_FIRST)
 
@@ -796,7 +811,7 @@ def test_restore_pending_runs_continues_after_restart(tmp_path) -> None:
     handle = orchestrator.start_run("Build dashboard", OrchestrationMode.SUCCESS_FIRST)
     assert handle.run_id
 
-    restored = Orchestrator(run_store=orchestrator.run_store)
+    restored = Orchestrator(run_store=orchestrator.run_store, restore_pending_on_init=True)
     run = restored.resume_run(handle.run_id)
 
     assert run.run_id == handle.run_id

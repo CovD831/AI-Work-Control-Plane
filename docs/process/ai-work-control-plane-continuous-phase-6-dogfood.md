@@ -16,4 +16,4 @@ Pin one real repository dogfood path as the default internal workflow.
 
 ## Result
 
-- Dogfood evidence is recorded in [AI Work Control Plane Dogfood Evidence](/Users/abab/Desktop/Agent-Orchestratoar/docs/process/ai-work-control-plane-dogfood-evidence.md).
+- Dogfood evidence is recorded in [AI Work Control Plane Dogfood Evidence](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/ai-work-control-plane-dogfood-evidence.md).

@@ -12,7 +12,7 @@ The durable value is the external work system around model intelligence: state, 
 
 ## Decision
 
-Reframe Agent Orchestrator as an **AI Work Control Plane for long-cycle local agent work**.
+Reframe AI-Work-Control-Plane as an **AI Work Control Plane for long-cycle local agent work**.
 
 The canonical artifact pipeline is:
 

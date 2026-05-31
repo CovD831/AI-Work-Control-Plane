@@ -290,8 +290,6 @@ def test_team_setup_reports_readiness_and_recommendations(capsys, tmp_path, monk
     (tmp_path / "docs/process" / "v1x-evidence-trend.md").write_text("# Stub\n", encoding="utf-8")
     (tmp_path / "docs/process" / "evidence-cases.json").write_text("[]", encoding="utf-8")
 
-    team_payload = {}
-
     class FakeTeam:
         def refresh_documentation_sync(self):
             return {"refresh_results": [{"path": "docs/process/root-map.md", "status": "passed"}], "doc_sync": True}
@@ -2340,7 +2338,6 @@ def test_team_next_command_reports_compliance_check_for_blocking_session(tmp_pat
 
 
 def test_team_runbook_command_reports_warning_only_compliance_guidance(tmp_path, capsys) -> None:
-    from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 
     write_minimal_process_docs(tmp_path)
@@ -2362,7 +2359,9 @@ def test_team_runbook_command_reports_warning_only_compliance_guidance(tmp_path,
     session = _cli_session(team, "Build a persisted plan artifact")
     session.compliance = team.check_compliance(changed_files=["src/agent_orchestrator/stub.py"])
 
-    cli._print_team_runbook(session)
+    from agent_orchestrator.cli_team import _print_team_runbook
+
+    _print_team_runbook(session)
     out = capsys.readouterr().out
 
     assert "non-blocking compliance warning" in out

@@ -1120,8 +1120,6 @@ def build_compliance_status_for_session(
     }
     runbook_signal_issue = "operator runbook missing topology/fallback signals"
     runbook_guidance_issue = "operator runbook missing canonical guidance commands"
-    all_compliance_issues = [*blocking_reasons, *warnings]
-
     if session is not None and session.resume.linked_execution_run_id and run_store is not None:
         try:
             payload = run_store.read(session.resume.linked_execution_run_id)
@@ -1426,7 +1424,6 @@ def _collect_checked_files(
         checked.extend(_paths_from_messages(doc_sync.get("hook_marker_warnings", [])))
         checked.extend(_paths_from_messages(doc_sync.get("changed_file_doc_sync_violations", [])))
     if session is not None and plans_root is not None:
-        session_dir = Path(plans_root) / session.id
         checked.extend(
             [
                 str(Path(plans_root) / session.id / "checklist.json"),
