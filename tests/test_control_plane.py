@@ -238,6 +238,10 @@ def test_context_packet_combines_docs_and_memory_without_strategy(tmp_path) -> N
     assert payload["format"] == "agent_orchestrator.context_packet.v1"
     assert payload["docs_context"]["format"] == "agent_orchestrator.docs_context.v1"
     assert payload["memory_records"]
+    assert payload["retrieval_assessment"]["freshness_summary"] in {"fresh", "mixed"}
+    assert payload["retrieval_assessment"]["authority_summary"] in {"canonical_docs_plus_memory", "canonical_docs", "memory_only", "limited"}
+    assert payload["source_conflict_summary"]["conflict_level"] in {"none", "low", "medium"}
+    assert "docs_support" in payload["evidence_support_matrix"]
     assert payload["token_budget_summary"]["policy"].startswith("minimum sufficient context")
 
 
@@ -668,3 +672,27 @@ def test_recovery_recommendation_is_read_only_and_explains_next_step(tmp_path) -
     assert payload["required_approval_or_evidence"]["approval_required"] is True
     assert payload["safest_next_operator_command"]
     assert "agent_orchestrator.recovery_timeline.v1" in payload["recoverable_artifact_refs"]
+    assert payload["branch_candidates"]
+    assert payload["recovery_search"]["selected_branch"]
+    assert payload["recovery_search"]["candidate_count"] >= 1
+
+
+def test_recovery_recommendation_exposes_ranked_recovery_branches(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    session = start_reviewed_session(team, "Need a recovery recommendation")
+    session.status = "awaiting_human"
+    team.store.write_session(session)
+
+    payload = build_recovery_recommendation(session)
+    branches = payload["branch_candidates"]
+
+    assert branches[0]["score"] >= branches[-1]["score"]
+    assert any(branch["selected"] for branch in branches)
+    assert all("rationale" in branch for branch in branches)
+    assert payload["recovery_search"]["selected_command"] == payload["safest_next_operator_command"]
+    assert payload["recovery_search"]["disagreement_level"] in {"low", "medium", "high"}

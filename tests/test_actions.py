@@ -69,10 +69,20 @@ def test_role_contracts_bind_skill_discipline() -> None:
     assert "execute_work_unit" in contracts["reviewer"].forbidden_actions
     assert "review_findings" in contracts["reviewer"].required_outputs
     assert "team retry-review" in contracts["reviewer"].command_refs
+    assert "approved_plan" in contracts["reviewer"].structured_inputs
+    assert "verdict" in contracts["reviewer"].structured_outputs
+    assert contracts["reviewer"].can_raise_blocker is True
+    assert contracts["reviewer"].can_propose_alternative is True
     assert contracts["builder"].runtime_mode == "cli_inherit"
     assert "implementation_result" in contracts["builder"].required_outputs
+    assert "execution_contract" in contracts["builder"].structured_inputs
+    assert contracts["builder"].can_request_information is True
+    assert contracts["builder"].can_publish_reflection is True
     assert contracts["state_keeper"].runtime_mode == "local_artifact"
     assert "WorkspaceStateSnapshot" in contracts["state_keeper"].required_outputs
     assert "team workspace-status" in contracts["state_keeper"].command_refs
+    assert "dirty_files" in contracts["state_keeper"].local_state_fields
     assert contracts["approval_gate"].runtime_mode == "human_gate"
     assert "bypass_execution_gate" in contracts["approval_gate"].forbidden_actions
+    assert contracts["approval_gate"].can_request_information is True
+    assert contracts["approval_gate"].can_propose_alternative is False

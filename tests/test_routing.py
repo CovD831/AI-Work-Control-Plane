@@ -8,6 +8,9 @@ def test_router_selects_success_first_for_high_risk() -> None:
 
     assert decision.mode == OrchestrationMode.SUCCESS_FIRST
     assert decision.profile.risk == "high"
+    assert decision.candidates
+    assert any(candidate["mode"] == "success_first" and candidate["selected"] is True for candidate in decision.candidates)
+    assert decision.consensus["selected_mode"] == "success_first"
     assert decision.confidence >= 0.9
 
 
@@ -38,6 +41,18 @@ def test_router_risk_wins_over_speed_signal() -> None:
 
     assert decision.mode == OrchestrationMode.SUCCESS_FIRST
     assert "High risk forces success_first." in decision.reasons
+    assert any(item["mode"] == "speed_first" for item in decision.rejected_alternatives)
+
+
+def test_router_exposes_candidate_rationales_for_all_modes() -> None:
+    decision = PolicyRouter().route("Implement multiple independent modules in parallel")
+
+    assert {candidate["mode"] for candidate in decision.candidates} == {"success_first", "speed_first", "cost_first"}
+    assert all(candidate["rationale"] for candidate in decision.candidates)
+    assert all("score" in candidate for candidate in decision.candidates)
+    assert any(candidate["mode"] == "speed_first" and candidate["selected"] is True for candidate in decision.candidates)
+    assert decision.consensus["runner_up_mode"] in {"success_first", "cost_first"}
+    assert decision.consensus["disagreement_level"] in {"low", "medium", "high"}
 
 
 def test_topology_defaults_match_mode_strength() -> None:

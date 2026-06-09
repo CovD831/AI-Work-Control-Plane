@@ -13,7 +13,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from agent_orchestrator.jobs import now_iso
-from agent_orchestrator.roles import get_agent_role, role_for_work_unit_kind
+from agent_orchestrator.roles import get_agent_role, get_role_contract, role_for_work_unit_kind
 
 
 @dataclass(slots=True)
@@ -290,11 +290,13 @@ def graph_to_plan_tree(graph: WorkUnitGraph) -> dict[str, object]:
             "allowed_actions": list(node.allowed_actions),
             "blocked_by": list(node.blocked_by),
             "message_ids": list(node.message_ids),
+            "message_count": len(node.message_ids),
             "job_ids": list(node.job_ids),
             "next_action": node.next_action,
             "validation": list(node.validation),
             "schedulable": _node_schedulable(node, nodes),
             "related_agent_ids": related_agent_ids,
+            "owner_role_contract": get_role_contract(role.id).to_dict(),
             "children": [build_node(child_id) for child_id in children_by_parent.get(node_id, []) if child_id in nodes],
         }
 
@@ -307,6 +309,7 @@ def graph_to_plan_tree(graph: WorkUnitGraph) -> dict[str, object]:
             "state": "planned",
             "summary": "",
             "related_agent_ids": [],
+            "message_count": 0,
             "children": [],
         }
     return build_node(graph.root_id)
@@ -336,8 +339,8 @@ def _round_title(round_type: str) -> str:
         "authoring": "计划起草",
         "review": "计划审核",
         "review_retry": "审核重试",
-        "adversarial_review": "对抗审核",
-        "adversarial_review_retry": "对抗审核重试",
+        "adversarial_review": "风险挑战",
+        "adversarial_review_retry": "风险挑战重试",
         "revision": "计划修订",
         "approval": "批准门禁",
     }

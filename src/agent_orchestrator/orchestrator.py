@@ -538,6 +538,8 @@ class Orchestrator:
                 mode=final_attempt.policy.mode.value,
                 contract=final_attempt.contract,
                 work_units=final_attempt.work_units,
+                worker=self.worker,
+                reviewer=self.reviewer,
                 routing_decision=routing_decision,
                 review_policy_override=review_policy_override,
                 provider_health_snapshot=provider_health_snapshot,
@@ -572,6 +574,7 @@ class Orchestrator:
                 policy_mode=run.final_mode.value,
                 contract=run.contract,
                 work_units=run.work_units,
+                runtime_recommendation=_direct_runtime_recommendation(worker=self.worker, reviewer=self.reviewer),
                 review_policy_override=_metadata_review_policy_override(metadata),
             ),
         )
@@ -878,6 +881,22 @@ def _build_decision_artifact(
             "agent_enabled": policy.agent_enabled,
             "topology_depth": policy.topology_depth,
             "source": "router" if routing_decision else "explicit_mode",
+            "candidates": list(routing_decision.candidates) if routing_decision else [
+                {
+                    "mode": policy.mode.value,
+                    "selected": True,
+                    "rationale": ["Mode selected explicitly by the caller."],
+                }
+            ],
+            "rejected_alternatives": list(routing_decision.rejected_alternatives) if routing_decision else [],
+            "consensus": dict(routing_decision.consensus) if routing_decision else {
+                "selected_mode": policy.mode.value,
+                "selected_score": None,
+                "runner_up_mode": None,
+                "runner_up_score": None,
+                "disagreement_level": "none",
+                "candidate_count": 1,
+            },
         },
         review_level={
             "policy": "required" if policy.review_required is True else str(policy.review_required),
@@ -893,9 +912,46 @@ def _build_decision_artifact(
             "enabled": reroute_enabled,
             "next_mode": getattr(getattr(decision, "next_mode", None), "value", None),
             "upgrade_kind": getattr(decision, "upgrade_kind", "abort"),
+            "rejected_alternatives": _reroute_rejected_alternatives(policy.mode, decision, reroute_enabled),
+            "consensus": _reroute_consensus(policy.mode, decision, reroute_enabled),
         },
         stop_reason=stop_reason,
     )
+
+
+def _reroute_rejected_alternatives(current_mode: object, decision: object, reroute_enabled: bool) -> list[dict[str, object]]:
+    if not reroute_enabled:
+        return [{"mode": None, "reason": "Reroute is disabled for this run."}]
+
+    rejected: list[dict[str, object]] = []
+    next_mode = getattr(getattr(decision, "next_mode", None), "value", None)
+    current_mode_value = getattr(current_mode, "value", str(current_mode))
+    for mode_name in ("cost_first", "speed_first", "success_first"):
+        if mode_name == next_mode:
+            continue
+        if mode_name == current_mode_value:
+            rejected.append({"mode": mode_name, "reason": "Current mode already exhausted or insufficient for recovery."})
+        else:
+            rejected.append({"mode": mode_name, "reason": "Recovery logic did not select this mode for the next escalation step."})
+    return rejected
+
+
+def _reroute_consensus(current_mode: object, decision: object, reroute_enabled: bool) -> dict[str, object]:
+    next_mode = getattr(getattr(decision, "next_mode", None), "value", None)
+    rejected = _reroute_rejected_alternatives(current_mode, decision, reroute_enabled)
+    current_mode_value = getattr(current_mode, "value", str(current_mode))
+    disagreement = "none"
+    if reroute_enabled and next_mode is not None:
+        disagreement = "medium" if len(rejected) >= 2 else "low"
+    elif reroute_enabled:
+        disagreement = "low"
+    return {
+        "selected_mode": next_mode,
+        "current_mode": current_mode_value,
+        "candidate_count": 1 + len(rejected) if next_mode is not None else len(rejected),
+        "runner_up_mode": rejected[0]["mode"] if rejected else None,
+        "disagreement_level": disagreement,
+    }
 
 
 def _build_execution_contract_payload(
@@ -904,6 +960,7 @@ def _build_execution_contract_payload(
     policy_mode: str,
     contract: TaskContract | None,
     work_units: list[WorkUnit],
+    runtime_recommendation: dict[str, object] | None = None,
     review_policy_override: str | None = None,
 ) -> dict[str, object]:
     goal = contract.goal if contract else requirement
@@ -931,6 +988,8 @@ def _build_execution_contract_payload(
         "fallback_detail": None,
         "runtime": "mock",
     }
+    if isinstance(runtime_recommendation, dict):
+        provider_recommendation.update(runtime_recommendation)
     execution_contract = ExecutionContract(
         source="approved_plan_style_direct_run",
         goal=goal,
@@ -1064,6 +1123,8 @@ def _build_run_metadata(
     mode: str,
     contract: TaskContract,
     work_units: list[WorkUnit],
+    worker: WorkerAdapter | None = None,
+    reviewer: ReviewRescueAdapter | None = None,
     routing_decision: RoutingDecision | None,
     review_policy_override: str | None = None,
     provider_health_snapshot: dict[str, object] | None = None,
@@ -1073,6 +1134,7 @@ def _build_run_metadata(
         policy_mode=mode,
         contract=contract,
         work_units=work_units,
+        runtime_recommendation=_direct_runtime_recommendation(worker=worker, reviewer=reviewer),
         review_policy_override=review_policy_override,
     )
     topology = execution_contract.get("topology", {}) if isinstance(execution_contract, dict) else {}
@@ -1115,6 +1177,36 @@ def _initial_run_metadata(
     if provider_health_snapshot:
         metadata["provider_health_snapshot"] = provider_health_snapshot
     return metadata
+
+
+def _direct_runtime_recommendation(
+    *,
+    worker: WorkerAdapter | None,
+    reviewer: ReviewRescueAdapter | None,
+) -> dict[str, object]:
+    runtime = "mock"
+    author_runtime_mode = None
+    reviewer_runtime_mode = None
+
+    worker_profile = getattr(worker, "agent_config", None)
+    if worker_profile is not None and hasattr(worker_profile, "profile"):
+        profile = worker_profile.profile("worker")
+        author_runtime_mode = getattr(profile, "runtime_mode", None)
+
+    reviewer_profile = getattr(reviewer, "agent_config", None)
+    if reviewer_profile is not None and hasattr(reviewer_profile, "profile"):
+        profile = reviewer_profile.profile("execution_reviewer")
+        reviewer_runtime_mode = getattr(profile, "runtime_mode", None)
+
+    runtime_candidates = [item for item in (author_runtime_mode, reviewer_runtime_mode) if isinstance(item, str) and item]
+    if runtime_candidates:
+        runtime = runtime_candidates[0]
+
+    return {
+        "runtime": runtime,
+        **({"author_runtime_mode": author_runtime_mode} if isinstance(author_runtime_mode, str) and author_runtime_mode else {}),
+        **({"reviewer_runtime_mode": reviewer_runtime_mode} if isinstance(reviewer_runtime_mode, str) and reviewer_runtime_mode else {}),
+    }
 
 
 def _metadata_review_policy_override(metadata: dict[str, object] | None) -> str | None:

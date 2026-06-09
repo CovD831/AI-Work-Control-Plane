@@ -59,7 +59,7 @@ def _write_required_docs(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "docs" / "process" / "agent-team-operator-runbook.md").write_text(
-        "# Agent Team Operator Runbook\n\n"
+        "# 治理控制台操作手册\n\n"
         "- team summary\n"
         "- team next\n"
         "- team runbook\n"

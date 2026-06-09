@@ -584,6 +584,9 @@ def test_run_exposes_decision_contract_artifacts() -> None:
     assert run.signals.dependency["work_unit_count"] == len(run.work_units)
     assert run.decision_artifact is not None
     assert run.decision_artifact.route["selected_mode"] == "success_first"
+    assert run.decision_artifact.route["candidates"]
+    assert isinstance(run.decision_artifact.route["rejected_alternatives"], list)
+    assert run.decision_artifact.route["consensus"]["selected_mode"] == "success_first"
     assert run.decision_artifact.review_level["policy"] == "required"
     assert run.decision_artifact.rescue_mode["policy"] == "always_available"
     assert run.decision_artifact.stop_reason in {"accepted", "blocked", "rerouted"}
@@ -598,6 +601,8 @@ def test_attempt_decision_artifact_tracks_failure_outcome() -> None:
     assert attempt.decision_artifact is not None
     assert attempt.decision_artifact.replay_scope["policy"] in {"dependency_affected", "failed_only", "none"}
     assert attempt.decision_artifact.reroute_policy["enabled"] is True
+    assert isinstance(attempt.decision_artifact.reroute_policy["rejected_alternatives"], list)
+    assert attempt.decision_artifact.reroute_policy["consensus"]["current_mode"] == "speed_first"
     assert attempt.decision_artifact.stop_reason in {"rerouted", "blocked", "accepted"}
 
 
@@ -608,9 +613,14 @@ def test_auto_mode_decision_contract_preserves_router_signals() -> None:
     assert run.signals.task["route_source"] == "router"
     assert run.signals.task["parallelism"] == "high"
     assert run.signals.risk["routing_risk"] in {"low", "high"}
+    assert run.routing_decision is not None
+    assert run.routing_decision.candidates
+    assert run.routing_decision.consensus["selected_mode"] == "speed_first"
     assert run.decision_artifact is not None
     assert run.decision_artifact.route["source"] == "router"
     assert run.decision_artifact.route["selected_mode"] == run.final_mode.value
+    assert run.decision_artifact.route["candidates"] == run.routing_decision.candidates
+    assert run.decision_artifact.route["consensus"] == run.routing_decision.consensus
 
 
 def test_run_round_trip_preserves_decision_contract() -> None:
@@ -623,7 +633,19 @@ def test_run_round_trip_preserves_decision_contract() -> None:
     assert restored.decision_artifact is not None
     assert restored.decision_artifact.route == original.decision_artifact.route
     assert restored.decision_artifact.stop_reason == original.decision_artifact.stop_reason
+    assert restored.routing_decision is None
     assert restored.metadata == original.metadata
+
+
+def test_auto_mode_round_trip_preserves_routing_candidates() -> None:
+    original = Orchestrator().run("Implement multiple independent modules in parallel", None)
+    restored = type(original).from_dict(original.to_dict())
+
+    assert original.routing_decision is not None
+    assert restored.routing_decision is not None
+    assert restored.routing_decision.candidates == original.routing_decision.candidates
+    assert restored.routing_decision.rejected_alternatives == original.routing_decision.rejected_alternatives
+    assert restored.routing_decision.consensus == original.routing_decision.consensus
 
 
 def test_direct_run_persists_entrypoint_provenance_metadata(tmp_path) -> None:
@@ -652,6 +674,7 @@ def test_direct_run_persists_entrypoint_provenance_metadata(tmp_path) -> None:
     assert payload["metadata"]["execution_contract"]["provider_recommendation"]["actual_author"] == "codex"
     assert payload["metadata"]["execution_contract"]["provider_recommendation"]["reviewer"] == "claude"
     assert payload["metadata"]["execution_contract"]["provider_recommendation"]["actual_reviewer"] == "claude"
+    assert payload["metadata"]["execution_contract"]["provider_recommendation"]["runtime"] == "mock"
     assert payload["metadata"]["execution_contract"]["provider_recommendation"]["fallback_source"] is None
     assert payload["metadata"]["execution_contract"]["review_policy"]["policy_name"] == "adversarial_required"
     assert payload["metadata"]["execution_contract"]["fallback_policy"]["author"]["actual"] == "codex"
@@ -691,6 +714,22 @@ def test_direct_run_exposes_execution_contract_on_run_object() -> None:
     assert run.metadata["execution_contract"]["source"] == "approved_plan_style_direct_run"
     assert run.metadata["execution_contract"]["acceptance_criteria"] == run.contract.acceptance_criteria
     assert run.metadata["execution_contract"]["provider_recommendation"]["author"] == "codex"
+
+
+def test_direct_run_command_runtime_exposes_cli_runtime_in_execution_contract() -> None:
+    from agent_orchestrator.adapters import RuntimeProviderAdapter, RuntimeProviderReviewRescueAdapter
+    from agent_orchestrator.command import RuntimeModeRouter
+
+    runtime = RuntimeModeRouter()
+    run = Orchestrator(
+        worker=RuntimeProviderAdapter(runtime=runtime, kind="implementation"),
+        reviewer=RuntimeProviderReviewRescueAdapter(runtime=runtime),
+    ).run("Build dashboard", OrchestrationMode.SUCCESS_FIRST)
+
+    recommendation = run.metadata["execution_contract"]["provider_recommendation"]
+    assert recommendation["runtime"] == "cli_inherit"
+    assert recommendation["author_runtime_mode"] == "cli_inherit"
+    assert recommendation["reviewer_runtime_mode"] == "direct_api"
 
 
 def test_direct_run_agent_disabled_uses_solo_topology_in_execution_contract() -> None:

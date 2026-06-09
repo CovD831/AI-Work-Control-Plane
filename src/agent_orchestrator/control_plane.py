@@ -186,6 +186,7 @@ def build_context_packet(
         len(str(record.get("summary", ""))) for record in memory_records
     )
     stale_warnings = _context_stale_warnings(docs_context, memory_records)
+    retrieval_assessment = _retrieval_assessment(query, docs_context, memory_records)
     payload = {
         "format": CONTROL_PLANE_FORMATS["context_packet"],
         "query": query,
@@ -194,6 +195,9 @@ def build_context_packet(
         "memory_records": memory_records,
         "source_artifacts": source_artifacts,
         "stale_warnings": stale_warnings,
+        "retrieval_assessment": retrieval_assessment,
+        "source_conflict_summary": _source_conflict_summary(stale_warnings, retrieval_assessment),
+        "evidence_support_matrix": _evidence_support_matrix(query, docs_context, memory_records),
         "token_budget_summary": {
             "estimated_chars": content_chars,
             "estimated_tokens": max(1, content_chars // 4) if content_chars else 0,
@@ -211,18 +215,23 @@ def build_strategy_decision(session: PlanSession, workspace_state: dict[str, obj
     status = summary if isinstance(summary, dict) else {}
     decision = session.decision_verdict.to_dict() if session.decision_verdict else {}
     next_task = status.get("next_executable_task") if isinstance(status.get("next_executable_task"), dict) else None
-    next_goal = str(next_task.get("title")) if isinstance(next_task, dict) else str(status.get("primary_reason") or session.requirement)
-    validation_plan = [
+    current_checkpoint_objective = (
+        str(next_task.get("title"))
+        if isinstance(next_task, dict)
+        else str(status.get("primary_reason") or session.requirement)
+    )
+    verification_requirements = [
         "Run the current phase targeted pytest slice before moving phases.",
         "Run full pytest and team check-compliance only at convergence.",
     ]
     if isinstance(next_task, dict):
-        validation_plan.extend(str(item) for item in next_task.get("validation", []) if item)
+        verification_requirements.extend(str(item) for item in next_task.get("validation", []) if item)
     return {
         "format": CONTROL_PLANE_FORMATS["strategy_decision"],
         "session_id": session.id,
         "goal": session.structured_brief.goal or session.requirement,
-        "next_goal": next_goal,
+        "current_checkpoint_objective": current_checkpoint_objective,
+        "next_goal": current_checkpoint_objective,
         "status": session.status,
         "selected_topology": decision.get("selected_topology"),
         "selected_provider_runtime": decision.get("selected_provider_runtime", {}),
@@ -244,7 +253,8 @@ def build_strategy_decision(session: PlanSession, workspace_state: dict[str, obj
             "Allow orchestration to shrink over time while keeping state, evidence, approvals, memory, and recovery external.",
         ],
         "risks": [str(item) for item in session.structured_brief.risks],
-        "validation_plan": validation_plan,
+        "verification_requirements": verification_requirements,
+        "validation_plan": verification_requirements,
         "executes": False,
         "workspace_state_created_at": workspace_state.get("created_at") if isinstance(workspace_state, dict) else None,
         "created_at": now_iso(),
@@ -901,6 +911,74 @@ def _context_stale_warnings(docs_context: dict[str, object], memory_records: lis
         if freshness and freshness != "fresh":
             warnings.append(f"memory {record.get('id')} freshness={freshness}")
     return warnings
+
+
+def _retrieval_assessment(
+    query: str,
+    docs_context: dict[str, object],
+    memory_records: list[dict[str, object]],
+) -> dict[str, object]:
+    doc_sync = docs_context.get("doc_sync", {}) if isinstance(docs_context.get("doc_sync"), dict) else {}
+    freshness = "fresh" if bool(doc_sync.get("fresh", True)) and not any(record.get("freshness") not in {None, "fresh"} for record in memory_records) else "mixed"
+    authority = "canonical_docs_plus_memory" if docs_context.get("selected_doc_ids") and memory_records else "canonical_docs" if docs_context.get("selected_doc_ids") else "memory_only" if memory_records else "limited"
+    relevance_scores = _relevance_scores(query, docs_context, memory_records)
+    average_relevance = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.0
+    return {
+        "freshness_summary": freshness,
+        "authority_summary": authority,
+        "relevance_summary": "high" if average_relevance >= 0.66 else "medium" if average_relevance >= 0.33 else "low",
+        "average_relevance_score": round(average_relevance, 2),
+        "doc_count": len(docs_context.get("selected_doc_ids", [])) if isinstance(docs_context.get("selected_doc_ids"), list) else 0,
+        "memory_count": len(memory_records),
+    }
+
+
+def _source_conflict_summary(stale_warnings: list[str], retrieval_assessment: dict[str, object]) -> dict[str, object]:
+    stale_count = len(stale_warnings)
+    return {
+        "has_conflicts": stale_count > 0 or retrieval_assessment.get("freshness_summary") == "mixed",
+        "stale_warning_count": stale_count,
+        "conflict_level": "medium" if stale_count else "low" if retrieval_assessment.get("freshness_summary") == "mixed" else "none",
+    }
+
+
+def _evidence_support_matrix(
+    query: str,
+    docs_context: dict[str, object],
+    memory_records: list[dict[str, object]],
+) -> dict[str, object]:
+    query_tokens = {token for token in query.lower().split() if token}
+    doc_markdown = str(docs_context.get("injection_markdown", "")).lower()
+    docs_support = bool(query_tokens and any(token in doc_markdown for token in query_tokens)) or bool(docs_context.get("selected_doc_ids"))
+    memory_support = bool(
+        query_tokens
+        and any(any(token in str(record.get("summary", "")).lower() for token in query_tokens) for record in memory_records)
+    ) or bool(memory_records)
+    return {
+        "query": query,
+        "docs_support": docs_support,
+        "memory_support": memory_support,
+        "combined_support": docs_support and memory_support,
+        "support_gap": not docs_support and not memory_support,
+    }
+
+
+def _relevance_scores(query: str, docs_context: dict[str, object], memory_records: list[dict[str, object]]) -> list[float]:
+    query_tokens = {token for token in query.lower().split() if token}
+    if not query_tokens:
+        return [1.0] if docs_context.get("selected_doc_ids") or memory_records else []
+    scores: list[float] = []
+    doc_markdown = str(docs_context.get("injection_markdown", "")).lower()
+    if doc_markdown:
+        doc_hits = sum(1 for token in query_tokens if token in doc_markdown)
+        scores.append(doc_hits / len(query_tokens))
+    for record in memory_records:
+        summary = str(record.get("summary", "")).lower()
+        if not summary:
+            continue
+        hits = sum(1 for token in query_tokens if token in summary)
+        scores.append(hits / len(query_tokens))
+    return scores
 
 
 def _generated_approval_items(sessions: list[PlanSession]) -> list[ApprovalItem]:

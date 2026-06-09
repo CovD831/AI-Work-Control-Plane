@@ -1,6 +1,7 @@
 import pytest
 
 from agent_orchestrator.review import Finding, ReviewResult
+from agent_orchestrator.planning import DecisionVerdict
 
 
 def test_review_result_can_approve_without_findings() -> None:
@@ -52,3 +53,28 @@ def test_review_result_rejects_invalid_verdict_findings_combination() -> None:
 
     with pytest.raises(ValueError):
         ReviewResult(verdict="needs_attention", summary="Missing findings.")
+
+
+def test_decision_verdict_round_trip_preserves_review_summary() -> None:
+    verdict = DecisionVerdict(
+        approval_status="approved",
+        required_gaps=[],
+        followup_gaps=[],
+        selected_topology="team",
+        selected_provider_runtime={"reviewer": "claude"},
+        rationale=["review completed"],
+        review_summary={
+            "review_roles": ["review", "review"],
+            "review_round_count": 2,
+            "blocking_review_count": 1,
+            "non_blocking_review_count": 1,
+            "aggregate_verdict": "needs_attention",
+            "severity_counts": {"low": 0, "medium": 1, "high": 0, "critical": 0},
+            "reviews": [{"role": "review", "verdict": "needs_attention"}],
+        },
+    )
+
+    restored = DecisionVerdict.from_dict(verdict.to_dict())
+
+    assert restored.review_summary["aggregate_verdict"] == "needs_attention"
+    assert restored.review_summary["review_round_count"] == 2

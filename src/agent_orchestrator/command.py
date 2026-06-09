@@ -518,8 +518,15 @@ class ClaudeCodeAdapter:
 
         summary = str(envelope.get("result") or "")
         payload = {"envelope": envelope}
+        subtype = str(envelope.get("subtype") or "")
+        errors = envelope.get("errors")
+        execution_errors = [str(item) for item in errors] if isinstance(errors, list) else []
         if envelope.get("is_error"):
             return summary, payload, summary or "Claude Code returned is_error=true."
+        if subtype == "error_during_execution":
+            detail = execution_errors[0] if execution_errors else ""
+            message = detail or summary or "Claude Code reported an execution-time error."
+            return summary, payload, message
         return summary, payload, None
 
     def parse_session_metadata(self, request: JobRequest, session: ProviderSession | None) -> dict[str, Any]:

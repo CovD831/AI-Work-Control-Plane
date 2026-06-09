@@ -1676,6 +1676,9 @@ def test_team_start_builds_decision_verdict_with_fixed_dual_model_roles(tmp_path
     assert session.decision_verdict["selected_provider_runtime"]["author_runtime_mode"] == "cli_inherit"
     assert session.decision_verdict["selected_provider_runtime"]["reviewer_runtime_mode"] == "direct_api"
     assert session.decision_verdict["selected_provider_runtime"]["direct_api_scope"]
+    assert session.decision_verdict["review_summary"]["review_round_count"] == 2
+    assert session.decision_verdict["review_summary"]["review_roles"] == ["review", "review"]
+    assert session.decision_verdict["review_summary"]["aggregate_verdict"] in {"approve", "needs_attention"}
 
 
 def test_team_start_distinguishes_required_and_followup_gaps_in_decision_verdict(tmp_path) -> None:
@@ -1814,6 +1817,28 @@ def test_adversarial_review_can_force_needs_revision(tmp_path) -> None:
     assert session.gate_verdict == "needs_revision"
     assert session.review_rounds[-1].review_result is not None
     assert session.review_rounds[-1].review_result.findings[0].severity == "medium"
+    assert session.decision_verdict is not None
+    assert session.decision_verdict["review_summary"]["aggregate_verdict"] == "needs_attention"
+    assert session.decision_verdict["review_summary"]["blocking_review_count"] >= 1
+
+
+def test_team_decision_verdict_aggregates_multi_role_review_findings(tmp_path) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path),
+    )
+
+    session = _legacy_started_session(team, "Build plan with adversarial challenge")
+
+    assert session.decision_verdict is not None
+    summary = session.decision_verdict["review_summary"]
+
+    assert summary["review_round_count"] == 2
+    assert len(summary["reviews"]) == 2
+    assert {"approve", "needs_attention"} >= {item["verdict"] for item in summary["reviews"]}
+    assert "severity_counts" in summary
+    assert summary["severity_counts"]["medium"] >= 1
+    assert all("top_severity" in item for item in summary["reviews"])
 
 
 def test_team_start_builds_structured_brief_from_contract_and_subtasks(tmp_path) -> None:
@@ -2203,7 +2228,7 @@ def test_team_status_reports_content_sync_blocking_for_missing_runbook_link(tmp_
 def test_team_status_reports_content_sync_blocking_for_stale_operator_runbook_signals(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
     runbook_path = tmp_path / "docs" / "process" / "agent-team-operator-runbook.md"
-    runbook_path.write_text("# Agent Team Operator Runbook\n\n- team next\n", encoding="utf-8")
+    runbook_path.write_text("# 治理控制台操作手册\n\n- team next\n", encoding="utf-8")
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
@@ -2426,9 +2451,11 @@ def test_team_inspect_execution_surfaces_warning_only_compliance_context(tmp_pat
 @pytest.mark.slow_integration
 def test_team_inspect_blockers_summarizes_execution_blocked_session(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
+    runtime = FileJobRuntime(root=tmp_path / "jobs")
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),
+        runtime=runtime,
         project_root=tmp_path,
     )
     team.orchestrator.run_store.root = tmp_path / "runs"

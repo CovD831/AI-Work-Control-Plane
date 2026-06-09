@@ -185,6 +185,14 @@ class MessageRouter:
         work_unit_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> TeamMessage:
+        message_payload = _with_collaboration_payload(
+            dict(payload or {}),
+            object_type="proposal",
+            session_id=session_id,
+            from_role="lead",
+            to_role=to_role,
+            summary=content,
+        )
         return self.store.create(
             session_id=session_id,
             work_unit_id=work_unit_id,
@@ -192,7 +200,7 @@ class MessageRouter:
             to_role=to_role,
             message_type="review_request",
             content=content,
-            payload=payload,
+            payload=message_payload,
             thread="review",
             requires_response=True,
         )
@@ -206,6 +214,14 @@ class MessageRouter:
         work_unit_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> TeamMessage:
+        message_payload = _with_collaboration_payload(
+            dict(payload or {}),
+            object_type="critique",
+            session_id=session_id,
+            from_role=from_role,
+            to_role="lead",
+            summary=content,
+        )
         return self.store.create(
             session_id=session_id,
             work_unit_id=work_unit_id,
@@ -213,7 +229,7 @@ class MessageRouter:
             to_role="lead",
             message_type="review_result",
             content=content,
-            payload=payload,
+            payload=message_payload,
             thread="review",
             requires_response=False,
         )
@@ -239,6 +255,14 @@ class MessageRouter:
             content=content,
             payload=message_payload,
         )
+        message_payload = _with_collaboration_payload(
+            message_payload,
+            object_type="proposal",
+            session_id=session_id,
+            from_role=from_role,
+            to_role=to_role,
+            summary=content,
+        )
         return self.store.create(
             session_id=session_id,
             work_unit_id=work_unit_id,
@@ -248,6 +272,39 @@ class MessageRouter:
             content=content,
             payload=message_payload,
             thread=_thread_from_payload(message_payload),
+            requires_response=requires_response,
+        )
+
+    def build_collaboration_object(
+        self,
+        *,
+        session_id: str,
+        from_role: str,
+        to_role: str,
+        object_type: str,
+        content: str,
+        work_unit_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+        thread: str = "main",
+        requires_response: bool = False,
+    ) -> TeamMessage:
+        message_payload = _with_collaboration_payload(
+            dict(payload or {}),
+            object_type=object_type,
+            session_id=session_id,
+            from_role=from_role,
+            to_role=to_role,
+            summary=content,
+        )
+        return self.store.create(
+            session_id=session_id,
+            work_unit_id=work_unit_id,
+            from_role=from_role,
+            to_role=to_role,
+            message_type=object_type,
+            content=content,
+            payload=message_payload,
+            thread=thread,
             requires_response=requires_response,
         )
 
@@ -345,6 +402,38 @@ def build_direct_api_tool_trace_payload(
     }
 
 
+def build_collaboration_payload(
+    *,
+    object_type: str,
+    session_id: str,
+    from_role: str,
+    to_role: str,
+    summary: str,
+    evidence: list[str] | None = None,
+    blockers: list[str] | None = None,
+    verdict: str | None = None,
+    severity: str | None = None,
+    next_steps: list[str] | None = None,
+    refs: dict[str, object] | None = None,
+    created_at: str | None = None,
+) -> dict[str, object]:
+    return {
+        "format": "agent_orchestrator.collaboration_object.v1",
+        "object_type": object_type,
+        "session_id": session_id,
+        "from_role": from_role,
+        "to_role": to_role,
+        "summary": summary,
+        "evidence": list(evidence or []),
+        "blockers": list(blockers or []),
+        "verdict": verdict,
+        "severity": severity,
+        "next_steps": list(next_steps or []),
+        "refs": dict(refs or {}),
+        "created_at": created_at or now_iso(),
+    }
+
+
 def _normalize_handoff_packet(
     packet: object,
     *,
@@ -381,6 +470,62 @@ def _normalize_handoff_packet(
         docs_context_snapshot_id=_string_payload(payload, "docs_context_snapshot_id"),
         recommended_commands=_list_payload(payload, "recommended_commands"),
     )
+
+
+def _with_collaboration_payload(
+    payload: dict[str, Any],
+    *,
+    object_type: str,
+    session_id: str,
+    from_role: str,
+    to_role: str,
+    summary: str,
+) -> dict[str, Any]:
+    collaboration = payload.get("collaboration")
+    refs = {}
+    for key in ("review_round_id", "reply_to_message_id", "job_id", "artifact_kind", "run_id"):
+        value = payload.get(key)
+        if value is not None:
+            refs[key] = value
+    if isinstance(collaboration, dict):
+        normalized = dict(collaboration)
+        normalized.setdefault("format", "agent_orchestrator.collaboration_object.v1")
+        normalized.setdefault("object_type", object_type)
+        normalized.setdefault("session_id", session_id)
+        normalized.setdefault("from_role", from_role)
+        normalized.setdefault("to_role", to_role)
+        normalized.setdefault("summary", summary)
+        normalized.setdefault("evidence", _list_payload(payload, "evidence"))
+        normalized.setdefault("blockers", _list_payload(payload, "blockers"))
+        normalized.setdefault("next_steps", _list_payload(payload, "next_steps"))
+        merged_refs = dict(normalized.get("refs", {})) if isinstance(normalized.get("refs"), dict) else {}
+        merged_refs.update(refs)
+        normalized["refs"] = merged_refs
+        payload["collaboration"] = normalized
+        return payload
+    verdict = None
+    severity = None
+    review_result = payload.get("review_result")
+    if isinstance(review_result, dict):
+        verdict = review_result.get("verdict") if isinstance(review_result.get("verdict"), str) else None
+        findings = review_result.get("findings")
+        if isinstance(findings, list):
+            severities = [item.get("severity") for item in findings if isinstance(item, dict) and isinstance(item.get("severity"), str)]
+            severity = severities[0] if severities else None
+    payload["collaboration"] = build_collaboration_payload(
+        object_type=object_type,
+        session_id=session_id,
+        from_role=from_role,
+        to_role=to_role,
+        summary=summary,
+        evidence=_list_payload(payload, "evidence"),
+        blockers=_list_payload(payload, "blockers"),
+        verdict=verdict,
+        severity=severity,
+        next_steps=_list_payload(payload, "next_steps"),
+        refs=refs,
+    )
+    return payload
 
 
 def _list_payload(payload: dict[str, Any], key: str) -> list[str]:

@@ -274,6 +274,7 @@ class DecisionVerdict:
     selected_topology: TopologyName
     selected_provider_runtime: dict[str, object]
     rationale: list[str]
+    review_summary: dict[str, object] = field(default_factory=dict)
 
     def __getitem__(self, key: str) -> object:
         return self.to_dict()[key]
@@ -286,6 +287,7 @@ class DecisionVerdict:
             "selected_topology": self.selected_topology,
             "selected_provider_runtime": self.selected_provider_runtime,
             "rationale": self.rationale,
+            "review_summary": self.review_summary,
         }
 
     @classmethod
@@ -297,6 +299,7 @@ class DecisionVerdict:
             selected_topology=data.get("selected_topology", "team"),
             selected_provider_runtime=dict(data.get("selected_provider_runtime", {})),
             rationale=[str(item) for item in data.get("rationale", [])],
+            review_summary=dict(data.get("review_summary", {})),
         )
 
 
@@ -3099,7 +3102,69 @@ def _build_decision_verdict(
             session.structured_brief.decision_rationale
             or _build_decision_rationale(session.requirement, session, get_policy(OrchestrationMode.SUCCESS_FIRST))
         ),
+        review_summary=_build_review_summary(session),
     )
+
+
+def _build_review_summary(session: PlanSession) -> dict[str, object]:
+    reviewed_rounds = [round_ for round_ in session.review_rounds if round_.review_result is not None]
+    severity_counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
+    role_reviews: list[dict[str, object]] = []
+    blocking_review_count = 0
+    non_blocking_review_count = 0
+
+    for round_ in reviewed_rounds:
+        result = round_.review_result
+        assert result is not None
+        if result.verdict == "needs_attention":
+            blocking_review_count += 1
+        else:
+            non_blocking_review_count += 1
+        findings_payload: list[dict[str, object]] = []
+        for finding in result.findings:
+            severity_counts[finding.severity] = severity_counts.get(finding.severity, 0) + 1
+            findings_payload.append(
+                {
+                    "severity": finding.severity,
+                    "title": finding.title,
+                    "recommendation": finding.recommendation,
+                    "file": finding.file,
+                }
+            )
+        role_reviews.append(
+            {
+                "round_type": round_.round_type,
+                "role": round_.role,
+                "verdict": result.verdict,
+                "finding_count": len(result.findings),
+                "top_severity": _top_review_severity(result.findings),
+                "summary": result.summary,
+                "next_steps": list(result.next_steps),
+                "findings": findings_payload,
+            }
+        )
+
+    aggregate_verdict = "approve"
+    if blocking_review_count:
+        aggregate_verdict = "needs_attention"
+
+    return {
+        "review_roles": [entry["role"] for entry in role_reviews],
+        "review_round_count": len(reviewed_rounds),
+        "blocking_review_count": blocking_review_count,
+        "non_blocking_review_count": non_blocking_review_count,
+        "aggregate_verdict": aggregate_verdict,
+        "severity_counts": severity_counts,
+        "reviews": role_reviews,
+    }
+
+
+def _top_review_severity(findings: list[Finding]) -> str | None:
+    if not findings:
+        return None
+    ranks = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    top = max(findings, key=lambda finding: ranks.get(finding.severity, -1))
+    return top.severity
 
 
 def build_operator_runbook(session: PlanSession) -> list[str]:
@@ -3434,22 +3499,23 @@ def _status_strategy_decision(
     guidance: SessionGuidance,
     next_task: dict[str, object] | None,
 ) -> dict[str, object]:
-    next_goal = (
+    current_checkpoint_objective = (
         str(next_task.get("title"))
         if isinstance(next_task, dict) and next_task.get("title")
         else guidance.primary_reason or session.requirement
     )
-    validation_plan = [
+    verification_requirements = [
         "Run the current phase targeted pytest slice before moving phases.",
         "Run full pytest and team check-compliance only at convergence.",
     ]
     if isinstance(next_task, dict):
-        validation_plan.extend(str(item) for item in next_task.get("validation", []) if item)
+        verification_requirements.extend(str(item) for item in next_task.get("validation", []) if item)
     return {
         "format": "agent_orchestrator.strategy_decision.v1",
         "session_id": session.id,
         "goal": session.structured_brief.goal or session.requirement,
-        "next_goal": next_goal,
+        "current_checkpoint_objective": current_checkpoint_objective,
+        "next_goal": current_checkpoint_objective,
         "status": session.status,
         "recommended_action": guidance.primary_action,
         "control_plane_focus": "state_context_strategy_topology_approval_evidence_memory_recovery",
@@ -3478,7 +3544,8 @@ def _status_strategy_decision(
         },
         "rationale": session.decision_verdict.rationale if session.decision_verdict else [],
         "risks": [str(item) for item in session.structured_brief.risks],
-        "validation_plan": validation_plan,
+        "verification_requirements": verification_requirements,
+        "validation_plan": verification_requirements,
         "executes": False,
     }
 

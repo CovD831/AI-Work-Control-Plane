@@ -142,6 +142,15 @@ def build_recovery_recommendation(
         and current_status
         not in {"runtime_failed", "provider_degraded", "evidence_blocked", "interrupted"}
     )
+    branch_candidates = _recovery_branch_candidates(
+        session=session,
+        current_status=current_status,
+        summary=summary,
+        compliance_first=compliance_first,
+        human_required=human_required,
+        safest_command=safest_command,
+        required=required,
+    )
     return {
         "format": "agent_orchestrator.recovery_recommendation.v1",
         "session_id": session.id,
@@ -153,10 +162,154 @@ def build_recovery_recommendation(
         "may_resume_execution": may_resume,
         "human_decision_required": human_required,
         "compliance_must_be_fixed_first": compliance_first,
+        "recovery_search": _recovery_search_summary(branch_candidates),
+        "branch_candidates": branch_candidates,
         "read_only": True,
         "mutation_policy": "recommendation only; execution remains gated by approved-plan runtime",
         "created_at": now_iso(),
     }
+
+
+def _recovery_branch_candidates(
+    *,
+    session: PlanSession,
+    current_status: str,
+    summary: dict[str, object],
+    compliance_first: bool,
+    human_required: bool,
+    safest_command: str,
+    required: dict[str, object],
+) -> list[dict[str, object]]:
+    recommended_commands = (
+        [str(command) for command in summary.get("recommended_commands", [])]
+        if isinstance(summary.get("recommended_commands"), list)
+        else []
+    )
+    primary_action = str(summary.get("resume_action") or summary.get("primary_action") or "inspect_session")
+    candidates: list[dict[str, object]] = []
+
+    def add_candidate(
+        branch_id: str,
+        *,
+        command: str,
+        score: int,
+        rationale: list[str],
+        branch_type: str,
+        requirements: list[str] | None = None,
+    ) -> None:
+        candidates.append(
+            {
+                "branch_id": branch_id,
+                "branch_type": branch_type,
+                "command": command,
+                "score": score,
+                "selected": command == safest_command,
+                "rationale": rationale,
+                "requirements": list(requirements or []),
+            }
+        )
+
+    add_candidate(
+        "primary_recovery_path",
+        command=safest_command,
+        score=10,
+        rationale=[f"Current control-plane guidance prefers `{primary_action}` for status `{current_status}`."],
+        branch_type="primary",
+        requirements=_required_labels(required),
+    )
+    if compliance_first:
+        add_candidate(
+            "compliance_first",
+            command=_command_for_action(session, "inspect_compliance"),
+            score=9,
+            rationale=["Compliance is blocking, so recovery must start with compliance inspection and repair."],
+            branch_type="compliance",
+            requirements=["compliance_blocking"],
+        )
+    if human_required:
+        add_candidate(
+            "human_decision",
+            command=_command_for_action(session, "human_decision"),
+            score=8,
+            rationale=["Human approval is required before execution can safely resume."],
+            branch_type="approval",
+            requirements=["human_decision"],
+        )
+    if current_status in {"runtime_failed", "provider_degraded", "recovery_ready"}:
+        add_candidate(
+            "inspect_execution",
+            command=_command_for_action(session, "inspect_execution"),
+            score=7,
+            rationale=["Execution-side evidence may explain the blocker more directly than a plan-only inspection."],
+            branch_type="execution",
+            requirements=[],
+        )
+    if primary_action not in {"retry_review", "retry_adversarial_review"} and current_status in {"runtime_failed", "interrupted", "recovery_ready"}:
+        add_candidate(
+            "inspect_blockers",
+            command=_command_for_action(session, "inspect_blockers"),
+            score=6,
+            rationale=["A blocker summary can narrow the safest re-entry path before retrying work."],
+            branch_type="inspection",
+            requirements=[],
+        )
+    for command in recommended_commands[1:3]:
+        add_candidate(
+            f"alternative:{command}",
+            command=command,
+            score=5,
+            rationale=["This command is a secondary recovery option surfaced by the current session guidance."],
+            branch_type="alternative",
+            requirements=[],
+        )
+    ranked = sorted(candidates, key=lambda item: int(item.get("score", 0)), reverse=True)
+    deduped: list[dict[str, object]] = []
+    seen_commands: set[str] = set()
+    for candidate in ranked:
+        command = str(candidate.get("command"))
+        if command in seen_commands:
+            continue
+        seen_commands.add(command)
+        deduped.append(candidate)
+    if deduped and not any(candidate.get("selected") for candidate in deduped):
+        deduped[0]["selected"] = True
+    return deduped
+
+
+def _recovery_search_summary(candidates: list[dict[str, object]]) -> dict[str, object]:
+    if not candidates:
+        return {
+            "selected_branch": None,
+            "runner_up_branch": None,
+            "candidate_count": 0,
+            "disagreement_level": "none",
+        }
+    ranked = sorted(candidates, key=lambda item: int(item.get("score", 0)), reverse=True)
+    selected = next((item for item in ranked if item.get("selected")), ranked[0])
+    runner_up = next((item for item in ranked if item is not selected), None)
+    selected_score = int(selected.get("score", 0))
+    runner_up_score = int(runner_up.get("score", 0)) if runner_up is not None else 0
+    delta = selected_score - runner_up_score
+    disagreement = "high" if delta <= 1 else "medium" if delta <= 3 else "low"
+    return {
+        "selected_branch": selected.get("branch_id"),
+        "selected_command": selected.get("command"),
+        "runner_up_branch": runner_up.get("branch_id") if runner_up is not None else None,
+        "runner_up_command": runner_up.get("command") if runner_up is not None else None,
+        "candidate_count": len(candidates),
+        "disagreement_level": disagreement,
+    }
+
+
+def _required_labels(required: dict[str, object]) -> list[str]:
+    labels: list[str] = []
+    if bool(required.get("approval")):
+        labels.append("approval")
+    if bool(required.get("evidence")):
+        labels.append("evidence")
+    if bool(required.get("compliance")):
+        labels.append("compliance")
+    return labels
 
 
 def _recovery_timeline_session_entries(
@@ -372,6 +525,10 @@ def _recovery_default_command(session: PlanSession, summary: dict[str, object]) 
         "retry_adversarial_review": f"python -m agent_orchestrator.cli team retry-adversarial-review {session.id}",
     }
     return commands.get(action, f"python -m agent_orchestrator.cli team summary {session.id}")
+
+
+def _command_for_action(session: PlanSession, action: str) -> str:
+    return _recovery_default_command(session, {"primary_action": action})
 
 
 def _recovery_required_approval_or_evidence(

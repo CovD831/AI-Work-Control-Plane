@@ -68,6 +68,30 @@ def test_graph_to_plan_tree_preserves_related_jobs(tmp_path) -> None:
     assert review_nodes
     assert any(node["related_agent_ids"] for node in review_nodes)
     assert all("allowed_actions" in node for node in review_nodes)
+    assert all("message_count" in node for node in review_nodes)
+    assert all("owner_role_contract" in node for node in review_nodes)
+    assert all(node["owner_role_contract"]["role"] == node["owner_role"] for node in review_nodes)
+    assert any(node["message_count"] >= 1 for node in review_nodes)
+
+
+def test_graph_to_plan_tree_exposes_semi_autonomous_role_contracts(tmp_path) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    session = start_approved_session(team, "Build a persisted plan artifact")
+
+    tree = graph_to_plan_tree(WorkGraphStore(tmp_path / "plans").read(session.id))
+
+    assert tree["owner_role_contract"]["role"] == "lead"
+    assert "structured_inputs" in tree["owner_role_contract"]
+    assert "structured_outputs" in tree["owner_role_contract"]
+    assert isinstance(tree["owner_role_contract"]["can_raise_blocker"], bool)
+    subtask = next(node for node in tree["children"] if node["kind"] == "subtask")
+    assert subtask["owner_role_contract"]["role"] == "builder"
+    assert "execution_contract" in subtask["owner_role_contract"]["structured_inputs"]
+    assert subtask["owner_role_contract"]["can_propose_alternative"] is True
 
 
 def test_work_graph_exposes_schedulable_nodes_and_node_actions(tmp_path) -> None:

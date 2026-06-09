@@ -426,6 +426,9 @@ class OrchestrationAttempt:
                 ),
                 policy=_policy_from_payload(routing_decision_payload["policy"]),
                 reasons=list(routing_decision_payload.get("reasons", [])),
+                candidates=list(routing_decision_payload.get("candidates", [])),
+                rejected_alternatives=list(routing_decision_payload.get("rejected_alternatives", [])),
+                consensus=dict(routing_decision_payload.get("consensus", {})),
                 confidence=float(routing_decision_payload.get("confidence", 0.5)),
             )
         failure_signal = None
@@ -546,6 +549,9 @@ class OrchestrationRun:
                 ),
                 policy=_policy_from_payload(routing_payload["policy"]),
                 reasons=list(routing_payload.get("reasons", [])),
+                candidates=list(routing_payload.get("candidates", [])),
+                rejected_alternatives=list(routing_payload.get("rejected_alternatives", [])),
+                consensus=dict(routing_payload.get("consensus", {})),
                 confidence=float(routing_payload.get("confidence", 0.5)),
             )
         signals = DecisionSignals.from_dict(data["signals"]) if data.get("signals") else None

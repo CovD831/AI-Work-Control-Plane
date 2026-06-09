@@ -71,7 +71,7 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
     if artifact_format == CONTROL_PLANE_FORMATS["strategy_decision"]:
         return {
             "session_id": payload.get("session_id"),
-            "next_goal": payload.get("next_goal"),
+            "current_checkpoint_objective": payload.get("current_checkpoint_objective") or payload.get("next_goal"),
             "executes": payload.get("executes"),
         }
     if artifact_format == CONTROL_PLANE_FORMATS["topology_snapshot"]:

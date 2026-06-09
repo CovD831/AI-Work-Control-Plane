@@ -1,6 +1,6 @@
 from agent_orchestrator import Orchestrator
 from agent_orchestrator.jobs import FileJobRuntime
-from agent_orchestrator.messages import MessageRouter, MessageStore, build_direct_api_tool_trace_payload
+from agent_orchestrator.messages import MessageRouter, MessageStore, build_collaboration_payload, build_direct_api_tool_trace_payload
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 
 
@@ -43,6 +43,10 @@ def test_message_router_builds_review_request_result_and_handoff(tmp_path) -> No
     assert request.thread == "review"
     assert result.thread == "review"
     assert handoff.thread == "main"
+    assert request.payload["collaboration"]["format"] == "agent_orchestrator.collaboration_object.v1"
+    assert request.payload["collaboration"]["object_type"] == "proposal"
+    assert result.payload["collaboration"]["object_type"] == "critique"
+    assert handoff.payload["collaboration"]["object_type"] == "proposal"
     packet = handoff.payload["handoff_packet"]
     assert packet["format"] == "agent_orchestrator.handoff_packet.v1"
     assert packet["summary"] == "execute"
@@ -102,6 +106,60 @@ def test_direct_api_tool_trace_records_intent_without_execution(tmp_path) -> Non
     assert payload["runtime_mode"] == "direct_api"
 
 
+def test_message_router_builds_structured_collaboration_objects(tmp_path) -> None:
+    router = MessageRouter(MessageStore(tmp_path / "messages"))
+
+    verdict = router.build_collaboration_object(
+        session_id="plan-1",
+        from_role="judge",
+        to_role="lead",
+        object_type="verdict",
+        content="Accept the revised plan.",
+        payload={"next_steps": ["approve"], "collaboration": {"verdict": "accept"}},
+        thread="review",
+    )
+    blocker = router.build_collaboration_object(
+        session_id="plan-1",
+        from_role="runtime",
+        to_role="lead",
+        object_type="blocker",
+        content="Execution is blocked by missing credentials.",
+        payload={"blockers": ["missing credentials"]},
+        thread="rescue",
+        requires_response=True,
+    )
+
+    assert verdict.message_type == "verdict"
+    assert verdict.payload["collaboration"]["format"] == "agent_orchestrator.collaboration_object.v1"
+    assert verdict.payload["collaboration"]["object_type"] == "verdict"
+    assert verdict.payload["collaboration"]["verdict"] == "accept"
+    assert blocker.payload["collaboration"]["object_type"] == "blocker"
+    assert blocker.payload["collaboration"]["blockers"] == ["missing credentials"]
+    assert blocker.requires_response is True
+
+
+def test_build_collaboration_payload_captures_structured_fields() -> None:
+    payload = build_collaboration_payload(
+        object_type="reflection",
+        session_id="plan-1",
+        from_role="reflector",
+        to_role="lead",
+        summary="Execution should tighten validation before retry.",
+        evidence=["pytest tests/test_team.py -q"],
+        blockers=["validation gap"],
+        verdict="revise",
+        severity="medium",
+        next_steps=["retry-review"],
+        refs={"job_id": "job-1"},
+    )
+
+    assert payload["format"] == "agent_orchestrator.collaboration_object.v1"
+    assert payload["object_type"] == "reflection"
+    assert payload["verdict"] == "revise"
+    assert payload["severity"] == "medium"
+    assert payload["refs"]["job_id"] == "job-1"
+
+
 def test_team_start_writes_review_messages_and_job_metadata(tmp_path) -> None:
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
@@ -122,6 +180,8 @@ def test_team_start_writes_review_messages_and_job_metadata(tmp_path) -> None:
     assert len(review_results) == 2
     assert {message["thread"] for message in review_requests} == {"review"}
     assert {message["to_role"] for message in review_requests} == {"reviewer", "adversarial_reviewer"}
+    assert all(message["payload"]["collaboration"]["object_type"] == "proposal" for message in review_requests)
+    assert all(message["payload"]["collaboration"]["format"] == "agent_orchestrator.collaboration_object.v1" for message in review_results)
 
     jobs = team.runtime.list_recent()
     review_jobs = [job for job in jobs if job.kind in {"review", "adversarial_review"}]

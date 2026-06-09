@@ -1,8 +1,8 @@
-"""Execution topology snapshot builder for the control plane."""
+"""Read-only execution path snapshot builder for the control plane."""
 from __future__ import annotations
 
 # DEPS: __future__, agent_orchestrator, pathlib
-# RESPONSIBILITY: Build read-only execution topology snapshots from plan sessions and control-plane artifacts.
+# RESPONSIBILITY: Build read-only execution path snapshots from plan sessions and control-plane artifacts.
 # MODULE: decision_core
 # ---
 
@@ -55,7 +55,12 @@ def build_execution_topology_snapshot(
     nodes: list[dict[str, object]] = [
         _topology_node("state", "workspace-state", "Workspace state", session.status),
         _topology_node("context", "context-packet", "Context packet", "available"),
-        _topology_node("strategy", "strategy-decision", str(strategy.get("next_goal")), "ready"),
+        _topology_node(
+            "strategy",
+            "strategy-decision",
+            str(strategy.get("current_checkpoint_objective") or strategy.get("next_goal")),
+            "ready",
+        ),
         _topology_node("manager_slot", "manager-policy", "Manager policy slot", session.status),
     ]
     if graph is not None:

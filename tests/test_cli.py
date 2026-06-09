@@ -605,7 +605,7 @@ def test_ui_command_starts_dashboard_server(monkeypatch, capsys) -> None:
 
     assert calls["host"] == "127.0.0.1"
     assert calls["port"] == 8765
-    assert "Agent Team Console: http://127.0.0.1:8765" in capsys.readouterr().out
+    assert "治理控制台: http://127.0.0.1:8765" in capsys.readouterr().out
 
 
 def test_ui_command_accepts_tmux_job_runtime(monkeypatch, capsys) -> None:
@@ -1269,9 +1269,15 @@ def test_team_roles_command_reports_role_contracts(tmp_path, capsys) -> None:
         cli.main()
         payload = json.loads(capsys.readouterr().out)
         roles = {role["role"]: role for role in payload["roles"]}
+        assert "半自治协作能力" in payload["skill_discipline"]
+        assert roles["lead"]["can_raise_blocker"] is True
+        assert "plan_session" in roles["lead"]["structured_inputs"]
         assert roles["reviewer"]["runtime_mode"] == "direct_api"
         assert "execute_work_unit" in roles["reviewer"]["forbidden_actions"]
+        assert roles["reviewer"]["can_request_information"] is True
         assert "implementation_result" in roles["builder"]["required_outputs"]
+        assert "execution_contract" in roles["builder"]["structured_inputs"]
+        assert roles["builder"]["can_publish_reflection"] is True
         assert roles["context_compressor"]["runtime_mode"] == "local_artifact"
         assert "ContextPacket" in roles["context_compressor"]["required_outputs"]
     finally:
@@ -3088,11 +3094,12 @@ def test_team_context_packet_json_outputs_control_plane_packet(tmp_path, capsys,
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
-def test_team_topology_inspect_json_outputs_snapshot(tmp_path, capsys) -> None:
+def test_team_topology_inspect_json_outputs_snapshot(tmp_path, capsys, monkeypatch) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 
     write_minimal_process_docs(tmp_path)
+    monkeypatch.chdir(tmp_path)
     team = TeamOrchestrator(
         orchestrator=Orchestrator(),
         store=PlanStore(root=tmp_path / "plans"),

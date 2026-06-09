@@ -467,7 +467,7 @@ def _team_role_contract_payload() -> dict[str, object]:
     return {
         "roles": contracts,
         "contract_count": len(contracts),
-        "skill_discipline": "role contracts bind allowed actions, forbidden actions, required outputs, and command refs",
+        "skill_discipline": "职责约束定义了允许动作、禁止动作、结构化输入输出、半自治协作能力以及对应命令入口",
     }
 
 
@@ -480,7 +480,12 @@ def _print_team_role_contracts(payload: dict[str, object]) -> None:
             "role: "
             f"{contract.get('role')} runtime_mode={contract.get('runtime_mode')} "
             f"allowed={','.join(str(item) for item in contract.get('allowed_actions', []))} "
-            f"required_outputs={','.join(str(item) for item in contract.get('required_outputs', []))}"
+            f"required_outputs={','.join(str(item) for item in contract.get('required_outputs', []))} "
+            f"inputs={','.join(str(item) for item in contract.get('structured_inputs', []))} "
+            f"blocker={contract.get('can_raise_blocker')} "
+            f"alternative={contract.get('can_propose_alternative')} "
+            f"rfi={contract.get('can_request_information')} "
+            f"reflection={contract.get('can_publish_reflection')}"
         )
 
 

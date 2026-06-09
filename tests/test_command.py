@@ -508,6 +508,32 @@ def test_claude_adapter_marks_is_error_as_failure() -> None:
     assert error == "failed inside claude"
 
 
+def test_claude_adapter_marks_error_during_execution_as_failure() -> None:
+    adapter = ClaudeCodeAdapter()
+    stdout = json.dumps(
+        {
+            "result": "",
+            "is_error": False,
+            "subtype": "error_during_execution",
+            "errors": ["permission denied while writing debug log"],
+        }
+    )
+    summary, payload, error = adapter.parse_result(
+        JobRequest(
+            task_id="work-5b",
+            provider="claude",
+            kind="review",
+            prompt="Review",
+            cwd="/tmp/project",
+        ),
+        CommandResult(command=["claude"], exit_code=0, stdout=stdout, stderr=""),
+    )
+
+    assert summary == ""
+    assert payload["envelope"]["subtype"] == "error_during_execution"
+    assert error == "permission denied while writing debug log"
+
+
 def test_claude_adapter_detects_auth_prompt() -> None:
     adapter = ClaudeCodeAdapter()
     _, _, error = adapter.parse_result(
