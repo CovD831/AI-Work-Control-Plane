@@ -1,51 +1,53 @@
 # AI Work Control Plane Master Plan
 
-## Purpose
+## 目的
 
-This plan shifts AI-Work-Control-Plane from an orchestration-centered product to an **AI Work Control Plane** for long-cycle local agent work.
+这个主计划把 AI-Work-Control-Plane 从“以编排为中心的项目”收口为“面向长周期本地 agent 工作的外部治理层”。
 
-The goal is not to discard orchestration. Explicit agent planning, review, rescue, jobs, and provider runtimes remain necessary in the short term. The shift is that orchestration becomes an execution capability under a higher control plane:
+这里不是否定编排，而是把编排降到控制平面下方。短期内，显式的计划、审查、恢复、job 和 provider runtime 仍然必要；但它们更适合被理解为执行能力，而不是产品本体。
 
 原有编排不舍弃；它在短期仍是必需执行层，长期则沉到 AI Work Control Plane 下方，成为可审计、可恢复、可替换的 runtime 能力。
 
 短期靠显式编排解决真实工作；中期用 control plane 管住编排；长期允许编排逐步被模型内化，但状态、证据、审批、记忆和恢复仍留在系统外部。
 
+长期稳定资产不是“让模型多会干活一点”，而是把下面这些东西留在系统外部并持续可审计、可恢复、可替换：
+
 ```text
 WorkspaceState -> ContextPacket -> StrategyDecision -> ExecutionTopologySnapshot -> ApprovalItem -> EvidenceBundle -> MemoryRecord
 ```
 
-## Product Boundary
+## 产品边界
 
-In scope:
+本计划关注：
 
-- Durable workspace state over plan sessions, runs, jobs, evidence, approvals, provider health, dirty files, and memory.
-- Context compression that gives models minimum sufficient context without choosing strategy.
-- Deterministic strategy and topology artifacts that record why work should move next.
-- Human approval items as first-class state, especially for blocked sessions, compliance gates, provider fallback, rescue, and reroute decisions.
-- Evidence bundles for targeted tests, full tests, compliance, setup doctor, and evidence report status.
-- Memory records with provenance, freshness, confidence, and optional external cache status.
+- 围绕 plan session、run、job、证据、审批、provider 健康、dirty files、memory 的持久工作空间状态。
+- 只提供“最小充分上下文”的 `ContextPacket`，而不是在这一步替模型做策略决定。
+- 可回溯的治理摘要和执行路径快照，用来解释“为什么下一步是这个”。
+- 把人工审批作为一等状态，尤其覆盖阻塞、合规门禁、provider fallback、失败恢复和 reroute。
+- 统一的证据包，覆盖 targeted tests、full tests、compliance、setup doctor 和 evidence report。
+- 带 provenance、freshness、confidence 的记忆记录，以及可选的外部缓存状态。
 
-Out of scope for this track:
+本计划不关注：
 
-- Replacing existing `team execute`, job runtime, provider adapters, or recovery gates.
-- Building a human-org-chart UI around CEO / Leader / Employee roleplay.
-- Building a React Flow editor before schemas stabilize.
-- Making SDK-first provider runtime the default.
-- Treating explore_cache as required infrastructure.
+- 替换现有 `team execute`、job runtime、provider adapter 或恢复门禁。
+- 把产品包装成人类组织架构式的 roleplay UI。
+- 在协议未稳定前优先做 React Flow 编辑器。
+- 让 SDK-first provider runtime 成为默认路径。
+- 把 `explore_cache` 当成必须依赖。
 
-## AI-Native Role Model
+## 职责模型
 
-Roles are artifact transformers, not human company titles:
+这里的“角色”是制品变换职责，不是人格化职位：
 
-- `state_keeper`: workspace stores -> `WorkspaceStateSnapshot`
-- `context_compressor`: docs / memory / changed files -> `ContextPacket`
-- `strategist`: context and state -> `StrategyDecision`
-- `topology_compiler`: strategy / plan / work graph -> `ExecutionTopologySnapshot`
-- `approval_gate`: blocked or risky state -> `ApprovalItem`
-- `evidence_recorder`: local gates -> `EvidenceBundle`
-- `memory_curator`: evidence and outcomes -> `MemoryRecord`
+- `state_keeper`: 从工作空间存储构建 `WorkspaceStateSnapshot`
+- `context_compressor`: 从文档、memory、改动文件压缩出 `ContextPacket`
+- `strategist`: 从状态和上下文生成 `StrategyDecision`
+- `topology_compiler`: 从 strategy、plan、work graph 生成 `ExecutionTopologySnapshot`
+- `approval_gate`: 把阻塞或高风险状态沉淀成 `ApprovalItem`
+- `evidence_recorder`: 把本地验证门禁沉淀成 `EvidenceBundle`
+- `memory_curator`: 从证据和结果中提炼 `MemoryRecord`
 
-## Delivery Track
+## 交付主线
 
 ### Completed Baseline: Phase 0-5 Result
 

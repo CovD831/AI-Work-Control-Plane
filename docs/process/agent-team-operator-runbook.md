@@ -1,4 +1,4 @@
-# Agent Team Operator Runbook
+# 治理控制台操作手册
 
 ## 目的
 
@@ -34,11 +34,11 @@ AI-native 控制面优先看 artifact，而不是模仿人类组织层级：
 
 - `team workspace-status`：生成 `agent_orchestrator.workspace_state.v1`，并写入 `.agent_orchestrator/workspace/index.json`。
 - `team context-packet --query "<task>" --changed-file <path>`：生成 `agent_orchestrator.context_packet.v1`，压缩 docs、memory、changed files 和 stale warnings，但不选择 strategy。
-- `team topology inspect <session_id>`：生成只读 `agent_orchestrator.execution_topology_snapshot.v1`。
+- `team topology inspect <session_id>`：生成只读 `agent_orchestrator.execution_topology_snapshot.v1` 执行路径快照。
 - `team approvals list`：查看 `agent_orchestrator.approval_item.v1` 队列。
 - `team approvals resolve <approval_id> --status resolved --reason "<why>"`：只记录人类决策，不绕过 execution gate。
 - `team evidence-gates`：生成 `agent_orchestrator.evidence_bundle.v1`，汇总 tests、compliance、setup 和 evidence report gate。
-- `team summary` / `team next` / `team runbook`：直接展示 `StrategyDecision` 摘要，不需要先打开 topology 才知道 control-plane 建议。
+- `team summary` / `team next` / `team runbook`：直接展示治理检查点摘要，不需要先打开执行路径快照才知道 control-plane 建议。
 
 Phase 6+ control-plane hardening 增加了以下 operator 约束：
 
@@ -52,7 +52,7 @@ Operations Track 继续把默认 operator 入口上移为控制面现场：
 
 - `.agent_orchestrator/workspace/index.json` 应成为当前 workspace/program、active artifacts、open approvals、recent runs、memory candidates 和 provider/runtime health 的索引。
 - `team approvals list` 应按 inbox 理解，显示 pending/resolved/blocking、reason code distribution 和 recommended next command。
-- `team topology inspect` 应提供只读 topology blueprint snapshot，不提供拓扑编辑。
+- `team topology inspect` 应提供只读执行路径 blueprint snapshot，不提供拓扑编辑。
 - `team summary`、`team next`、`team runbook` 应从 run ledger 和 recovery 语义补充下一步，而不是只复述 team 编排状态。
 - evidence bundle 可以产生 memory promotion candidates，但不能自动写 durable memory。
 - operations dogfood 以 `docs/process/ai-work-control-plane-operations-dogfood-evidence.md` 为当前证据基准。
@@ -71,10 +71,23 @@ Runtime Bridge Fidelity Track 继续补齐 provider/runtime 会话保真度：
 
 Runtime Bridge dogfood 以 `docs/process/ai-work-control-plane-runtime-bridge-dogfood-evidence.md` 为当前运行时保真度证据基准。
 
-## Role Contracts
+## Responsibility Contracts
 
-`team roles` 是角色纪律的标准入口。它展示 planner、reviewer、adversarial_reviewer、builder、rescue，以及 AI-native artifact 转换角色 state_keeper、context_compressor、strategist、topology_compiler、evidence_recorder、memory_curator、approval_gate 的 runtime mode、allowed actions、forbidden actions、required outputs、command refs。
+`team roles` 是职责契约的标准入口。它不是为了模拟公司组织架构，而是为了说明不同治理职责、执行职责和 artifact 职责分别有哪些 runtime mode、allowed actions、forbidden actions、required outputs、structured inputs、structured outputs、semi-autonomous collaboration capabilities 和 command refs。
 
+当前会看到的职责包括：
+
+- 会话治理：`lead`
+- 计划职责：`planner`
+- 质量审查：`reviewer`
+- 风险挑战：`adversarial_reviewer`
+- 执行任务：`builder`
+- 执行验证：`validator`
+- 恢复处理：`rescue`
+- 运行时：`runtime`
+- 以及 AI-native artifact 转换职责 `state_keeper`、`context_compressor`、`strategist`、`topology_compiler`、`evidence_recorder`、`memory_curator`、`approval_gate`
+
+- 会话治理 `lead`：`team status`、`team next`、`team inspect-blockers`
 - state_keeper: `team workspace-status`
 - context_compressor: `team context-packet`、`team inspect-docs`、`team docs-index`
 - strategist: `team topology inspect`
@@ -82,11 +95,18 @@ Runtime Bridge dogfood 以 `docs/process/ai-work-control-plane-runtime-bridge-do
 - evidence_recorder: `team evidence-gates`、`team setup`、`team check-compliance`
 - memory_curator: `team inspect-knowledge`、`team context-packet`
 - approval_gate: `team approvals list`、`team approvals resolve`
-- planner: `team start`、`team chat`、`team draft-ready`、`team task next`
-- reviewer: `team submit-review`、`team retry-review`、`team task list`
-- adversarial_reviewer: `team submit-review`、`team retry-adversarial-review`
-- builder: `team execute`、`team inspect-execution`
-- rescue: `team inspect-blockers`、`team retry-review`、`team retry-adversarial-review`
+- 计划职责 `planner`：`team start`、`team chat`、`team draft-ready`、`team task next`
+- 质量审查 `reviewer`：`team submit-review`、`team retry-review`、`team task list`
+- 风险挑战 `adversarial_reviewer`：`team submit-review`、`team retry-adversarial-review`
+- 执行任务 `builder`：`team execute`、`team inspect-execution`
+- 执行验证 `validator`：`team inspect-execution`、`team task next`
+- 恢复处理 `rescue`：`team inspect-blockers`、`team retry-review`、`team retry-adversarial-review`
+- 运行时 `runtime`：`team inspect-execution`
+
+阅读原则：
+
+- 先把它看成“职责边界和允许动作说明”，不要先把它看成一套需要拟人化运作的组织架构
+- 真正长期稳定的对象仍然是 artifact、gate、evidence、recovery 和 runtime facts
 
 推荐用法：
 
@@ -104,6 +124,12 @@ python -m agent_orchestrator.cli team topology inspect <session_id>
 python -m agent_orchestrator.cli team approvals list
 python -m agent_orchestrator.cli team evidence-gates
 ```
+
+收口边界：
+
+- `team roles`、plan tree、Console summary 和 UI 面板都属于 operator projection，不是新的 durable state。
+- 如果 `team roles` 和 work-graph 里出现更丰富的结构化字段，应优先把它理解为“解释和检查边界更清楚了”，而不是“系统已经进入高自治多 agent runtime”。
+- 真正机器契约优先回看 `docs/process/control-plane-artifact-contracts.md` 中定义的 control-plane artifacts。
 
 判断标准：
 
@@ -273,7 +299,7 @@ BLOCKERS: what stopped the worker, or None
 - 用 `team refresh-docs` 刷新 canonical process docs。
 - 用 `team repair-compliance` 先刷新 docs，再查看 remaining warnings、required actions 和 recommended commands。
 - 用 `team setup` 查看 release_readiness，确认 version_sync、tests、evidence 和 compliance 的收尾状态。
-- 用 `ui` 打开 Agent Team Console，检查 provenance、review policy、fallback、compliance、event/message timeline、work graph 和 job log。
+- 用 `ui` 打开治理控制台，检查 provenance、review policy、fallback、compliance、event/message timeline、work graph 和 job log。
 - 对运行中的 job，可用 CLI 或 Console 执行 `send` / `cancel`，并查看 terminal_ref、last log excerpt 和 last_seen_at。
 
 ## 真实案例与证据路径

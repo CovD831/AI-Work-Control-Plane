@@ -13,6 +13,14 @@ These contracts pin the minimum stable shape for AI Work Control Plane artifacts
 - Legacy memory and approval payloads remain readable.
 - External `explore_cache` status is optional state, not a failure.
 
+## Canonical Vs Projection Boundary
+
+- Canonical contracts are the control-plane artifacts documented in this file.
+- `WorkspaceStateSnapshot`, `ContextPacket`, `StrategyDecision`, `ExecutionTopologySnapshot`, `ApprovalItem`, `EvidenceBundle`, recovery artifacts, runtime fidelity artifacts, and `MemoryRecord` remain the durable automation boundary.
+- `team roles`, work-graph trees, pretty summaries, runbook guidance, and UI panels are projections over canonical state.
+- Role-contract enrichments such as `structured_inputs`, `structured_outputs`, blocker/alternative/request/reflection capabilities, and work-graph owner-contract views are governance metadata for inspection and routing clarity.
+- Those enrichments must not become a second durable state source or an implicit autonomous runtime loop without a later bounded phase explicitly introducing that behavior.
+
 ## WorkspaceStateSnapshot
 
 - Format: `agent_orchestrator.workspace_state.v1`
@@ -41,20 +49,33 @@ These contracts pin the minimum stable shape for AI Work Control Plane artifacts
 
 ## StrategyDecision
 
+对外语义建议：
+
+- 可以把它理解成“治理检查点摘要”或“当前检查点治理摘要”
+- 不建议把它理解成替 provider 做内部 planning 的策略脑
+
 - Format: `agent_orchestrator.strategy_decision.v1`
 - Producer: control-plane topology builder and operator workflow helpers
-- Consumers: `team summary`, `team next`, `team runbook`, topology snapshot, UI
-- Lifecycle: generated deterministically from session state
-- Stable fields: `session_id`, `goal`, `next_goal`, `status`, `selected_topology`, `selected_provider_runtime`, `rationale`, `tradeoffs`, `risks`, `validation_plan`, `executes`, `created_at`
+- Consumers: `team summary`, `team next`, `team runbook`, execution path snapshot, UI
+- Lifecycle: generated deterministically from session state as a read-only governance summary
+- Stable fields: `session_id`, `goal`, `current_checkpoint_objective`, `status`, `selected_topology`, `selected_provider_runtime`, `rationale`, `tradeoffs`, `risks`, `verification_requirements`, `executes`, `created_at`
+- Compatibility: `next_goal` and `validation_plan` remain readable as v1 compatibility aliases, but new consumers should prefer `current_checkpoint_objective` and `verification_requirements`.
 - Rule: `executes` must remain `false`.
+- Rule: this artifact records checkpoint objective, verification requirements, runtime boundary hints, and recovery-facing context; it does not replace provider-native planning.
 
 ## ExecutionTopologySnapshot
 
+对外语义建议：
+
+- 可以把它理解成“执行路径快照”或“只读执行结构快照”
+- 不建议把它理解成需要持续编辑的 multi-agent 拓扑设计器
+
 - Format: `agent_orchestrator.execution_topology_snapshot.v1`
 - Producer: `team topology inspect`
-- Consumers: operator console and UI
-- Lifecycle: read-only snapshot; never mutates execution engine state
+- Consumers: 治理控制台与 UI
+- Lifecycle: read-only snapshot of the current execution path and control-plane boundaries; never mutates execution engine state
 - Stable fields: `session_id`, `fixed_node_types`, `nodes`, `edges`, `strategy_decision`, `execution_contract`, `approval_queue`, `evidence_bundle`, `read_only`, `created_at`
+- Rule: this artifact is a read-only execution path view for inspection, not an orchestration editor.
 
 ## ApprovalItem
 
@@ -69,7 +90,7 @@ These contracts pin the minimum stable shape for AI Work Control Plane artifacts
 
 - Format: `agent_orchestrator.evidence_bundle.v1`
 - Producer: `team evidence-gates`
-- Consumers: operator console, memory recommendation, release gates
+- Consumers: 治理控制台、memory recommendation、release gates
 - Lifecycle: generated on demand from local evidence, compliance, and gate state
 - Stable fields: `status`, `gate_evidence`, `evidence_state`, `recovery_refs`, `compliance`, `memory_recommendation`, `created_at`
 

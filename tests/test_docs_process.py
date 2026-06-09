@@ -105,11 +105,11 @@ def test_process_doc_declares_long_plan_driven_execution() -> None:
 def test_readme_points_to_continuous_internal_default_workflow() -> None:
     text = Path("README.md").read_text(encoding="utf-8")
 
-    assert "AI Work Control Plane for long-cycle local agent work" in text
-    assert "internal default" in text
+    assert "面向长周期本地 coding agent 的可靠性控制平面" in text
+    assert "内部默认工作流" in text
     assert "长周期主执行计划" in text
     assert "验证通过后自动进入下一段" in text
-    assert "while state, evidence, approvals, memory, and recovery stay outside the model" in text
+    assert "状态、证据、审批、记忆和恢复仍然应该留在模型之外" in text
 
 
 def test_continuous_control_plane_hardening_plan_declares_phase_protocol() -> None:
@@ -258,6 +258,82 @@ def test_process_doc_reflects_basic_documentation_gate_progress() -> None:
     assert "`in_progress - basic refresh and compliance checks active`" in text
     assert "`in_progress - changed-file scoped pre-commit gate active`" in text
     assert "team check-compliance" in text
+
+
+def test_agent_evolution_phase_docs_exist_through_phase_7() -> None:
+    master = Path("docs/process/agent-evolution-master-plan.md").read_text(encoding="utf-8")
+    phase7 = Path("docs/process/agent-evolution-phase-7-semi-autonomous-role-contracts.md").read_text(encoding="utf-8")
+    phase75 = Path("docs/process/agent-evolution-phase-7-5-surface-convergence.md").read_text(encoding="utf-8")
+
+    assert "Phase 7: Semi-Autonomous Role Contracts" in master
+    assert "Phase 7.5: Surface Convergence" in master
+    assert "pytest tests/test_team.py tests/test_messages.py tests/test_work_graph.py -q" in master
+    assert "pytest tests/test_docs_process.py -q" in master
+    assert "Semi-Autonomous Role Contracts" in phase7
+    assert "structured inputs and outputs" in phase7
+    assert "pytest tests/test_actions.py tests/test_cli.py tests/test_work_graph.py -q" in phase7
+    assert "Surface Convergence" in phase75
+    assert "canonical contracts" in phase75
+    assert "projection surfaces" in phase75
+
+
+def test_control_plane_artifact_contracts_define_canonical_vs_projection_boundary() -> None:
+    text = Path("docs/process/control-plane-artifact-contracts.md").read_text(encoding="utf-8")
+
+    assert "## Canonical Vs Projection Boundary" in text
+    assert "Canonical contracts are the control-plane artifacts documented in this file." in text
+    assert "`team roles`, work-graph trees, pretty summaries, runbook guidance, and UI panels are projections" in text
+    assert "must not become a second durable state source" in text
+
+
+def test_operator_runbook_and_process_doc_define_surface_convergence_rule() -> None:
+    runbook = Path("docs/process/agent-team-operator-runbook.md").read_text(encoding="utf-8")
+    process = Path("docs/process/agent-orchestrator-implementation-process.md").read_text(encoding="utf-8")
+
+    assert "operator projection" in runbook
+    assert "不是新的 durable state" in runbook
+    assert "surface convergence" in process
+    assert "canonical contracts" in process
+
+
+def test_agent_evolution_master_plan_declares_phase_first_protocol() -> None:
+    text = Path("docs/process/agent-evolution-master-plan.md").read_text(encoding="utf-8")
+
+    assert "the control plane remains the system of record" in text
+    assert "Every phase must start with a short phase plan" in text
+    assert "Advance to the next phase only after targeted tests pass" in text
+    assert "Phase 0: Current-State Baseline" in text
+    assert "Phase 8: LangGraph Execution Runtime Pilot" in text
+    assert "Phase 9: A2A-Style Interop Adapter" in text
+
+
+def test_agent_evolution_phase_0_baseline_declares_acceptance_criteria() -> None:
+    text = Path("docs/process/agent-evolution-phase-0-baseline.md").read_text(encoding="utf-8")
+
+    assert "What is the system today?" in text
+    assert "What is it not?" in text
+    assert "no runtime behavior changes" in text
+    assert "canonical docs state that the current system is governance-first and workflow-governed" in text
+    assert "current execution layer has multi-role semantics but is not yet a high-autonomy multi-agent system" in text
+    assert "pytest tests/test_docs_process.py -q" in text
+
+
+def test_architecture_doc_describes_current_execution_layer_as_workflow_governed() -> None:
+    text = Path("docs/architecture/决策核心-执行拓扑-运行时分层说明.md").read_text(encoding="utf-8")
+
+    assert "以工作流治理为核心、带有多角色语义和有限 agent 分工的 orchestration runtime" in text
+    assert "它也不是高自治 multi-agent system" in text
+    assert "先结构化协作对象" in text
+    assert "再外显决策候选与裁决理由" in text
+
+
+def test_process_doc_links_agent_evolution_plan_protocol() -> None:
+    text = Path("docs/process/agent-orchestrator-implementation-process.md").read_text(encoding="utf-8")
+
+    assert "当前执行层更接近 `单编排器 + 多角色语义 + 持久化工作流`" in text
+    assert "当前执行层还不是高自治、多中心协商式的 multi-agent system" in text
+    assert "docs/process/agent-evolution-master-plan.md" in text
+    assert "targeted tests 通过后进入下一 phase" in text
     assert "--changed-file" in text
     assert "Missing plan/checklist/review-round persistence is now blocked" in text
     assert "visible reviewer fallback policy" in text

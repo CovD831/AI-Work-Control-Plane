@@ -5,7 +5,7 @@
 - Planning Governance Progress: `decision-core-first happy path established; recovery and handoff hardening in progress`
 - Execution Strategy Progress: `iteration 4 in progress`
 - Total Product Progress: `decision-core-first happy path established with planning skeleton advancing`
-- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model review rounds, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, operator-runbook signal compliance, a structured compliance contract with changed-file header enforcement, explicit Provider / Runtime modes for `cli_inherit`, `cli_isolated`, and `direct_api`, the first AI Work Control Plane artifact pipeline, the Operations Track operator surface, the Live Recovery Track recovery surface, and the Runtime Bridge Fidelity surface with Provider Session Snapshot, Runtime Operation Receipt, extended Runtime Event Stream, `team runtime inspect`, workspace/evidence/UI runtime fidelity summaries, and dogfood evidence. Remaining gaps are broader real-task dogfood coverage and deeper provider-specific bridge fidelity beyond the guarded command runtime boundary.
+- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model quality gates, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, operator-runbook signal compliance, a structured compliance contract with changed-file header enforcement, explicit Provider / Runtime modes for `cli_inherit`, `cli_isolated`, and `direct_api`, the first AI Work Control Plane artifact pipeline, the Operations Track operator surface, the Live Recovery Track recovery surface, and the Runtime Bridge Fidelity surface with Provider Session Snapshot, Runtime Operation Receipt, extended Runtime Event Stream, `team runtime inspect`, workspace/evidence/UI runtime fidelity summaries, and dogfood evidence. Remaining gaps are broader real-task dogfood coverage and deeper provider-specific bridge fidelity beyond the guarded command runtime boundary.
 
 ## Purpose Of This Document
 
@@ -49,6 +49,13 @@ Update this file at the end of every implementation iteration. Do not maintain a
 - `cli_inherit / cli_isolated / direct_api` 默认视为 Provider / Runtime 层
 - `PlanSession / RoundController / gap closure / approved-plan gate` 默认视为决策核心层
 
+当前执行层基线补充：
+
+- 当前执行层更接近 `单编排器 + 多角色语义 + 持久化工作流`
+- 当前执行层已经包含 handoff、review、adversarial review、work graph 等 agent-like 要素
+- 当前执行层还不是高自治、多中心协商式的 multi-agent system
+- 后续如需演进到更强多 agent 协作，必须先把协作对象、决策理由、恢复分支和检索证据结构化，再增加自治程度
+
 执行方式补充：
 
 - 后续默认按“长周期主执行计划”持续推进
@@ -56,17 +63,20 @@ Update this file at the end of every implementation iteration. Do not maintain a
 - 并行 worker / subagent 交付统一使用 `SUMMARY / CHANGES / EVIDENCE / RISKS / BLOCKERS` 五段契约，父流程只整合 bounded evidence 和 artifact path
 - 每个实现段验证通过后自动进入下一段，普通进展汇报不构成停点
 - 除非发生高风险方向变化，否则不再为每个小阶段重新起一轮大计划
+- 对于 `docs/process/agent-evolution-master-plan.md` 覆盖的演进线，每个 phase 仍然必须先写 phase plan，再执行实现，并在 targeted tests 通过后进入下一 phase
+- 当某条演进线连续数个 phase 扩展了 CLI / work graph / docs / compliance 等多个暴露面时，必须先做一次 surface convergence，再继续引入新的 runtime substrate
+- surface convergence 的默认目标是压实 canonical contracts、projection surfaces 和 implemented-vs-planned boundary，而不是继续加新行为
 
 ## Final Product Shape
 
 The intended v1 product is:
 
-- a local-first CLI orchestration system
+- a local-first CLI governance system
 - optimized for the author's real workflows before broader packaging
 - built around `Planning Governance Layer + Execution Strategy Layer`
 - capable of accepting a task plus optional strategy constraints
 - capable of running a rule-driven planning governance loop before execution
-- capable of producing persisted plans, review history, checklists, approved execution artifacts, routed execution decisions, and synchronized documentation updates
+- capable of producing persisted plans, gate history, checklists, approved execution artifacts, routed execution decisions, and synchronized documentation updates
 
 The product is not:
 
@@ -81,7 +91,7 @@ The product is not:
 - Goal:
   make planning a first-class, reviewable, resumable, and enforceable product workflow before code execution begins
 - Completion Criteria:
-  plan sessions, review rounds, adversarial review, decision verdicts, checklist persistence, and resume state exist and gate execution
+  plan sessions, review rounds, risk-challenge gates, decision verdicts, checklist persistence, and resume state exist and gate execution
 - Status:
   `in_progress`
 
