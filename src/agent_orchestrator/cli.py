@@ -155,7 +155,7 @@ def main() -> None:
     evidence_compare.add_argument("--output", required=True, help="Markdown trend output path.")
     evidence_compare.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
-    ui_parser = subparsers.add_parser("ui", help="Start the local Agent Team Console dashboard.")
+    ui_parser = subparsers.add_parser("ui", help="启动本地治理控制台。")
     ui_parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind.")
     ui_parser.add_argument("--port", type=int, default=8765, help="Port to listen on.")
     ui_parser.add_argument("--plans-root", default=".agent_orchestrator/plans")
@@ -196,7 +196,7 @@ def main() -> None:
     team_summary.add_argument("--provider", choices=["codex", "claude"])
     team_summary.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
-    team_roles = team_subparsers.add_parser("roles", help="Show role contracts and skill discipline.")
+    team_roles = team_subparsers.add_parser("roles", help="查看职责约束与输出要求。")
     team_roles.add_argument("--plans-root", default=".agent_orchestrator/plans")
     team_roles.add_argument("--runs-root", default=".agent_orchestrator/runs")
     team_roles.add_argument("--runtime", choices=["mock", "command"], default="mock")
@@ -712,7 +712,7 @@ def _run_ui_server(
         jobs_root=jobs_root,
         job_runtime=TmuxJobRuntime(root=jobs_root) if job_runtime == "tmux" else FileJobRuntime(root=jobs_root),
     )
-    print(f"Agent Team Console: http://{host}:{port}")
+    print(f"治理控制台: http://{host}:{port}")
     uvicorn.run(create_app(service), host=host, port=port)
 
 

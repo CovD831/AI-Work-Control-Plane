@@ -276,7 +276,7 @@ def test_dashboard_role_groups_map_session_jobs_to_layers(tmp_path) -> None:
     runtime_cards = groups["runtime"]["cards"]
 
     assert decision_cards[0]["role"] == "lead"
-    assert decision_cards[0]["layer_label"] == "决策层"
+    assert decision_cards[0]["layer_label"] == "治理层"
     assert any(card["role"] == "reviewer" for card in review_cards)
     assert any(card["role"] == "adversarial_reviewer" for card in review_cards)
     assert runtime_cards[0]["role"] == "runtime"

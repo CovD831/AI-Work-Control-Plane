@@ -88,7 +88,7 @@ function actionButtons(action) {
     approve: "批准计划",
     execute: "开始执行",
     retry_review: "重试审核",
-    retry_adversarial_review: "重试对抗审核",
+    retry_adversarial_review: "重试风险挑战",
     inspect_execution: "查看执行",
     revise: "修订计划",
     inspect_session: "刷新状态",
@@ -302,7 +302,7 @@ function renderAgentConfig() {
   if (!profiles[state.selectedAgentRole] && roles[0]) state.selectedAgentRole = roles[0];
   $("agent-config").innerHTML = `
     <label class="field">
-      <span>角色</span>
+      <span>职责</span>
       <select id="agent-role">
         ${roles.map((role) => `<option value="${escapeHtml(role)}" ${role === state.selectedAgentRole ? "selected" : ""}>${escapeHtml(agentRoleLabel(role))}</option>`).join("")}
       </select>
@@ -361,23 +361,23 @@ function escapeHtml(value) {
 function renderEmptyAgentCard() {
   return renderRoleGroups({
     role_groups: [
-      { layer: "decision", layer_label: "决策层", cards: [] },
+      { layer: "decision", layer_label: "治理层", cards: [] },
       { layer: "execution", layer_label: "执行层", cards: [] },
       {
         layer: "review",
-        layer_label: "审核层",
+        layer_label: "质量门禁层",
         cards: [
           {
-            role_label: "暂无可见 Agent",
+            role_label: "暂无可见任务",
             provider: "agent",
             kind: "idle",
             status: "idle",
-            current_action: "启动或选择一个团队会话。Agent 的工作会以独立格子显示在这里。",
+            current_action: "启动或选择一个会话。相关的 agent / job 活动会以独立格子显示在这里。",
             id: "grid-ready",
           },
         ],
       },
-      { layer: "rescue", layer_label: "救援层", cards: [] },
+      { layer: "rescue", layer_label: "恢复层", cards: [] },
       { layer: "runtime", layer_label: "运行时层", cards: [] },
     ],
   });
@@ -437,7 +437,7 @@ function renderOperatorSummary(summary, controlPlane = {}) {
       <div class="operator-item"><span>合规</span>${escapeHtml(complianceLabel(compliance.status))}</div>
       <div class="operator-item"><span>工作图</span>${escapeHtml(`${graph.node_count || 0} 节点 / ${graph.edge_count || 0} 边`)}</div>
       <div class="operator-item"><span>工作现场</span>${escapeHtml(`${(workspace.plans || []).length || 0} 计划 / ${(workspace.jobs || []).length || 0} jobs`)}</div>
-      <div class="operator-item"><span>策略</span>${escapeHtml(strategy.next_goal || "未生成")}</div>
+      <div class="operator-item"><span>当前检查点目标</span>${escapeHtml(strategy.current_checkpoint_objective || strategy.next_goal || "未生成")}</div>
       <div class="operator-item"><span>拓扑</span>${escapeHtml(`${topologyNodes} 节点 / ${topology.read_only ? "只读" : "未知"}`)}</div>
       <div class="operator-item"><span>审批</span>${escapeHtml(`${approvalCounts.pending || 0} 待处理`)}</div>
       <div class="operator-item"><span>证据包</span>${escapeHtml(evidenceBundle.status || "未知")}</div>
@@ -489,7 +489,7 @@ function actionLabel(action) {
     execute: "开始执行",
     inspect_execution: "查看执行结果",
     retry_review: "重试审核",
-    retry_adversarial_review: "重试对抗审核",
+    retry_adversarial_review: "重试风险挑战",
     human_decision: "等待人工决策",
     inspect_session: "查看会话",
   };
@@ -504,7 +504,7 @@ function topologyLabel(topology) {
   const map = {
     team: "团队",
     solo: "单 Agent",
-    team_with_adversarial_review: "团队 + 对抗审核",
+    team_with_adversarial_review: "团队 + 风险挑战",
     cluster: "集群",
   };
   return map[String(topology || "")] || topology || "";
@@ -512,10 +512,10 @@ function topologyLabel(topology) {
 
 function layerLabel(layer) {
   const map = {
-    decision: "决策层",
+    decision: "治理层",
     execution: "执行层",
-    review: "审核层",
-    rescue: "救援层",
+    review: "质量门禁层",
+    rescue: "恢复层",
     runtime: "运行时层",
   };
   return map[String(layer || "")] || layer || "";
@@ -527,8 +527,8 @@ function kindLabel(kind) {
     authoring: "起草",
     review: "审核",
     review_retry: "审核重试",
-    adversarial_review: "对抗审核",
-    adversarial_review_retry: "对抗重试",
+    adversarial_review: "风险挑战",
+    adversarial_review_retry: "风险挑战重试",
     implementation: "实现",
     runtime: "运行时",
     delegated: "委派",
@@ -558,14 +558,14 @@ function providerLabel(provider) {
 
 function agentRoleLabel(role) {
   const map = {
-    planner: "计划主控",
-    plan_reviewer: "计划审核",
-    adversarial_reviewer: "对抗审核",
-    worker: "执行 Agent",
-    execution_reviewer: "执行审核",
-    rescue: "救援 Agent",
-    ideation_proponent: "正方构想",
-    ideation_skeptic: "反方质询",
+    planner: "计划职责",
+    plan_reviewer: "计划审查",
+    adversarial_reviewer: "风险挑战",
+    worker: "执行职责",
+    execution_reviewer: "执行校验",
+    rescue: "恢复处理",
+    ideation_proponent: "发散思考",
+    ideation_skeptic: "反向质疑",
   };
   return map[String(role || "")] || role || "Agent";
 }

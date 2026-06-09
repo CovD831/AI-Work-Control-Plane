@@ -193,11 +193,15 @@ def print_recovery_timeline(status_summary: dict[str, object], *, prefix: str = 
         )
 
 
-def print_strategy_decision(status: dict[str, object], *, prefix: str = "strategy") -> None:
+def print_strategy_decision(status: dict[str, object], *, prefix: str = "governance") -> None:
     strategy = summary_dict(status, "strategy_decision")
     if not strategy:
         return
-    print(f"{prefix}: {summary_text(strategy, 'next_goal', 'unknown')}")
+    objective = (
+        summary_text(strategy, "current_checkpoint_objective")
+        or summary_text(strategy, "next_goal", "unknown")
+    )
+    print(f"{prefix}: {objective}")
     focus = summary_text(strategy, "control_plane_focus")
     if focus:
         print(f"{prefix}_focus: {focus}")
@@ -220,9 +224,9 @@ def print_strategy_decision(status: dict[str, object], *, prefix: str = "strateg
     risks = summary_list(strategy, "risks")
     if risks:
         print(f"{prefix}_risks: {' | '.join(str(item) for item in risks)}")
-    validation = summary_list(strategy, "validation_plan")
-    if validation:
-        print(f"{prefix}_validation: {' | '.join(str(item) for item in validation)}")
+    verification = summary_list(strategy, "verification_requirements") or summary_list(strategy, "validation_plan")
+    if verification:
+        print(f"{prefix}_verification: {' | '.join(str(item) for item in verification)}")
 
 
 def team_display_context(payload: dict[str, object], *, pick_primary_action: Any) -> dict[str, object]:
@@ -503,9 +507,9 @@ def print_topology_snapshot_summary(payload: dict[str, object]) -> None:
     edges = payload.get("edges", [])
     print(f"graph: nodes={len(nodes) if isinstance(nodes, list) else 0} edges={len(edges) if isinstance(edges, list) else 0}")
     strategy = payload.get("strategy_decision", {}) if isinstance(payload.get("strategy_decision"), dict) else {}
-    next_goal = strategy.get("next_goal")
-    if next_goal:
-        print(f"next_goal: {next_goal}")
+    checkpoint_objective = strategy.get("current_checkpoint_objective") or strategy.get("next_goal")
+    if checkpoint_objective:
+        print(f"current_checkpoint_objective: {checkpoint_objective}")
     approvals = payload.get("approval_queue", {}) if isinstance(payload.get("approval_queue"), dict) else {}
     counts = approvals.get("counts", {}) if isinstance(approvals.get("counts"), dict) else {}
     print(f"pending_approvals: {counts.get('pending', 0)}")
@@ -655,7 +659,8 @@ def print_team_next(
     print(f"reason: {context['primary_reason']}")
     strategy = summary_dict(status, "strategy_decision")
     if strategy:
-        print(f"strategy_next_goal: {summary_text(strategy, 'next_goal', context['primary_reason'])}")
+        objective = summary_text(strategy, "current_checkpoint_objective") or summary_text(strategy, "next_goal", context["primary_reason"])
+        print(f"strategy_checkpoint_objective: {objective}")
     print(f"next_command: {command}")
     next_task = status.get("next_executable_task")
     if isinstance(next_task, dict):
@@ -726,7 +731,7 @@ def print_team_runbook(
     decision_rationale = summary_list(status, "decision_rationale")
     if decision_rationale:
         print(f"decision_rationale: {' | '.join(str(item) for item in decision_rationale)}")
-    print_strategy_decision(status, prefix="control_plane_strategy")
+    print_strategy_decision(status, prefix="control_plane_governance")
     print_recovery_timeline(status)
     print("operator_runbook:")
     for index, step in enumerate(runbook, start=1):

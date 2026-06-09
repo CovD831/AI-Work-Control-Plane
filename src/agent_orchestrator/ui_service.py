@@ -1,4 +1,4 @@
-"""Service helpers for the local Agent Team Console."""
+"""Service helpers for the local governance console."""
 from __future__ import annotations
 
 # DEPS: __future__, agent_orchestrator, json, pathlib, typing
@@ -36,7 +36,7 @@ from agent_orchestrator.work_graph import WorkGraphStore, WorkUnitGraph, graph_t
 TIMELINE_STEPS = [
     ("intake_chat", "沟通"),
     ("draft_ready", "初稿"),
-    ("adversarial_review", "审查"),
+    ("adversarial_review", "风险挑战"),
     ("awaiting_human_confirmation", "确认"),
     ("needs_revision", "修订"),
     ("approved_for_execution", "已批准"),
@@ -46,10 +46,10 @@ TIMELINE_STEPS = [
 
 ROLE_GROUPS = [
     ("control_plane", "控制平面层"),
-    ("decision", "决策层"),
+    ("decision", "治理层"),
     ("execution", "执行层"),
-    ("review", "审核层"),
-    ("rescue", "救援层"),
+    ("review", "质量门禁层"),
+    ("rescue", "恢复层"),
     ("runtime", "运行时层"),
 ]
 
@@ -490,8 +490,8 @@ def _round_label(round_type: str) -> str:
         "authoring": "计划起草",
         "review": "计划审核",
         "review_retry": "审核重试",
-        "adversarial_review": "对抗审核",
-        "adversarial_review_retry": "对抗审核重试",
+        "adversarial_review": "风险挑战",
+        "adversarial_review_retry": "风险挑战重试",
         "revision": "计划修订",
         "approval": "批准门禁",
     }
@@ -548,10 +548,10 @@ def _session_lead_card(payload: dict[str, object]) -> dict[str, object]:
         "summary": summary.get("primary_reason") or summary.get("next_action_message") or payload.get("requirement") or "",
         "error": None,
         "role": "lead",
-        "role_label": "主控 Lead",
+        "role_label": "会话治理",
         "layer": "decision",
-        "layer_label": "决策层",
-        "current_action": summary.get("primary_reason") or summary.get("next_action_message") or "协调计划与下一步动作",
+        "layer_label": "治理层",
+        "current_action": summary.get("primary_reason") or summary.get("next_action_message") or "协调会话状态、门禁与下一步动作",
         "terminal_ref": None,
         "attach_available": False,
     }
@@ -946,16 +946,16 @@ def _gate_status(payload: dict[str, object], blocking_reasons: list[object]) -> 
 def _role_for_round(round_type: str) -> tuple[str, str, str, str]:
     normalized = round_type.replace("-", "_")
     if normalized in {"review", "review_retry"}:
-        return "reviewer", "审核 Reviewer", "review", "审核层"
+        return "reviewer", "质量审查", "review", "质量门禁层"
     if normalized in {"adversarial_review", "adversarial_review_retry"}:
-        return "adversarial_reviewer", "对抗审核", "review", "审核层"
+        return "adversarial_reviewer", "风险挑战", "review", "质量门禁层"
     if normalized == "rescue":
-        return "rescue", "救援 Rescue", "rescue", "救援层"
+        return "rescue", "恢复处理", "rescue", "恢复层"
     if normalized in {"implementation", "build"}:
-        return "builder", "执行 Builder", "execution", "执行层"
+        return "builder", "执行任务", "execution", "执行层"
     if normalized == "validation":
-        return "validator", "验证 Validator", "execution", "执行层"
-    return "planner", "规划 Planner", "decision", "决策层"
+        return "validator", "执行验证", "execution", "执行层"
+    return "planner", "规划记录", "decision", "治理层"
 
 
 def _format_provider_runtime(provider_runtime: dict[str, object]) -> str:

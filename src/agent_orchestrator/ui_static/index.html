@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Agent 团队控制台</title>
+    <title>Control Plane 控制台</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main class="console">
       <header class="topbar">
         <div class="brand">
-          <h1>Agent 团队控制台</h1>
+          <h1>Control Plane 控制台</h1>
           <span id="session-status" class="badge idle">空闲</span>
         </div>
         <div class="top-summary">
@@ -28,7 +28,7 @@
       <section class="board">
         <aside class="sidebar">
           <form id="new-session" class="new-session">
-            <textarea id="requirement" rows="3" placeholder="输入新任务，启动团队"></textarea>
+            <textarea id="requirement" rows="3" placeholder="输入新任务，启动治理流程"></textarea>
             <button type="submit">启动</button>
           </form>
           <section>
@@ -42,14 +42,14 @@
           <section class="agent-wall">
             <div class="section-head">
               <div>
-                <span class="eyebrow">Agent 团队</span>
-                <h2>组织作战室</h2>
+                <span class="eyebrow">职责视图</span>
+                <h2>治理与执行看板</h2>
               </div>
-              <span class="wall-note">每个 agent / job 一个格子</span>
+              <span class="wall-note">按职责层展示 agent / job 状态</span>
             </div>
             <div id="agent-cards" class="agent-grid">
               <section class="role-group">
-                <div class="role-head"><strong>决策层</strong><span>0 个</span></div>
+                <div class="role-head"><strong>治理层</strong><span>0 个</span></div>
                 <div class="role-cards"></div>
               </section>
               <section class="role-group">
@@ -57,23 +57,23 @@
                 <div class="role-cards"></div>
               </section>
               <section class="role-group">
-                <div class="role-head"><strong>审核层</strong><span>0 个</span></div>
+                <div class="role-head"><strong>质量门禁层</strong><span>0 个</span></div>
                 <div class="role-cards">
                   <div class="agent-card idle">
                     <div class="agent-main">
                       <div class="agent-avatar">A</div>
                       <div class="agent-title">
-                        <strong>暂无可见 Agent</strong>
-                        <span class="summary">等待委派任务</span>
+                        <strong>暂无可见任务</strong>
+                        <span class="summary">等待治理或执行活动</span>
                       </div>
                     </div>
-                    <div class="agent-task">启动或选择一个团队会话。Agent 的工作会以独立格子显示在这里。</div>
+                    <div class="agent-task">启动或选择一个会话。相关的 agent / job 活动会以独立格子显示在这里。</div>
                     <div class="agent-footer"><span class="badge idle">空闲</span><span>格子已就绪</span></div>
                   </div>
                 </div>
               </section>
               <section class="role-group">
-                <div class="role-head"><strong>救援层</strong><span>0 个</span></div>
+                <div class="role-head"><strong>恢复层</strong><span>0 个</span></div>
                 <div class="role-cards"></div>
               </section>
               <section class="role-group">
@@ -110,7 +110,7 @@
           <section class="panel agent-config-panel">
             <div class="panel-head">
               <div>
-                <span class="eyebrow">Agent 配置</span>
+                <span class="eyebrow">执行配置</span>
                 <h2>模型与 Prompt</h2>
               </div>
             </div>

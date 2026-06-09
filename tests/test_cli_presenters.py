@@ -313,11 +313,11 @@ def test_print_team_runbook_includes_recommended_command_and_steps(capsys) -> No
     assert "reason: plan is ready to execute" in out
     assert "next_command: python -m agent_orchestrator.cli team execute session-123 --mode success_first" in out
     assert "decision_rationale: approved plan exists | no blocking gaps remain" in out
-    assert "control_plane_strategy: Execute approved plan" in out
-    assert "control_plane_strategy_focus: state_context_strategy_topology_approval_evidence_memory_recovery" in out
-    assert "control_plane_strategy_topology_policy: work can proceed without adversarial depth" in out
-    assert "control_plane_strategy_recovery_policy: execute" in out
-    assert "control_plane_strategy_validation: targeted tests first" in out
+    assert "control_plane_governance: Execute approved plan" in out
+    assert "control_plane_governance_focus: state_context_strategy_topology_approval_evidence_memory_recovery" in out
+    assert "control_plane_governance_topology_policy: work can proceed without adversarial depth" in out
+    assert "control_plane_governance_recovery_policy: execute" in out
+    assert "control_plane_governance_verification: targeted tests first" in out
     assert "operator_runbook:" in out
     assert "1. Execute approved plan for session-123" in out
     assert "2. Inspect the execution record after completion" in out

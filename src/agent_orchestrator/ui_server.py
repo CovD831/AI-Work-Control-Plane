@@ -1,4 +1,4 @@
-"""FastAPI app for the local Agent Team Console."""
+"""FastAPI app for the local governance console."""
 from __future__ import annotations
 
 # DEPS: __future__, agent_orchestrator, pathlib, typing
@@ -24,7 +24,7 @@ def create_app(service: DashboardService | None = None) -> Any:
         raise RuntimeError("Install UI dependencies with `pip install -e '.[ui]'` to run the dashboard.") from exc
 
     dashboard = service or build_dashboard_service()
-    app = FastAPI(title="Agent Team Console")
+    app = FastAPI(title="Control Plane 控制台")
     static_dir = _static_assets_dir()
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
