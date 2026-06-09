@@ -1,10 +1,10 @@
 # AI Work Control Plane Operations Track Plan
 
-## Purpose
+## 目的
 
-This track moves the current AI Work Control Plane from an artifact pipeline into the default operator work surface.
+这个 track 的任务，是把当前已经存在的控制平面制品链路，推进成默认可操作的工作界面。
 
-The center is no longer richer explicit agent choreography. The center is a durable control plane for long-cycle local AI work:
+重点不是继续堆“更复杂的 agent 编排”，而是让 operator 可以围绕外部状态来理解和接管长周期任务：
 
 ```text
 PlanSession -> WorkspaceState -> ContextPacket -> StrategyDecision
@@ -12,17 +12,18 @@ PlanSession -> WorkspaceState -> ContextPacket -> StrategyDecision
   -> EvidenceBundle -> MemoryPromotion
 ```
 
-Explicit `agent team` orchestration remains the lower execution capability. The control plane owns state, context, strategy, topology, approvals, evidence, memory promotion, recovery, runtime health, and operator continuity.
+显式 `agent team` 编排仍然保留，但它属于下层执行能力。控制平面负责暴露状态、上下文、治理摘要、执行路径、审批、证据、记忆提升、恢复建议、运行时健康和会话连续性。
 
-## Execution Protocol
+## 执行协议
 
-- Each phase starts with a short phase plan in `docs/process/`.
-- During implementation, run only that phase's targeted tests.
-- If targeted tests pass, continue to the next phase without waiting for confirmation.
-- Run full `pytest` and `team check-compliance` only at final convergence.
-- Keep all existing `team` commands compatible; new fields are optional and additive.
-- Do not build a React Flow editor, full provider bridge, full direct-API patch engine, or provider ping-pong loop.
-- `StrategyDecision.executes` stays `False`; execution remains controlled by the approved-plan gate and runtime layer.
+- 每个 phase 先在 `docs/process/` 写短计划，再进入实现。
+- 实现期间只跑该 phase 对应的 targeted tests。
+- targeted tests 通过后自动进入下一 phase，不等待额外确认。
+- 只有在最终收口时才跑完整 `pytest` 和 `team check-compliance`。
+- 保持现有 `team` 命令兼容；新增字段应尽量可选、增量、非破坏。
+- 不在这个 track 里做 React Flow 编辑器、完整 provider bridge、完整 direct-API patch engine 或 provider ping-pong loop。
+- `StrategyDecision.executes` 继续保持 `False`，执行权限仍由 approved-plan gate 和 runtime 层掌握。
+- 兼容性说明：`StrategyDecision.executes` stays `False`，避免把执行权限重新塞回治理摘要本身。
 
 ## Phase Plan
 

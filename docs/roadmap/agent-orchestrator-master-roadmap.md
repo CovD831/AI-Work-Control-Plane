@@ -1,23 +1,21 @@
 # AI-Work-Control-Plane Master Roadmap
 
-## Summary
+## 概要
 
-This roadmap now defines the path from an orchestration-centered MVP to the intended v1 product: an **AI Work Control Plane** for long-cycle local agent work.
+这份 roadmap 定义了项目从“以编排为中心的 MVP”走向目标形态的路径：一个面向长周期本地 agent 工作的 **AI Work Control Plane**。
 
-The new top-level product sequence is:
+当前的顶层产品链路是：
 
 ```text
 WorkspaceState -> ContextPacket -> StrategyDecision -> ExecutionTopologySnapshot -> ApprovalItem -> EvidenceBundle -> MemoryRecord
 ```
 
-The earlier orchestration layers remain, but they now sit underneath that control plane:
+原有编排能力并未消失，但它们已经下沉到控制平面之下：
 
 - `Planning Governance Layer`
 - `Execution Strategy Layer`
 
-中文分层补充：
-
-在当前 roadmap 语义之下，仓库实现还应额外按三层理解：
+在当前 roadmap 语义下，仓库实现更适合按三层理解：
 
 - `决策核心层`
 - `执行拓扑层`
@@ -33,55 +31,55 @@ The earlier orchestration layers remain, but they now sit underneath that contro
 - `claude / codex / command runtime` 属于 Provider / Runtime 层
 - planning governance 与 execution strategy 的规则语义应尽量收敛在决策核心层
 
-The roadmap is organized as **4 product stages** plus the AI Work Control Plane migration. Execution strategy remains essential, but it now lives inside a larger product whose default behavior is: `workspace state -> compressed context -> strategy -> topology -> approval/evidence/memory -> orchestration runtime`.
+这份 roadmap 由 **4 个产品阶段** 加上 AI Work Control Plane 迁移线组成。执行策略仍然重要，但它已经只是更大产品中的一层；默认路径应是：`workspace state -> compressed context -> strategy -> topology -> approval/evidence/memory -> orchestration runtime`。
 
-## Final Product Shape
+## 目标形态
 
-The target product is:
+目标产品应当：
 
-- a local CLI tool as the only first-class v1 product surface
-- optimized for the author's real workflows before broader external packaging
-- centered on durable external work state rather than model-internal planning alone
-- centered on plan governance before execution
-- centered on strategy decisions during execution
-- able to call replaceable provider, bridge, runtime, and job-backend plugins
-- able to emit structured run artifacts and synchronized documentation updates
-- able to enforce project rules through hooks and loopback checks, not prompt guidance alone
+- 以本地 CLI 作为 v1 的一等入口
+- 先服务作者自己的真实工作流，再考虑更广泛包装
+- 以可持久的外部工作状态为中心，而不是只依赖模型内部 planning
+- 在执行前突出 plan governance
+- 在执行中突出治理摘要与策略选择
+- 可以调用可替换的 provider、bridge、runtime 和 job backend plugin
+- 能输出结构化 run artifact 和同步后的文档更新
+- 通过 hook 和 loopback check 约束项目规则，而不是只靠 prompt 提醒
 
-The product is explicitly **not** trying to become:
+这个产品明确**不**打算变成：
 
-- a full bridge product
-- a full session manager or tmux orchestrator
-- a provider-specific shell that wins on runtime features alone
-- a classically human company org chart with CEO/employee roleplay as the core abstraction
+- 一个完整 bridge 产品
+- 一个完整 session manager 或 tmux orchestrator
+- 一个靠 runtime 特性取胜的 provider-specific shell
+- 一个以 CEO/employee roleplay 为核心抽象的人类组织架构系统
 
-## Current State
+## 当前状态
 
-- The project already has a strategy-oriented control plane built around `mode + agent_enabled + depth + provider_flow`.
-- Failure handling already includes depth-first escalation, partial rescue, and dependency-aware replay behavior.
-- Early decision contract work exists for execution artifacts.
-- The repository now has a basic planning governance loop with persisted plan sessions, dual-model review rounds, gap closure, approval gating, and approved-plan-linked execution handoff.
-- Narrow documentation synchronization and hook-based compliance checks now exist for the internal-default workflow, but broader coverage and harder enforcement are still incomplete.
-- The old roadmap view overfit the execution strategy line and understated planning governance as a product layer.
-- The new risk is overfitting explicit agent orchestration; the control-plane migration moves durable value into state, context, approvals, evidence, memory provenance, and recovery.
+- 项目已经有一个围绕 `mode + agent_enabled + depth + provider_flow` 组织的控制平面骨架。
+- 失败处理已经覆盖 depth-first escalation、partial rescue 和 dependency-aware replay。
+- 执行制品已经具备早期 decision contract。
+- 仓库已经有基本的 planning governance 闭环，包括持久 plan session、双模型审查轮、gap closure、approval gate 和 approved-plan-linked execution handoff。
+- 面向内部默认工作流的文档同步与 hook-based compliance check 已经存在，但覆盖面和强制性还不够。
+- 旧 roadmap 过度强调 execution strategy，低估了 planning governance 作为产品层的价值。
+- 当前真正的风险，是项目继续向显式 agent orchestration 倾斜；control-plane migration 的目标正是把长期价值转移到 state、context、approval、evidence、memory provenance 和 recovery。
 
-## AI Work Control Plane Migration
+## AI Work Control Plane 迁移
 
-The project now treats `agent team` and provider runtimes as execution capabilities under a higher artifact pipeline:
+项目现在把 `agent team` 和 provider runtime 都视为更高层制品链路下方的执行能力：
 
-- `WorkspaceStateSnapshot` records the current project现场: sessions, runs, jobs, evidence, approvals, provider health, dirty files, memory digest, and optional external cache status.
-- `ContextPacket` compresses selected docs, changed files, memory records, and stale warnings for model use without choosing strategy.
-- `StrategyDecision` records the next goal, rationale, tradeoffs, risks, and validation plan without executing.
-- `ExecutionTopologySnapshot` is a read-only graph over state/context/strategy/manager slots/workers/review/rescue/approval/evidence/memory.
-- `ApprovalItem` makes human intervention durable and auditable without bypassing execution gates.
-- `EvidenceBundle` standardizes gate summaries for tests, compliance, setup, and evidence reports.
-- `MemoryRecord` carries provenance, freshness, confidence, and optional explore_cache status.
+- `WorkspaceStateSnapshot` 记录当前项目现场：session、run、job、evidence、approval、provider health、dirty files、memory digest 和可选 external cache 状态。
+- `ContextPacket` 为模型压缩选中的文档、改动文件、memory record 和 stale warning，但不在这一层替模型做策略。
+- `StrategyDecision` 记录下一阶段目标、理由、权衡、风险和验证要求，但不直接执行。
+- `ExecutionTopologySnapshot` 是围绕 state/context/strategy/manager slots/workers/review/rescue/approval/evidence/memory 的只读执行路径图。
+- `ApprovalItem` 让人工介入成为持久且可审计的状态，而不是绕开执行门禁。
+- `EvidenceBundle` 统一 tests、compliance、setup 和 evidence report 的门禁摘要。
+- `MemoryRecord` 携带 provenance、freshness、confidence 和可选的 explore_cache 状态。
 
-The first implementation remains CLI-first through `team workspace-status`, `team context-packet`, `team topology inspect`, `team approvals`, and `team evidence-gates`.
+第一阶段实现仍然坚持 CLI-first，通过 `team workspace-status`、`team context-packet`、`team topology inspect`、`team approvals` 和 `team evidence-gates` 暴露能力。
 
-The Phase 6+ hardening track turns that first implementation into a durable protocol: artifact contracts are documented, workspace index references recent artifacts, StrategyDecision appears in normal operator workflow, approvals carry reason codes, evidence bundles recommend memory writes, UI remains read-only, and a dogfood scenario pins the full chain.
+Phase 6+ hardening track 会把这套实现固化成稳定协议：artifact contract 有文档、有测试，workspace index 引用 recent artifact，StrategyDecision 出现在正常 operator 工作流里，approval 携带 reason code，evidence bundle 给出 memory write 建议，UI 保持只读，并用 dogfood 场景钉住全链路。
 
-The long-term direction is not to keep making explicit agent choreography more elaborate forever. Short term, orchestration remains the practical execution mechanism; medium term, the control plane governs it; long term, more orchestration can move into model runtimes while external state, approvals, evidence, memory provenance, and recovery stay as stable system artifacts.
+长期方向不是无止境地把显式 agent 编排做得更复杂。短期内 orchestration 仍是现实执行机制；中期由 control plane 管住它；长期可以把更多 orchestration 内化进 model runtime，但 external state、approval、evidence、memory provenance 和 recovery 仍然留在系统外部。
 
 The Operations Track now makes that direction operator-visible: `team workspace-status` returns Workspace / Program Index v2, approvals are treated as an inbox, topology snapshots export read-only blueprint views, run ledger records recovery state, evidence bundles expose memory promotion candidates, and runtime health/tool inventory remain control-plane inputs rather than execution shortcuts.
 
@@ -95,7 +93,7 @@ The current post-baseline update is the Real-Task Dogfood Evidence Track. It exp
 
 ### Planning Governance Layer
 - plan authoring
-- reviewer and adversarial reviewer loops
+- 质量审查与风险挑战门禁
 - rule-driven review rounds
 - gap-list closure logic
 - plan artifact persistence
@@ -133,7 +131,7 @@ Tasks enter a rule-driven plan loop before execution begins.
 
 **Done when**
 - plan sessions can be created, persisted, resumed, and tracked
-- author/reviewer/adversarial-reviewer roles are modeled
+- 审查与风险挑战门禁能够被建模并持久化
 - checklist and review-round state exist as durable artifacts
 - execution no longer conceptually starts from raw requirement alone
 
@@ -262,7 +260,7 @@ The repository now extends the completed v1 baseline with:
 - controlled review policy CLI overrides that preserve `auto` defaults
 - evidence CLI commands for built-in benchmarks, real task case files, and markdown phase reports
 - expanded real-task dogfood reports with recovery, runtime fidelity, compliance blocking, postmortem, and cost/latency readiness metrics
-- an expanded Agent Team Console for provenance, governance, review policy, fallback, compliance, events, messages, work graph, and job controls
+- an expanded governance console for provenance, governance, review policy, fallback, compliance, events, messages, work graph, and job controls
 - NUL-delimited hook staged-file handling for paths containing spaces
 - `team refresh-docs` and `team repair-compliance` repair commands
 - CLI/UI runtime ergonomics for terminal refs, attach availability, last log excerpts, last seen timestamps, send, and cancel

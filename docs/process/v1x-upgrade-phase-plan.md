@@ -79,7 +79,7 @@ Pass criteria:
 - Evidence JSON capture remains backward compatible.
 - CLI commands write JSON and markdown outputs at requested paths.
 
-## Phase 3: Agent Team Console Operator Upgrade
+## Phase 3: 治理控制台 Operator 升级
 
 Goal:
 

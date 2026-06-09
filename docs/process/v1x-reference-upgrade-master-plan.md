@@ -307,7 +307,7 @@ Execution protocol:
 Reference landing zones:
 
 - Task Master: task dependency visibility and next executable work inside PlanSession/WorkGraph, not a second task database.
-- Superpowers / AgentSys: role contracts, command discipline, and compliance-visible role boundaries.
+- Superpowers / AgentSys: 职责约束、命令边界和对合规可见的职责边界。
 - Ralph: fresh/resume execution context policy and stop conditions around implementation/review/rescue loops.
 - wanman / slark: local runtime/workspace policy, lightweight threads, and knowledge artifacts without SQLite or a supervisor.
 - OpenSwarm / Claude Swarm: approval, intervention, usage/cost placeholders, and observability, not a mission-control clone.
@@ -345,13 +345,13 @@ Result:
 - Passed on 2026-05-26: `186 passed`.
 - `team next` now exposes the next executable task when one exists.
 
-### Reference Stage 2: Role Contracts And Skill Discipline
+### Reference Stage 2: Responsibility Contracts And Boundary Discipline
 
 Goal:
 
-- Add role contract display and compliance checks for role discipline and command validity.
-- Bind planner/reviewer/worker/rescue role discipline to visible contract fields: allowed actions, forbidden actions, required outputs, runtime mode, and command references.
-- Add `team roles` and JSON output as the operator-facing contract surface.
+- 增加职责约束展示和合规检查，明确命令边界与可见输出要求。
+- 把 planner/reviewer/worker/rescue 等职责绑定到可见约束字段：allowed actions、forbidden actions、required outputs、runtime mode、command references。
+- 让 `team roles` 及其 JSON 输出成为 operator 面向的职责约束界面。
 
 Targeted test:
 
@@ -360,7 +360,7 @@ Targeted test:
 Result:
 
 - Passed on 2026-05-26: `105 passed`.
-- `team roles` now exposes role contracts and compliance verifies role-contract runbook drift.
+- `team roles` 现在暴露职责约束，合规检查会验证 runbook 与职责约束是否漂移。
 
 ### Reference Stage 3: Fresh/Resume Execution Policy
 
@@ -401,7 +401,7 @@ Result:
 Goal:
 
 - Surface unified approval state, human intervention reason, job/runtime health, and usage/cost placeholders.
-- Add reference-informed advantage counters for task-next visibility, role contracts, fresh/resume policy, knowledge artifacts, and approval observability.
+- 增加参考驱动的优势计数器，覆盖 task-next 可见性、职责约束、fresh/resume policy、knowledge artifacts 和 approval observability。
 - Keep usage/cost as explicit placeholders unless provider runtimes report real usage.
 
 Targeted test:
@@ -418,7 +418,7 @@ Result:
 Goal:
 
 - Synchronize README, runbook, architecture docs, context map, and refresh/compliance behavior with the reference-informed capabilities.
-- Record task pool, role contracts, fresh/resume policy, knowledge artifacts, approval observability, and usage/cost placeholder as canonical operator surfaces.
+- 把 task pool、职责约束、fresh/resume policy、knowledge artifacts、approval observability 和 usage/cost placeholder 记录为 canonical operator surfaces。
 
 Targeted test:
 
@@ -480,7 +480,7 @@ Targeted test:
 
 Result:
 
-- Implemented in the AI Work Control Plane migration: worker/subagent handoff wording is now canonical in the operator runbook and compliance-visible role contracts.
+- 已在 AI Work Control Plane 迁移中实现：worker/subagent handoff wording 已成为 operator runbook 和合规可见职责约束中的标准表述。
 
 ### CodeWhale Phase 2: Gate Evidence Artifact Standardization
 

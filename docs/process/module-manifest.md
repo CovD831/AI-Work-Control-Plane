@@ -8,8 +8,8 @@
 - `agent_config.py`: Configurable agent profiles for provider, model, and prompt selection.
 - `cli.py`: Command line interface for the orchestration MVP.
 - `cli_common.py`: Shared helpers for command-line presenters.
-- `cli_evidence.py`: Evidence command handlers for the AI-Work-Control-Plane CLI.
-- `cli_jobs.py`: Job command handlers for the AI-Work-Control-Plane CLI.
+- `cli_evidence.py`: Evidence command handlers for the Agent Orchestrator CLI.
+- `cli_jobs.py`: Job command handlers for the Agent Orchestrator CLI.
 - `cli_presenters.py`: Formatting helpers for CLI session and execution output.
 - `cli_team.py`: Team command dispatch for the CLI.
 - `command.py`: Command-based provider integration for real Claude/Codex runs.
@@ -21,7 +21,7 @@
 - `control_plane_ledger.py`: Run ledger builder for control-plane recovery artifacts.
 - `control_plane_recovery.py`: Recovery timeline and recommendation builders for the control plane.
 - `control_plane_runtime.py`: Runtime event stream and provider session snapshots for the control plane.
-- `control_plane_topology.py`: Execution topology snapshot builder for the control plane.
+- `control_plane_topology.py`: Read-only execution path snapshot builder for the control plane.
 - `control_plane_workspace.py`: Workspace state and index models for the control plane.
 - `events.py`: Append-only event store for orchestration state changes.
 - `evidence.py`: Versioned evidence harness and benchmark reports for team workflow comparisons.
@@ -37,14 +37,14 @@
 - `planning_support.py`: Compliance and session-guidance helpers for planning workflows.
 - `policies.py`: Policy profiles for deriving modes from the success-first parent architecture.
 - `review.py`: Structured review result models.
-- `roles.py`: Agent role registry for team-oriented orchestration views.
+- `roles.py`: Responsibility registry for governance-oriented operator views.
 - `routing.py`: Deterministic policy routing for automatic orchestration mode selection.
 - `run_store.py`: Local persistence for orchestration runs.
 - `state_machine.py`: Task state machine for orchestration runs.
 - `tasks.py`: Task contract and result models for the orchestration pipeline.
 - `tmux_runtime.py`: Optional tmux-backed job runtime.
 - `topology.py`: Execution topology helpers for agent-enabled orchestration.
-- `ui_server.py`: FastAPI app for the local Agent Team Console.
-- `ui_service.py`: Service helpers for the local Agent Team Console.
+- `ui_server.py`: FastAPI app for the local governance console.
+- `ui_service.py`: Service helpers for the local governance console.
 - `work_graph.py`: Persistent work graph models for plan sessions.
 - release readiness

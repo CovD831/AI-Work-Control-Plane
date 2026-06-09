@@ -3,7 +3,7 @@
 ## Summary
 
 - Session: `plan-832a931b`
-- Requirement: `Validate the Agent Team Console workflow`
+- Requirement: `Validate the governance console workflow`
 - Linked run: `run-20d4aaea`
 - Final session status: `accepted`
 - Validation date: 2026-05-24
@@ -12,13 +12,13 @@
 
 1. Created a real planning session with `team start`.
 2. Executed the approved plan with `team execute --mode success_first`.
-3. Started the local Agent Team Console on `127.0.0.1:8765`.
+3. Started the local governance console on `127.0.0.1:8765`.
 4. Opened the console in the in-app browser and verified the operator surface.
 
 ## Browser Checks
 
-- Console title rendered: `Agent 团队控制台`
-- Session text was visible for `Validate the Agent Team Console workflow`
+- Console title rendered: `Control Plane 控制台`
+- Session text was visible for `Validate the governance console workflow`
 - Accepted/completed state was visible
 - Governance summary mounted and populated
 - Operator summary mounted and populated
