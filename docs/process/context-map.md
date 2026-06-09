@@ -1,7 +1,8 @@
 # Context Map
 
-- CODEBASE_MAP-style orientation for the AI-Work-Control-Plane repository
+- CODEBASE_MAP-style orientation for the Agent Orchestrator repository
 - root map
+- project index
 - module manifest
 - file-header contract
 - compliance checks
@@ -11,16 +12,21 @@
 - AI Work Control Plane Phase 6+ hardens artifact contracts, lifecycle index refs, operator strategy visibility, approval reason codes, evidence-memory policy, read-only UI consumption, and dogfood coverage
 - AI Work Control Plane Operations Track extends the default operator surface to Workspace / Program Index v2, Approval Inbox, Run Ledger, Topology Blueprint Snapshot, Memory Promotion, and Runtime Health + Tool Inventory
 - AI Work Control Plane Live Recovery Track turns the operator-readable surface into an operator-recoverable surface with Recovery Timeline, Runtime Event Stream, Recovery Recommendation, resume hints, and evidence-backed memory promotion
+- latest explainer docs: `PROJECT_BREAKDOWN.md`, `PROJECT_BREAKDOWN_V2.md`, `EXECUTION_PLANE_DEEP_DIVE.md`, `INTERVIEW_PREP.md`
+- `docs/process/project-index.md`: canonical reading order and recent update index
+- `docs/process/agent-evolution-master-plan.md`: future evolution source of truth
 - `team inspect-docs` builds `agent_orchestrator.docs_context.v1` packages for agent-ready canonical docs
 - `team inspect-handoff` reads `agent_orchestrator.handoff_packet.v1` packets from session messages
 - `team docs-index` returns `agent_orchestrator.docs_index.v1` reverse lookup results
 - `team workspace-status`, `team context-packet`, `team topology inspect`, `team approvals`, and `team evidence-gates` expose `agent_orchestrator.*.v1` control-plane artifacts
 - README.md
+- docs/process/project-index.md
 - docs/decisions/
 - docs/research/control-plane-reference-rescreen.md
 - docs/process/ai-work-control-plane-operations-track-plan.md
 - docs/process/ai-work-control-plane-live-recovery-track-plan.md
 - docs/process/agent-orchestrator-implementation-process.md
+- docs/process/agent-evolution-master-plan.md
 - docs/process/ai-work-control-plane-master-plan.md
 - docs/process/control-plane-artifact-contracts.md
 - docs/process/agent-team-operator-runbook.md

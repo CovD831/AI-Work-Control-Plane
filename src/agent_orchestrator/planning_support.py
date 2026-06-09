@@ -144,6 +144,7 @@ def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumen
             bullets=(
                 "CODEBASE_MAP-style orientation for the Agent Orchestrator repository",
                 "root map",
+                "project index",
                 "module manifest",
                 "file-header contract",
                 "compliance checks",
@@ -153,16 +154,21 @@ def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumen
                 "AI Work Control Plane Phase 6+ hardens artifact contracts, lifecycle index refs, operator strategy visibility, approval reason codes, evidence-memory policy, read-only UI consumption, and dogfood coverage",
                 "AI Work Control Plane Operations Track extends the default operator surface to Workspace / Program Index v2, Approval Inbox, Run Ledger, Topology Blueprint Snapshot, Memory Promotion, and Runtime Health + Tool Inventory",
                 "AI Work Control Plane Live Recovery Track turns the operator-readable surface into an operator-recoverable surface with Recovery Timeline, Runtime Event Stream, Recovery Recommendation, resume hints, and evidence-backed memory promotion",
+                "latest explainer docs: `PROJECT_BREAKDOWN.md`, `PROJECT_BREAKDOWN_V2.md`, `EXECUTION_PLANE_DEEP_DIVE.md`, `INTERVIEW_PREP.md`",
+                "`docs/process/project-index.md`: canonical reading order and recent update index",
+                "`docs/process/agent-evolution-master-plan.md`: future evolution source of truth",
                 "`team inspect-docs` builds `agent_orchestrator.docs_context.v1` packages for agent-ready canonical docs",
                 "`team inspect-handoff` reads `agent_orchestrator.handoff_packet.v1` packets from session messages",
                 "`team docs-index` returns `agent_orchestrator.docs_index.v1` reverse lookup results",
                 "`team workspace-status`, `team context-packet`, `team topology inspect`, `team approvals`, and `team evidence-gates` expose `agent_orchestrator.*.v1` control-plane artifacts",
                 "README.md",
+                "docs/process/project-index.md",
                 "docs/decisions/",
                 "docs/research/control-plane-reference-rescreen.md",
                 "docs/process/ai-work-control-plane-operations-track-plan.md",
                 "docs/process/ai-work-control-plane-live-recovery-track-plan.md",
                 "docs/process/agent-orchestrator-implementation-process.md",
+                "docs/process/agent-evolution-master-plan.md",
                 "docs/process/ai-work-control-plane-master-plan.md",
                 "docs/process/control-plane-artifact-contracts.md",
                 "docs/process/agent-team-operator-runbook.md",
@@ -1256,12 +1262,20 @@ def build_compliance_status_for_session(
                 "name": "role_contracts_current",
                 "status": (
                     "failed"
-                    if any(str(reason).startswith("role contract drift:") for reason in blocking_reasons)
+                    if any(
+                        str(reason).startswith(prefix)
+                        for reason in blocking_reasons
+                        for prefix in ("role contract drift:", "responsibility contract drift:")
+                    )
                     else "warning"
-                    if any(str(reason).startswith("role contract drift:") for reason in warnings)
+                    if any(
+                        str(reason).startswith(prefix)
+                        for reason in warnings
+                        for prefix in ("role contract drift:", "responsibility contract drift:")
+                    )
                     else "passed"
                 ),
-                "details": "role contracts document command refs and discipline boundaries",
+                "details": "职责约束用于声明命令入口、必需输出和边界约束",
             },
         ],
         "blocking_reasons": blocking_reasons,
@@ -1719,12 +1733,26 @@ def _collect_root_map_entries(project_root: Path) -> tuple[str, ...]:
 
     docs_root = project_root / "docs" / "process"
     if docs_root.exists():
+        project_index = docs_root / "project-index.md"
         impl_process = docs_root / "agent-orchestrator-implementation-process.md"
         runbook = docs_root / "agent-team-operator-runbook.md"
+        evolution_plan = docs_root / "agent-evolution-master-plan.md"
+        breakdown_docs = [
+            project_root / "PROJECT_BREAKDOWN.md",
+            project_root / "PROJECT_BREAKDOWN_V2.md",
+            project_root / "EXECUTION_PLANE_DEEP_DIVE.md",
+            project_root / "INTERVIEW_PREP.md",
+        ]
+        if project_index.exists():
+            entries.append("`docs/process/project-index.md`: canonical reading order and recent update index")
         if impl_process.exists():
             entries.append("`docs/process/agent-orchestrator-implementation-process.md`: implementation supervision source of truth")
         if runbook.exists():
             entries.append("`docs/process/agent-team-operator-runbook.md`: operator workflow recovery guide")
+        if evolution_plan.exists():
+            entries.append("`docs/process/agent-evolution-master-plan.md`: future evolution source of truth")
+        if any(path.exists() for path in breakdown_docs):
+            entries.append("`PROJECT_BREAKDOWN.md`, `PROJECT_BREAKDOWN_V2.md`, `EXECUTION_PLANE_DEEP_DIVE.md`, `INTERVIEW_PREP.md`: latest explainer docs")
     return tuple(entries)
 
 
@@ -1926,13 +1954,13 @@ def _resume_guidance_command(session_id: str, action: str) -> str:
 def _role_contract_issues(runbook_text: str) -> list[str]:
     issues: list[str] = []
     if "team roles" not in runbook_text:
-        issues.append("role contract drift: operator runbook missing team roles command")
+        issues.append("responsibility contract drift: operator runbook missing team roles command")
     for contract in role_contracts():
         if contract.role not in runbook_text:
-            issues.append(f"role contract drift: operator runbook missing {contract.role} role")
+            issues.append(f"responsibility contract drift: operator runbook missing {contract.role} role")
         for command in contract.command_refs:
             if command not in runbook_text:
-                issues.append(f"role contract drift: operator runbook missing {contract.role} command ref {command}")
+                issues.append(f"responsibility contract drift: operator runbook missing {contract.role} command ref {command}")
     return issues
 
 

@@ -1,43 +1,90 @@
 # AI-Work-Control-Plane
 
-AI-Work-Control-Plane is an **AI Work Control Plane for long-cycle local agent work**. It keeps plans, context, execution topology, approvals, evidence, memory provenance, runtime measurements, and recovery state outside the model so they can be inspected, resumed, and audited.
+AI-Work-Control-Plane 是一个**面向长周期本地 coding agent 的可靠性控制平面**。它把计划、上下文、执行拓扑、审批、证据、记忆溯源、运行时测量和恢复状态放在模型之外，让多步 agent 工作可以被检查、恢复和审计。
 
-Current status: **`v1.0.0` local-first AI Work Control Plane release sealed**.
+当前状态：**`v1.0.0` 本地优先 AI Work Control Plane 正式版本已封版**。
 
-Current workflow target: **internal default** for the author's local long-cycle agent work.
+当前工作流目标：**作为作者自身长周期 agent 工作的内部默认工作流**。
 
-This repository is not trying to be a provider-native bridge, a persistent provider session owner, a tmux replacement, or a human-org-chart agent simulator. The product center is the control plane above those runtimes.
+## 先读什么
 
-Explicit orchestration may become less visible over time, while state, evidence, approvals, memory, and recovery stay outside the model as auditable system responsibilities.
+如果你想最快跟上当前仓库的最新叙事，建议先按这个顺序看：
 
-## What It Does
+1. [Project Index](docs/process/project-index.md)
+2. [README.md](README.md)
+3. [Root Map](docs/process/root-map.md)
+4. [Context Map](docs/process/context-map.md)
+5. [AI Work Control Plane Master Plan](docs/process/ai-work-control-plane-master-plan.md)
+6. [Agent Evolution Master Plan](docs/process/agent-evolution-master-plan.md)
 
-- Turns fuzzy work into governed plan sessions with persisted artifacts.
-- Runs explicit planning, review, approval, and execution stages.
-- Tracks workspace state, context packets, topology snapshots, approval records, evidence bundles, memory provenance, and runtime events.
-- Routes work through strategy profiles such as `success_first`, `speed_first`, `cost_first`, and `auto`.
-- Supports local command-runtime jobs with measured duration, exit status, provider/runtime metadata, degraded reasons, and operation receipts.
-- Reports release readiness through setup, compliance, evidence, workspace, and gate surfaces.
+今天新增或显著更新的说明材料主要是：
 
-## Current v1 Boundary
+- [PROJECT_BREAKDOWN.md](/Users/abab/Desktop/AI-Work-Control-Plane/PROJECT_BREAKDOWN.md)
+- [PROJECT_BREAKDOWN_V2.md](/Users/abab/Desktop/AI-Work-Control-Plane/PROJECT_BREAKDOWN_V2.md)
+- [EXECUTION_PLANE_DEEP_DIVE.md](/Users/abab/Desktop/AI-Work-Control-Plane/EXECUTION_PLANE_DEEP_DIVE.md)
+- [INTERVIEW_PREP.md](/Users/abab/Desktop/AI-Work-Control-Plane/INTERVIEW_PREP.md)
+- [docs/process/agent-evolution-master-plan.md](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/agent-evolution-master-plan.md)
 
-The current candidate is **measurement-ready**, not provider bridge-ready.
+## 为什么这是一个 Agent 项目
 
-Runtime measurement reports local facts when they exist:
+这个仓库更准确的理解方式是一个**agent systems 项目**，而不是一个泛化的工作流壳子：
 
-- command start/end timestamps
+- 它处理的是长周期 agent 工作的治理问题，而不是一次性 prompt 调用。
+- 它把**控制平面职责**和 provider/runtime 执行职责拆开，让 agent 行为可检查。
+- 它把**恢复、审批、证据、记忆溯源**当成一等系统能力，而不是附属日志。
+- 它通过稳定的 CLI 和 UI surface 对外暴露这些能力，并且背后有测试覆盖的 artifact schema。
+
+如果要用一句最短的话来描述它，可以说：
+
+> 这是一个本地优先的 agent 外部治理层，用来让长任务 coding agent 具备可恢复、可审计、可安全操作的工作系统。
+
+这个仓库并不试图成为 provider 原生桥接层、持久 provider session 持有者、tmux 替代品，也不试图和 `Codex` / `Claude Code` 竞争“谁更会规划和写代码”。它的产品核心，是这些 runtime 之上的外部治理层。
+
+随着模型能力增强，显式编排本身未来可能会变得不那么重要；但状态、证据、审批、记忆和恢复仍然应该留在模型之外，作为可审计的系统职责。也就是说，**session 可以属于 provider，program state 应该属于 control plane**。
+
+## 它具体做什么
+
+- 维护跨 session、跨阶段的 workspace / program state，而不是只依赖单次 agent 会话。
+- 记录 approval、evidence、runtime measurement、operation receipt 和 recovery artifact。
+- 为长任务执行提供外部 checkpoint、阻塞原因和恢复建议。
+- 支持本地 command runtime job，并记录 provider/runtime 元数据与真实执行事实。
+- 通过 setup、compliance、evidence、workspace 和 gate surface 报告治理状态与发布准备度。
+
+## 推荐演示叙事
+
+如果要用于面试或作品集展示，建议按这个顺序讲：
+
+1. `team start` 为一个模糊工程任务创建受治理的任务上下文和外部状态。
+2. `team workspace-status` 展示外部化后的 workspace 状态和恢复状态。
+3. `team evidence-gates` 展示当前是否满足安全推进条件。
+4. `team execute` 在已批准路径上执行任务，并持久化运行时事实和溯源信息。
+5. `team runtime inspect` 或 UI 展示执行结果，以及系统如何给出恢复建议。
+
+配套文档：
+
+- [Agent 项目重构方案](docs/roadmap/agent-systems-reframe-plan.md)
+- [Agent 项目学习地图](docs/process/agent-systems-study-map.md)
+- [Provider 边界审计清单](docs/process/provider-boundary-audit.md)
+
+## 当前 v1 边界
+
+当前版本的定位是**测量能力已就绪**，而不是 provider bridge 已就绪。
+
+只要本地事实存在，runtime measurement 就会记录：
+
+- command 开始/结束时间戳
 - duration
 - exit code
-- provider and runtime mode
-- provider availability
-- degraded reasons
-- operation receipts
+- provider 和 runtime mode
+- provider 可用性
+- degraded reason
+- operation receipt
 
-Token and cost fields remain placeholders unless a runtime reports trustworthy values directly. That is intentional and is not a v1 blocker for this track.
+除非某个 runtime 能直接提供可信的 token 和 cost 数据，否则这两个字段目前仍然是占位符。这是有意为之，并不是当前 v1 路线的阻塞项。
 
-## Quickstart
+## 快速开始
 
-Run commands from the repository root:
+在仓库根目录运行：
 
 ```bash
 cd /Users/abab/Desktop/AI-Work-Control-Plane
@@ -47,7 +94,7 @@ PYTHONPATH=src python -m agent_orchestrator.cli team workspace-status --format j
 PYTHONPATH=src python -m agent_orchestrator.cli team evidence-gates --format json
 ```
 
-Start and inspect a governed work session:
+启动并检查一个受治理的工作会话：
 
 ```bash
 PYTHONPATH=src python -m agent_orchestrator.cli team start "Build a persisted plan artifact for a routine implementation task"
@@ -60,15 +107,15 @@ PYTHONPATH=src python -m agent_orchestrator.cli team execute <session-id>
 PYTHONPATH=src python -m agent_orchestrator.cli team inspect-execution <session-id>
 ```
 
-Run a direct task through the policy router:
+通过策略路由器直接运行一个任务：
 
 ```bash
 PYTHONPATH=src python -m agent_orchestrator.cli run "Review this workspace and report the next hardening step" --mode auto
 ```
 
-## Release Checks
+## 发布检查
 
-Before calling the release ready, run:
+在确认版本可发布之前，运行：
 
 ```bash
 pytest
@@ -80,55 +127,55 @@ PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle export --
 PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle inspect .agent_orchestrator/governance/v1.0.0-final-bundle.json --format json
 ```
 
-The current release checklist is [docs/process/v1-candidate-release-checklist.md](docs/process/v1-candidate-release-checklist.md). The short canonical readiness process is [docs/process/v1x-release-readiness.md](docs/process/v1x-release-readiness.md).
+当前发布检查清单见 [docs/process/v1-candidate-release-checklist.md](docs/process/v1-candidate-release-checklist.md)。更短的标准化准备流程见 [docs/process/v1x-release-readiness.md](docs/process/v1x-release-readiness.md)。
 
-Release packaging docs:
+发布封版相关文档：
 
 - [v1.0.0 release notes](docs/releases/v1.0.0.md)
 - [v1.0.0 evidence packet](docs/process/v1.0.0-evidence-packet.md)
 - [v1.0.0-rc.3 release notes](docs/releases/v1.0.0-rc.3.md)
 
-## Product Layers
+## 产品分层
 
-The project is organized as:
+项目当前分为以下几层：
 
-- **AI Work Control Plane**: workspace state, context packets, strategy decisions, topology snapshots, approvals, evidence, memory provenance, and recovery.
-- **Decision Core**: plan sessions, review rounds, decision verdicts, compliance gates, and execution contracts.
-- **Execution Topology**: task pools, role contracts, worker handoffs, runtime/job surfaces, and operator guidance.
-- **Provider / Runtime Layer**: local command runtime, CLI inheritance/isolation modes, direct API readiness checks, and future replaceable adapters.
+- **治理层**：workspace state、approval、evidence、memory provenance、recovery 和 execution contract。
+- **执行事实层**：runtime measurement、operation receipt、provider session snapshot、run ledger 和 failure / fallback facts。
+- **Provider / Runtime 层**：本地 command runtime、CLI 继承/隔离模式、direct API readiness check，以及未来可替换的 adapter。
 
 中文说明入口：
 
 - [决策核心 / 执行拓扑 / 运行时分层说明](docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
 - [上下文地图](docs/process/context-map.md)
+- [项目索引](docs/process/project-index.md)
 - [长周期主执行计划](docs/process/长周期主执行计划.md)
-- [Operator Runbook](docs/process/agent-team-operator-runbook.md)
-- [Architecture Decision Records](docs/decisions/)
+- [操作手册](docs/process/agent-team-operator-runbook.md)
+- [架构决策记录](docs/decisions/)
 
 默认执行节奏：按长周期主计划推进，验证通过后自动进入下一段。
 
-## Main CLI Surfaces
+## 主要 CLI 入口
 
-- `team setup`: provider health, runtime measurement readiness, doc sync, compliance, and release readiness.
-- `team workspace-status`: workspace snapshot and control-plane state.
-- `team context-packet`: compressed task context for agent work.
-- `team topology inspect`: read-only execution topology snapshot.
-- `team approvals list` / `team approvals resolve`: approval queue inspection and resolution.
-- `team evidence-gates`: readiness gates for evidence-backed release decisions.
-- `team runtime inspect <job-id>`: runtime measurement, operation receipts, and degraded runtime details.
-- `evidence report` / `evidence trend`: evidence metrics, runtime measurement metrics, and deltas.
+- `team setup`：检查 provider health、runtime measurement readiness、doc sync、compliance 和发布准备度。
+- `team workspace-status`：查看 workspace snapshot 和 control-plane state。
+- `team context-packet`：为 agent 工作生成压缩后的任务上下文。
+- `team topology inspect`：查看只读执行路径快照。
+- `team approvals list` / `team approvals resolve`：查看和处理 approval queue。
+- `team evidence-gates`：查看基于 evidence 的发布门禁。
+- `team runtime inspect <job-id>`：查看 runtime measurement、operation receipt 和 degraded runtime 细节。
+- `evidence report` / `evidence trend`：输出 evidence metric、runtime measurement metric 及其变化趋势。
 
-## Provider Runtime Modes
+## Provider Runtime 模式
 
-- `cli_inherit`: use local `codex` / `claude` CLI behavior, including user auth and project/global configuration.
-- `cli_isolated`: run CLI jobs with a repository-owned runtime home under `.agent_orchestrator/runtime-homes/`.
-- `direct_api`: report masked API readiness for low-side-effect governance roles such as planning, review, and summarization.
+- `cli_inherit`：沿用本地 `codex` / `claude` CLI 行为，包括用户鉴权和项目/全局配置。
+- `cli_isolated`：在仓库自有的 `.agent_orchestrator/runtime-homes/` 下运行隔离的 CLI job。
+- `direct_api`：为 planning、review、summarization 这类低副作用治理角色报告脱敏后的 API readiness。
 
-`team setup` and `health --refresh` report local readiness without storing API keys.
+`team setup` 和 `health --refresh` 会报告本地 readiness，但不会存储 API key。
 
 ## Evidence
 
-Refresh evidence reports with:
+用下面的命令刷新 evidence report：
 
 ```bash
 PYTHONPATH=src python -m agent_orchestrator.cli evidence report \
@@ -137,34 +184,34 @@ PYTHONPATH=src python -m agent_orchestrator.cli evidence report \
   --json-output .agent_orchestrator/evidence/real-tasks.json
 ```
 
-Evidence reports cover real-task dogfood metrics, recovery coverage, runtime fidelity, compliance blocking, postmortem readiness, and runtime measurement deltas. Cost and token values remain placeholders until provider/runtime integrations report them directly.
+evidence report 会覆盖真实任务 dogfood 指标、recovery coverage、runtime fidelity、compliance blocking、postmortem readiness 和 runtime measurement 变化。cost 和 token 数值在 provider/runtime 直接上报之前仍然保持占位。
 
 ## UI
 
-Start the local operator console:
+启动本地治理控制台：
 
 ```bash
 PYTHONPATH=src python -m agent_orchestrator.cli ui
 ```
 
-The console is a local operator surface for sessions, governance signals, execution provenance, runtime/job state, and evidence-backed readiness.
+这个治理控制台面向本地 operator，用于查看 session、governance signal、execution provenance、runtime/job state 以及 evidence-backed readiness。
 
-## Development
+## 开发
 
-For quick feedback:
+快速检查可运行：
 
 ```bash
 make ci
 ```
 
-For final stage closeout:
+在最终收尾阶段运行：
 
 ```bash
 pytest
 PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
 ```
 
-The CI-equivalent local gate runs `ruff check src tests` and `pytest -m "not slow_integration"`. Individual commands are also available:
+本地等价于 CI 的门禁会运行 `ruff check src tests` 和 `pytest -m "not slow_integration"`。也可以单独运行：
 
 ```bash
 make lint
@@ -172,7 +219,7 @@ make test-quick
 make ui-build
 ```
 
-Install repository-managed hooks:
+安装仓库自带的 hook：
 
 ```bash
 PYTHONPATH=src python -m agent_orchestrator.cli install-hooks
