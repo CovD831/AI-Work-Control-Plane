@@ -177,6 +177,8 @@ class ExecutionSessionSummary(TypedDict):
     resume_action: str
     resume_reason: str
     recommended_commands: list[str]
+    clarify_summary: dict[str, object]
+    decomposition_summary: dict[str, object]
 
 
 def _new_id(prefix: str) -> str:
@@ -2310,6 +2312,12 @@ def _build_execution_session_summary(session: PlanSession, payload: dict[str, ob
         "resume_action": guidance.resume_action,
         "resume_reason": guidance.resume_reason,
         "recommended_commands": guidance.recommended_commands,
+        "clarify_summary": metadata.get("execution_contract", {}).get("clarify_summary", {})
+        if isinstance(metadata.get("execution_contract"), dict)
+        else {},
+        "decomposition_summary": metadata.get("execution_contract", {}).get("decomposition_summary", {})
+        if isinstance(metadata.get("execution_contract"), dict)
+        else {},
     }
 
 
@@ -2766,7 +2774,7 @@ def _set_checklist_completed(session: PlanSession, label: str, completed: bool) 
 def _build_plan_execution_contract(session: PlanSession) -> dict[str, object]:
     decision_verdict = session.decision_verdict.to_dict() if session.decision_verdict else {}
     provider_recommendation = dict(decision_verdict.get("selected_provider_runtime", {}))
-    return ExecutionContract(
+    contract = ExecutionContract(
         source="approved_plan_session",
         goal=session.structured_brief.goal or session.requirement,
         acceptance_criteria=list(session.structured_brief.acceptance_criteria),
@@ -2791,6 +2799,9 @@ def _build_plan_execution_contract(session: PlanSession) -> dict[str, object]:
         fallback_policy=_fallback_policy_from_provider_recommendation(provider_recommendation),
         compliance_snapshot=_execution_contract_compliance_snapshot(session.compliance),
     ).to_dict()
+    contract["clarify_summary"] = {}
+    contract["decomposition_summary"] = {}
+    return contract
 
 
 def _fallback_policy_from_provider_recommendation(provider_recommendation: dict[str, object]) -> dict[str, object]:

@@ -293,6 +293,12 @@ def print_execution_session_summary(payload: dict[str, object]) -> None:
     selected_provider_runtime = summary.get("selected_provider_runtime")
     if selected_provider_runtime:
         print(f"selected_provider_runtime: {json.dumps(selected_provider_runtime, ensure_ascii=False)}")
+    clarify_summary = summary_dict(summary, "clarify_summary")
+    if clarify_summary:
+        print(_format_clarify_summary(clarify_summary))
+    decomposition_summary = summary_dict(summary, "decomposition_summary")
+    if decomposition_summary:
+        print(_format_decomposition_summary(decomposition_summary))
     context_policy = summary.get("execution_context_policy")
     if isinstance(context_policy, dict) and context_policy:
         print(
@@ -320,6 +326,40 @@ def print_execution_session_summary(payload: dict[str, object]) -> None:
     recommended_commands = summary_list(summary, "recommended_commands")
     if recommended_commands:
         print(f"recommended_commands: {' | '.join(str(command) for command in recommended_commands)}")
+
+
+def _format_clarify_summary(summary: dict[str, object]) -> str:
+    task_type = summary_text(summary, "task_type", "unknown")
+    slot_sources = summary_dict(summary, "slot_sources")
+    slot_source_text = ",".join(f"{key}={value}" for key, value in sorted(slot_sources.items())) if slot_sources else "none"
+    unknown_slots = summary_list(summary, "unknown_slots")
+    unknown_text = ",".join(str(item) for item in unknown_slots) if unknown_slots else "none"
+    warnings = summary_list(summary, "slot_fill_warnings")
+    warning_text = "; ".join(str(item) for item in warnings) if warnings else "none"
+    return (
+        "clarify: "
+        f"task_type={task_type} "
+        f"slot_sources={slot_source_text} "
+        f"unknown_slots={unknown_text} "
+        f"warnings={warning_text}"
+    )
+
+
+def _format_decomposition_summary(summary: dict[str, object]) -> str:
+    strategy = summary_text(summary, "selected_strategy", "unknown")
+    shape = summary_text(summary, "selected_shape", "unknown")
+    score = summary_text(summary, "selected_score", "unknown")
+    candidate_count = summary_text(summary, "candidate_count", "0")
+    rejected = summary_list(summary, "rejected_strategies")
+    rejected_text = ",".join(str(item) for item in rejected) if rejected else "none"
+    return (
+        "decompose: "
+        f"selected={strategy} "
+        f"shape={shape} "
+        f"score={score} "
+        f"candidate_count={candidate_count} "
+        f"rejected={rejected_text}"
+    )
 
 
 def print_blocker_session_summary(payload: dict[str, object]) -> None:

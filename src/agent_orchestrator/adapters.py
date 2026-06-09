@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+import os
 from pathlib import Path
+import re
 from time import sleep
 from typing import Any, Protocol, cast
+from urllib import error, request as urlrequest
 
 from agent_orchestrator.agent_config import AgentConfig, AgentProfile
 from agent_orchestrator.jobs import AgentJob, InMemoryJobRuntime, JobRequest, JobRuntime
@@ -14,11 +18,161 @@ from agent_orchestrator.review import Finding, ReviewResult
 from agent_orchestrator.tasks import RiskLevel, TaskContract, WorkUnit, WorkUnitResult
 
 
+@dataclass(slots=True)
+class ExtractedSignals:
+    raw_requirement: str
+    explicit_paths: list[str] = field(default_factory=list)
+    explicit_symbols: list[str] = field(default_factory=list)
+    explicit_constraints: list[str] = field(default_factory=list)
+    explicit_non_goals: list[str] = field(default_factory=list)
+    artifact_hints: list[str] = field(default_factory=list)
+    risk_hints: list[str] = field(default_factory=list)
+    task_hints: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ContractDraft:
+    raw_requirement: str
+    goal: str = ""
+    user_intent_summary: str = ""
+    task_type: str = "implementation"
+    constraints: list[str] = field(default_factory=list)
+    non_goals: list[str] = field(default_factory=list)
+    target_scope: list[str] = field(default_factory=list)
+    expected_artifacts: list[str] = field(default_factory=list)
+    acceptance_criteria: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+    risk_signals: list[str] = field(default_factory=list)
+    missing_slots: list[str] = field(default_factory=list)
+    uncertain_slots: list[str] = field(default_factory=list)
+    slot_sources: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class DecompositionCandidate:
+    name: str
+    strategy: str
+    rationale: list[str]
+    work_units: list[WorkUnit]
+    score: int = 0
+    selected: bool = False
+    graph_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "strategy": self.strategy,
+            "rationale": list(self.rationale),
+            "work_units": [work_unit.to_dict() for work_unit in self.work_units],
+            "score": self.score,
+            "selected": self.selected,
+            "graph_metadata": dict(self.graph_metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "DecompositionCandidate":
+        return cls(
+            name=str(data.get("name", "")),
+            strategy=str(data.get("strategy", "")),
+            rationale=[str(item) for item in data.get("rationale", [])],
+            work_units=[
+                WorkUnit.from_dict(item)
+                for item in data.get("work_units", [])
+                if isinstance(item, dict)
+            ],
+            score=int(data.get("score", 0)),
+            selected=bool(data.get("selected", False)),
+            graph_metadata=dict(data.get("graph_metadata", {})),
+        )
+
+
+@dataclass(slots=True)
+class SlotFillResult:
+    filled_slots: dict[str, Any] = field(default_factory=dict)
+    unknown_slots: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    raw_model_payload: dict[str, Any] = field(default_factory=dict)
+
+
+ALLOWED_SLOT_FILL_FIELDS = {
+    "goal",
+    "user_intent_summary",
+    "task_type",
+    "expected_artifacts",
+    "acceptance_criteria",
+    "assumptions",
+    "risk_signals",
+}
+ALLOWED_UNKNOWN_SLOTS = ALLOWED_SLOT_FILL_FIELDS | {"target_scope"}
+TASK_TYPE_ALIASES = {
+    "analysis": "investigation",
+    "analyze": "investigation",
+    "investigate": "investigation",
+    "bug_fix": "bugfix",
+    "bug-fix": "bugfix",
+    "documentation": "docs",
+    "tests": "test_only",
+}
+VALID_TASK_TYPES = {"implementation", "bugfix", "feature", "refactor", "migration", "investigation", "docs", "test_only"}
+ARTIFACT_ALIASES = {
+    "investigation report": "analysis note",
+    "analysis report": "analysis note",
+    "report": "analysis note",
+    "root cause summary": "findings",
+    "root cause analysis": "findings",
+    "findings summary": "findings",
+    "recommendation": "recommendation",
+    "recommendations": "recommendation",
+    "test plan": "tests",
+    "test coverage": "tests",
+    "documentation patch": "docs patch",
+    "doc patch": "docs patch",
+    "rollback guidance": "rollback notes",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class EnvSlotFillConfig:
+    api_key: str
+    base_url: str
+    model: str
+    timeout_seconds: int = 30
+
+    @classmethod
+    def from_env(cls, *, project_root: Path | None = None) -> "EnvSlotFillConfig" | None:
+        file_values = _load_project_env_file(project_root)
+        api_key = os.environ.get("AO_SLOTFILL_API_KEY", file_values.get("AO_SLOTFILL_API_KEY", "")).strip()
+        base_url = os.environ.get("AO_SLOTFILL_BASE_URL", file_values.get("AO_SLOTFILL_BASE_URL", "")).strip()
+        model = os.environ.get("AO_SLOTFILL_MODEL", file_values.get("AO_SLOTFILL_MODEL", "")).strip()
+        timeout_raw = os.environ.get(
+            "AO_SLOTFILL_TIMEOUT_SECONDS",
+            file_values.get("AO_SLOTFILL_TIMEOUT_SECONDS", ""),
+        ).strip()
+        if not api_key or not base_url or not model:
+            return None
+        timeout_seconds = int(timeout_raw) if timeout_raw.isdigit() else 30
+        return cls(api_key=api_key, base_url=base_url.rstrip("/"), model=model, timeout_seconds=timeout_seconds)
+
+
+def _default_slot_filler() -> "SlotFillerAdapter | None":
+    config = EnvSlotFillConfig.from_env()
+    if config is None:
+        return None
+    return OpenAICompatibleSlotFiller(config=config)
+
+
 class PlannerAdapter(Protocol):
     """Turns fuzzy requirements into a clarified task contract."""
 
     def clarify(self, requirement: str, policy: PolicyProfile) -> TaskContract:
         """Create a task contract from a user requirement."""
+
+
+class SlotFillerAdapter(Protocol):
+    """Fills missing or uncertain contract draft slots."""
+
+    def __call__(self, draft: ContractDraft, policy: PolicyProfile) -> SlotFillResult:
+        """Return structured slot-fill data for the given draft."""
 
 
 class DecomposerAdapter(Protocol):
@@ -51,38 +205,64 @@ class ReviewRescueAdapter(Protocol):
 class MockClaudePlanner:
     """MVP Claude-style planner that produces stable task contracts."""
 
-    def clarify(self, requirement: str, policy: PolicyProfile) -> TaskContract:
-        goal = requirement.strip()
-        if not goal:
-            goal = "Clarify and implement the requested change"
+    slot_filler: SlotFillerAdapter | None = field(default_factory=_default_slot_filler)
 
+    def clarify(self, requirement: str, policy: PolicyProfile) -> TaskContract:
+        normalized_requirement = _normalize_requirement(requirement)
+        signals = _extract_signals(normalized_requirement)
+        draft = _build_contract_draft(signals)
+        draft = _assess_contract_draft(draft, signals)
+        fill_result = SlotFillResult()
+        if self.slot_filler and _needs_slot_fill(draft):
+            fill_result = self.slot_filler(draft, policy)
+            draft = _merge_slot_fill_result(draft, fill_result)
         topology = policy.execution_topology
+        non_goals = list(draft.non_goals)
         if not topology.agent_enabled:
             context = "Run through the control plane without spawning agent topology."
-            non_goals = ["Do not recurse into agent delegation when agent mode is disabled"]
+            non_goals.append("Do not recurse into agent delegation when agent mode is disabled")
         else:
             context = (
                 "Use the success-first parent architecture and downgrade behavior "
                 f"through policy when requested. Provider flow: {' -> '.join(topology.provider_flow)}."
             )
-            non_goals = ["Do not recurse beyond the selected policy depth"]
+            non_goals.append("Do not recurse beyond the selected policy depth")
+
+        if draft.target_scope:
+            context = f"{context} Scope hints: {', '.join(draft.target_scope)}."
+        if draft.constraints:
+            context = f"{context} Constraints: {'; '.join(draft.constraints)}."
+
+        outputs = list(draft.expected_artifacts) if draft.expected_artifacts else ["task tree", "worker results", "review summary"]
+        inputs = [draft.goal]
+        if draft.constraints:
+            inputs.extend(f"constraint: {item}" for item in draft.constraints)
+        if draft.target_scope:
+            inputs.extend(f"scope: {item}" for item in draft.target_scope)
 
         return TaskContract(
-            goal=goal,
-            non_goals=non_goals,
+            goal=draft.goal,
+            non_goals=_dedupe_preserve_order(non_goals),
             context=context,
-            inputs=[goal],
-            outputs=["task tree", "worker results", "review summary"],
-            acceptance_criteria=[
-                "Requirement is represented as executable work units",
-                "Worker results include tests or validation notes",
-                "Failures are routed according to policy",
-            ],
-            risk_level=_infer_risk(goal),
-            parallelizable=True,
+            inputs=inputs,
+            outputs=outputs,
+            acceptance_criteria=list(draft.acceptance_criteria),
+            risk_level=_collapse_risk_level(draft.risk_signals),
+            parallelizable=draft.task_type not in {"migration", "investigation"},
             owner_type="claude_team",
             max_depth=policy.max_depth,
             failure_policy="rescue" if policy.rescue_enabled else "retry",
+            task_type=draft.task_type,
+            constraints=list(draft.constraints),
+            assumptions=list(draft.assumptions),
+            target_scope=list(draft.target_scope),
+            expected_artifacts=list(draft.expected_artifacts),
+            risk_signals=list(draft.risk_signals),
+            user_intent_summary=draft.user_intent_summary,
+            raw_requirement=normalized_requirement,
+            slot_sources=dict(draft.slot_sources),
+            unknown_slots=_dedupe_preserve_order([*draft.missing_slots, *draft.uncertain_slots, *fill_result.unknown_slots]),
+            slot_fill_warnings=list(fill_result.warnings),
         )
 
 
@@ -90,96 +270,14 @@ class MockClaudePlanner:
 class MockClaudeDecomposer:
     """MVP decomposer that models Claude team-style division of labor."""
 
+    last_candidates: list[DecompositionCandidate] = field(default_factory=list, init=False, repr=False)
+
     def decompose(self, contract: TaskContract, policy: PolicyProfile) -> list[WorkUnit]:
-        context = f"{contract.context} {contract.goal}"
-        flow = policy.provider_flow
-        if not policy.agent_enabled or policy.topology_depth == 0:
-            return [
-                WorkUnit(
-                    goal="Execute the requested change directly",
-                    context=context,
-                    inputs=contract.inputs,
-                    outputs=["patch", "validation notes"],
-                    acceptance_criteria=["Direct execution completes without agent delegation"],
-                    risk_level=contract.risk_level,
-                    parallelizable=False,
-                    owner_type="single_worker",
-                    max_depth=contract.max_depth,
-                    failure_policy=contract.failure_policy,
-                    provider_hint="codex",
-                    depends_on=[],
-                )
-            ]
-
-        base_units = [
-            WorkUnit(
-                goal="Define task contract and acceptance criteria",
-                context=context,
-                inputs=contract.inputs,
-                outputs=["contract"],
-                acceptance_criteria=["Contract has goal, constraints, and acceptance criteria"],
-                risk_level="medium",
-                parallelizable=True,
-                owner_type="codex_swarm",
-                max_depth=contract.max_depth,
-                failure_policy=contract.failure_policy,
-                provider_hint=_flow_provider(flow, 0, fallback="claude"),
-                depends_on=[],
-            ),
-            WorkUnit(
-                goal="Implement worker execution path",
-                context=context,
-                inputs=["task contract"],
-                outputs=["patch", "validation notes"],
-                acceptance_criteria=["Worker returns a structured result"],
-                risk_level=contract.risk_level,
-                parallelizable=True,
-                owner_type="codex_swarm",
-                max_depth=contract.max_depth,
-                failure_policy=contract.failure_policy,
-                provider_hint=_flow_provider(flow, 1, fallback="codex"),
-                depends_on=[],
-            ),
-            WorkUnit(
-                goal="Validate merge readiness",
-                context=context,
-                inputs=["worker results"],
-                outputs=["review summary"],
-                acceptance_criteria=["Review determines whether output is acceptable"],
-                risk_level="high" if policy.review_required is True else "medium",
-                parallelizable=False,
-                owner_type="claude_team",
-                max_depth=contract.max_depth,
-                failure_policy="rescue",
-                provider_hint=_flow_provider(flow, 2, fallback="claude"),
-                depends_on=[],
-            ),
-        ]
-
-        base_units[1].depends_on = [base_units[0].id]
-        base_units[2].depends_on = [base_units[1].id]
-
-        if policy.topology_depth <= 1 or policy.parallelism == "limited":
-            return base_units[:1]
-        if policy.topology_depth == 2:
-            return base_units[:2]
-        if policy.parallelism == "aggressive":
-            compatibility = WorkUnit(
-                    goal="Run speculative compatibility check",
-                    context=context,
-                    inputs=["worker results"],
-                    outputs=["compatibility notes"],
-                    acceptance_criteria=["Compatibility risks are listed"],
-                    risk_level="low",
-                    parallelizable=True,
-                    owner_type="codex_swarm",
-                    max_depth=contract.max_depth,
-                    failure_policy="retry",
-                    provider_hint=_flow_provider(flow, 1, fallback="codex"),
-                    depends_on=[base_units[1].id],
-                )
-            return base_units + [compatibility]
-        return base_units
+        candidates = _build_decomposition_candidates(contract, policy)
+        selected = _select_decomposition_candidate(candidates, contract, policy)
+        self.last_candidates = selected
+        chosen = next(candidate for candidate in selected if candidate.selected)
+        return chosen.work_units
 
 
 @dataclass(slots=True)
@@ -342,12 +440,985 @@ class MockClaudeReviewRescue:
 
 
 def _infer_risk(goal: str) -> RiskLevel:
-    lowered = goal.lower()
-    if any(token in lowered for token in ["migration", "security", "payment", "auth"]):
+    return _collapse_risk_level(_infer_risk_signals_from_rules(goal))
+
+
+def _normalize_requirement(requirement: str) -> str:
+    normalized = " ".join(requirement.strip().split())
+    if not normalized:
+        return "Clarify and implement the requested change"
+    return normalized
+
+
+def _extract_signals(requirement: str) -> ExtractedSignals:
+    return ExtractedSignals(
+        raw_requirement=requirement,
+        explicit_paths=_extract_explicit_paths(requirement),
+        explicit_symbols=_extract_explicit_symbols(requirement),
+        explicit_constraints=_extract_explicit_constraints(requirement),
+        explicit_non_goals=_extract_explicit_non_goals(requirement),
+        artifact_hints=_extract_artifact_hints(requirement),
+        risk_hints=_infer_risk_signals_from_rules(requirement),
+        task_hints=_infer_task_hints(requirement),
+    )
+
+
+def _build_contract_draft(signals: ExtractedSignals) -> ContractDraft:
+    task_type = _infer_task_type_from_rules(signals)
+    goal = signals.raw_requirement
+    target_scope = _dedupe_preserve_order([*signals.explicit_paths, *signals.explicit_symbols])
+    constraints = _dedupe_preserve_order(signals.explicit_constraints)
+    non_goals = _dedupe_preserve_order(signals.explicit_non_goals)
+    expected_artifacts = _infer_expected_artifacts_from_rules(task_type, signals.artifact_hints)
+    risk_signals = _dedupe_preserve_order(signals.risk_hints)
+    assumptions: list[str] = []
+    if not target_scope:
+        assumptions.append("Target scope must be inferred from repository context if execution requires file selection.")
+
+    draft = ContractDraft(
+        raw_requirement=signals.raw_requirement,
+        goal=goal,
+        user_intent_summary=_build_user_intent_summary(signals.raw_requirement, task_type),
+        task_type=task_type,
+        constraints=constraints,
+        non_goals=non_goals,
+        target_scope=target_scope,
+        expected_artifacts=expected_artifacts,
+        acceptance_criteria=_build_acceptance_criteria(task_type),
+        assumptions=assumptions,
+        risk_signals=risk_signals,
+    )
+    draft.slot_sources = {
+        "goal": "rule",
+        "user_intent_summary": "rule",
+        "task_type": "rule",
+        "constraints": "rule" if constraints else "default",
+        "non_goals": "rule" if non_goals else "default",
+        "target_scope": "rule" if target_scope else "default",
+        "expected_artifacts": "rule",
+        "acceptance_criteria": "rule",
+        "assumptions": "rule" if assumptions else "default",
+        "risk_signals": "rule" if risk_signals else "default",
+    }
+    return draft
+
+
+def _assess_contract_draft(draft: ContractDraft, signals: ExtractedSignals) -> ContractDraft:
+    draft.missing_slots = []
+    draft.uncertain_slots = []
+    if not draft.goal:
+        draft.missing_slots.append("goal")
+    if draft.task_type == "implementation":
+        draft.uncertain_slots.append("task_type")
+    if not draft.target_scope:
+        draft.uncertain_slots.append("target_scope")
+    if not draft.expected_artifacts:
+        draft.missing_slots.append("expected_artifacts")
+    if not draft.acceptance_criteria:
+        draft.missing_slots.append("acceptance_criteria")
+    if _looks_ambiguous(signals.raw_requirement):
+        draft.uncertain_slots.append("user_intent_summary")
+    draft.missing_slots = _dedupe_preserve_order(draft.missing_slots)
+    draft.uncertain_slots = _dedupe_preserve_order(draft.uncertain_slots)
+    return draft
+
+
+def _needs_slot_fill(draft: ContractDraft) -> bool:
+    return bool(draft.missing_slots or draft.uncertain_slots)
+
+
+def _merge_slot_fill_result(draft: ContractDraft, fill_result: SlotFillResult) -> ContractDraft:
+    locked_slots = {"constraints", "non_goals", "target_scope"}
+    for field_name, value in fill_result.filled_slots.items():
+        if field_name in locked_slots or field_name not in ALLOWED_SLOT_FILL_FIELDS:
+            continue
+        if field_name in {"goal", "user_intent_summary"} and isinstance(value, str) and value.strip():
+            setattr(draft, field_name, value.strip())
+            draft.slot_sources[field_name] = "llm"
+            continue
+        if field_name == "task_type" and isinstance(value, str):
+            normalized_task_type = _normalize_task_type(value)
+            if normalized_task_type is None:
+                continue
+            draft.task_type = normalized_task_type
+            draft.slot_sources[field_name] = "llm"
+            continue
+        if field_name in {"expected_artifacts", "acceptance_criteria", "assumptions", "risk_signals"} and isinstance(value, list):
+            cleaned = _dedupe_preserve_order([str(item) for item in value])
+            if cleaned:
+                setattr(draft, field_name, cleaned)
+                draft.slot_sources[field_name] = "llm"
+    draft.missing_slots = [slot for slot in draft.missing_slots if slot not in fill_result.filled_slots]
+    draft.uncertain_slots = [slot for slot in draft.uncertain_slots if slot not in fill_result.filled_slots]
+    return draft
+
+
+TransportFn = Any
+
+
+@dataclass(slots=True)
+class OpenAICompatibleSlotFiller:
+    config: EnvSlotFillConfig
+    transport: TransportFn | None = None
+
+    def __call__(self, draft: ContractDraft, policy: PolicyProfile) -> SlotFillResult:
+        payload = self._build_payload(draft, policy)
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json",
+        }
+        request_url = f"{self.config.base_url}/chat/completions"
+        try:
+            response = self._transport()(request_url, payload, headers, self.config.timeout_seconds)
+        except Exception as exc:
+            return SlotFillResult(warnings=[f"slot_fill_request_failed: {exc}"])
+        parsed = self._parse_response(response)
+        if parsed is None:
+            return SlotFillResult(warnings=["slot_fill_response_invalid"], raw_model_payload=response if isinstance(response, dict) else {})
+        return parsed
+
+    def _build_payload(self, draft: ContractDraft, policy: PolicyProfile) -> dict[str, object]:
+        prompt = {
+            "raw_requirement": draft.raw_requirement,
+            "locked_slots": {
+                "constraints": draft.constraints,
+                "non_goals": draft.non_goals,
+                "target_scope": draft.target_scope,
+            },
+            "candidate_slots": {
+                "goal": draft.goal,
+                "user_intent_summary": draft.user_intent_summary,
+                "task_type": draft.task_type,
+                "expected_artifacts": draft.expected_artifacts,
+                "acceptance_criteria": draft.acceptance_criteria,
+                "assumptions": draft.assumptions,
+                "risk_signals": draft.risk_signals,
+            },
+            "missing_slots": draft.missing_slots,
+            "uncertain_slots": draft.uncertain_slots,
+            "policy": {
+                "mode": policy.mode.value,
+                "max_depth": policy.max_depth,
+                "parallelism": policy.parallelism,
+            },
+            "allowed_output_slots": sorted(ALLOWED_SLOT_FILL_FIELDS),
+            "allowed_unknown_slots": sorted(ALLOWED_UNKNOWN_SLOTS),
+            "task_type_enum": sorted(VALID_TASK_TYPES - {"implementation"}) + ["implementation"],
+        }
+        system_message = (
+            "You fill missing or uncertain task-contract slots. Return a single JSON object only. "
+            "Preserve locked_slots exactly. Never return constraints, non_goals, target_scope, policy, raw_requirement, "
+            "missing_slots, uncertain_slots, or slot_sources. Only return allowed_output_slots plus unknown_slots. "
+            "task_type must be one of task_type_enum. Do not invent file paths, modules, or constraints. "
+            "If a requested slot is uncertain, omit it and list it in unknown_slots."
+        )
+        user_message = json.dumps(prompt, ensure_ascii=False, indent=2)
+        return {
+            "model": self.config.model,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": 0,
+        }
+
+    def _transport(self) -> TransportFn:
+        return self.transport or _default_openai_compatible_transport
+
+    def _parse_response(self, payload: dict[str, object]) -> SlotFillResult | None:
+        content = _extract_openai_message_content(payload)
+        if not content:
+            return None
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return SlotFillResult(warnings=["slot_fill_response_not_json"], raw_model_payload=payload)
+        if not isinstance(data, dict):
+            return None
+        filled_slots: dict[str, Any] = {}
+        for key, value in data.items():
+            if key == "unknown_slots" or key not in ALLOWED_SLOT_FILL_FIELDS:
+                continue
+            if key == "task_type":
+                normalized_task_type = _normalize_task_type(value)
+                if normalized_task_type is not None:
+                    filled_slots[key] = normalized_task_type
+                continue
+            if key in {"goal", "user_intent_summary"} and isinstance(value, str) and value.strip():
+                filled_slots[key] = value.strip()
+                continue
+            if key in {"expected_artifacts", "acceptance_criteria", "assumptions", "risk_signals"} and isinstance(value, list):
+                cleaned_values = [str(item) for item in value if str(item).strip()]
+                if key == "expected_artifacts":
+                    cleaned = _normalize_expected_artifacts(cleaned_values)
+                else:
+                    cleaned = _dedupe_preserve_order(cleaned_values)
+                if cleaned:
+                    filled_slots[key] = cleaned
+        unknown_slots = []
+        if isinstance(data.get("unknown_slots"), list):
+            unknown_slots = [str(item) for item in data["unknown_slots"] if str(item) in ALLOWED_UNKNOWN_SLOTS]
+        return SlotFillResult(
+            filled_slots=filled_slots,
+            unknown_slots=unknown_slots,
+            warnings=[],
+            raw_model_payload=payload,
+        )
+
+
+def _build_legacy_decomposition_candidate(contract: TaskContract, policy: PolicyProfile) -> DecompositionCandidate:
+    context = _build_decomposition_context(contract)
+    structured_inputs = _build_decomposition_inputs(contract)
+    implementation_outputs = list(contract.expected_artifacts) if contract.expected_artifacts else ["patch", "validation notes"]
+    flow = policy.provider_flow
+    if not policy.agent_enabled or policy.topology_depth == 0:
+        work_units = [
+            WorkUnit(
+                goal=_build_direct_execution_goal(contract),
+                context=context,
+                inputs=structured_inputs,
+                outputs=implementation_outputs,
+                acceptance_criteria=_build_direct_execution_acceptance(contract),
+                risk_level=contract.risk_level,
+                parallelizable=False,
+                owner_type="single_worker",
+                max_depth=contract.max_depth,
+                failure_policy=contract.failure_policy,
+                provider_hint="codex",
+                depends_on=[],
+            )
+        ]
+        return DecompositionCandidate(
+            name="direct_execution",
+            strategy="legacy_direct_execution",
+            rationale=["Agent topology is disabled, so the control plane emits a single direct-execution unit."],
+            work_units=work_units,
+            score=1,
+            selected=True,
+            graph_metadata={"task_type": contract.task_type, "topology_depth": 0, "shape": "single_node"},
+        )
+
+    base_units, shape = _build_task_type_template_units(
+        contract,
+        policy,
+        context=context,
+        structured_inputs=structured_inputs,
+        implementation_outputs=implementation_outputs,
+    )
+
+    selected_units = list(base_units)
+    if policy.topology_depth <= 1 or policy.parallelism == "limited":
+        selected_units = base_units[:1]
+        shape = f"{shape}_trimmed_contract_only"
+    elif policy.topology_depth == 2:
+        selected_units = base_units[:2]
+        shape = f"{shape}_trimmed_execute"
+    elif policy.parallelism == "aggressive":
+        compatibility = WorkUnit(
+            goal="Run speculative compatibility check",
+            context=context,
+            inputs=["worker results"],
+            outputs=["compatibility notes"],
+            acceptance_criteria=["Compatibility risks are listed"],
+            risk_level="low",
+            parallelizable=True,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy="retry",
+            provider_hint=_flow_provider(flow, 1, fallback="codex"),
+            depends_on=[base_units[1].id],
+        )
+        selected_units = base_units + [compatibility]
+        shape = f"{shape}_plus_compatibility"
+
+    return DecompositionCandidate(
+        name="legacy_team_pipeline",
+        strategy=shape,
+        rationale=[
+            "The current control-plane decomposition expands a fixed contract -> execute -> review pipeline.",
+            "Topology depth and parallelism trim or extend the fixed pipeline shape.",
+        ],
+        work_units=selected_units,
+        score=len(selected_units),
+        selected=True,
+        graph_metadata={
+            "task_type": contract.task_type,
+            "topology_depth": policy.topology_depth,
+            "parallelism": policy.parallelism,
+            "shape": shape,
+        },
+    )
+
+
+def _build_decomposition_candidates(contract: TaskContract, policy: PolicyProfile) -> list[DecompositionCandidate]:
+    primary = _build_legacy_decomposition_candidate(contract, policy)
+    if not policy.agent_enabled or policy.topology_depth == 0:
+        return [primary]
+    trimmed_units = primary.work_units[:-1] if len(primary.work_units) > 2 else list(primary.work_units)
+    trimmed = DecompositionCandidate(
+        name=f"{primary.name}_trimmed",
+        strategy="risk_trimmed_pipeline",
+        rationale=[
+            "A leaner candidate trims later-stage validation to reduce coordination cost.",
+            "This candidate is useful for lower-risk or speed-leaning scenarios.",
+        ],
+        work_units=trimmed_units,
+        score=0,
+        selected=False,
+        graph_metadata={**primary.graph_metadata, "shape": f"{primary.graph_metadata.get('shape', 'pipeline')}_trimmed"},
+    )
+    return [primary, trimmed]
+
+
+def _select_decomposition_candidate(
+    candidates: list[DecompositionCandidate],
+    contract: TaskContract,
+    policy: PolicyProfile,
+) -> list[DecompositionCandidate]:
+    scored = []
+    best_score: int | None = None
+    best_index = 0
+    for index, candidate in enumerate(candidates):
+        score = _score_decomposition_candidate(candidate, contract, policy)
+        candidate.score = score
+        candidate.selected = False
+        scored.append(candidate)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_index = index
+    scored[best_index].selected = True
+    return scored
+
+
+def _score_decomposition_candidate(
+    candidate: DecompositionCandidate,
+    contract: TaskContract,
+    policy: PolicyProfile,
+) -> int:
+    score = 0
+    work_unit_count = len(candidate.work_units)
+    score += work_unit_count * 5
+    if any("review summary" in unit.outputs for unit in candidate.work_units):
+        score += 8
+    if any(unit.depends_on for unit in candidate.work_units):
+        score += 4
+    if contract.risk_level == "high":
+        score += work_unit_count * 3
+        if any("rollback" in " ".join(unit.outputs).lower() for unit in candidate.work_units):
+            score += 10
+    elif contract.risk_level == "low":
+        score -= max(0, work_unit_count - 2) * 2
+    if contract.task_type == "migration" and any("rollback" in " ".join(unit.outputs).lower() for unit in candidate.work_units):
+        score += 12
+    if contract.task_type == "investigation" and any("findings" in unit.outputs for unit in candidate.work_units):
+        score += 6
+    if policy.parallelism == "aggressive" and work_unit_count > 2:
+        score += 2
+    if candidate.strategy == "risk_trimmed_pipeline":
+        score -= 4
+    return score
+
+
+def _build_task_type_template_units(
+    contract: TaskContract,
+    policy: PolicyProfile,
+    *,
+    context: str,
+    structured_inputs: list[str],
+    implementation_outputs: list[str],
+) -> tuple[list[WorkUnit], str]:
+    if contract.task_type == "investigation":
+        return _build_investigation_template_units(contract, policy, context=context, structured_inputs=structured_inputs), "investigation_pipeline"
+    if contract.task_type == "migration":
+        return _build_migration_template_units(contract, policy, context=context, structured_inputs=structured_inputs, implementation_outputs=implementation_outputs), "migration_pipeline"
+    if contract.task_type == "docs":
+        return _build_docs_template_units(contract, policy, context=context, structured_inputs=structured_inputs, implementation_outputs=implementation_outputs), "docs_pipeline"
+    return _build_general_template_units(contract, policy, context=context, structured_inputs=structured_inputs, implementation_outputs=implementation_outputs), "general_pipeline"
+
+
+def _build_general_template_units(
+    contract: TaskContract,
+    policy: PolicyProfile,
+    *,
+    context: str,
+    structured_inputs: list[str],
+    implementation_outputs: list[str],
+) -> list[WorkUnit]:
+    flow = policy.provider_flow
+    base_units = [
+        WorkUnit(
+            goal="Define task contract and acceptance criteria",
+            context=context,
+            inputs=structured_inputs,
+            outputs=["contract"],
+            acceptance_criteria=["Contract has goal, constraints, and acceptance criteria"],
+            risk_level="medium",
+            parallelizable=True,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy=contract.failure_policy,
+            provider_hint=_flow_provider(flow, 0, fallback="claude"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Implement the constrained change set",
+            context=context,
+            inputs=["task contract", *structured_inputs],
+            outputs=implementation_outputs,
+            acceptance_criteria=_build_team_execution_acceptance(contract),
+            risk_level=contract.risk_level,
+            parallelizable=True,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy=contract.failure_policy,
+            provider_hint=_flow_provider(flow, 1, fallback="codex"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Validate merge readiness",
+            context=context,
+            inputs=["worker results", *[f"risk_signal: {item}" for item in contract.risk_signals]],
+            outputs=["review summary"],
+            acceptance_criteria=["Review determines whether output is acceptable"],
+            risk_level="high" if policy.review_required is True else "medium",
+            parallelizable=False,
+            owner_type="claude_team",
+            max_depth=contract.max_depth,
+            failure_policy="rescue",
+            provider_hint=_flow_provider(flow, 2, fallback="claude"),
+            depends_on=[],
+        ),
+    ]
+    base_units[1].depends_on = [base_units[0].id]
+    base_units[2].depends_on = [base_units[1].id]
+    return base_units
+
+
+def _build_investigation_template_units(
+    contract: TaskContract,
+    policy: PolicyProfile,
+    *,
+    context: str,
+    structured_inputs: list[str],
+) -> list[WorkUnit]:
+    flow = policy.provider_flow
+    base_units = [
+        WorkUnit(
+            goal="Trace the issue scope and collect evidence",
+            context=context,
+            inputs=structured_inputs,
+            outputs=["evidence notes", "scope notes"],
+            acceptance_criteria=["Collected evidence is relevant to the reported issue"],
+            risk_level=contract.risk_level,
+            parallelizable=True,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy=contract.failure_policy,
+            provider_hint=_flow_provider(flow, 0, fallback="claude"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Synthesize investigation findings and recommendation",
+            context=context,
+            inputs=["evidence notes", *structured_inputs],
+            outputs=["analysis note", "findings", "recommendation"],
+            acceptance_criteria=_build_team_execution_acceptance(contract),
+            risk_level=contract.risk_level,
+            parallelizable=False,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy=contract.failure_policy,
+            provider_hint=_flow_provider(flow, 1, fallback="codex"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Validate investigation completeness",
+            context=context,
+            inputs=["findings", "recommendation"],
+            outputs=["review summary"],
+            acceptance_criteria=["Review confirms the findings are actionable and bounded by evidence"],
+            risk_level="medium",
+            parallelizable=False,
+            owner_type="claude_team",
+            max_depth=contract.max_depth,
+            failure_policy="rescue",
+            provider_hint=_flow_provider(flow, 2, fallback="claude"),
+            depends_on=[],
+        ),
+    ]
+    base_units[1].depends_on = [base_units[0].id]
+    base_units[2].depends_on = [base_units[1].id]
+    return base_units
+
+
+def _build_migration_template_units(
+    contract: TaskContract,
+    policy: PolicyProfile,
+    *,
+    context: str,
+    structured_inputs: list[str],
+    implementation_outputs: list[str],
+) -> list[WorkUnit]:
+    flow = policy.provider_flow
+    base_units = [
+        WorkUnit(
+            goal="Plan the migration scope and safety checks",
+            context=context,
+            inputs=structured_inputs,
+            outputs=["migration plan", "validation checklist"],
+            acceptance_criteria=["Migration plan identifies scope, safety checks, and validation guardrails"],
+            risk_level="high",
+            parallelizable=False,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy=contract.failure_policy,
+            provider_hint=_flow_provider(flow, 0, fallback="claude"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Implement the migration change set",
+            context=context,
+            inputs=["migration plan", *structured_inputs],
+            outputs=implementation_outputs,
+            acceptance_criteria=_build_team_execution_acceptance(contract),
+            risk_level=contract.risk_level,
+            parallelizable=False,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy=contract.failure_policy,
+            provider_hint=_flow_provider(flow, 1, fallback="codex"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Validate rollback and compatibility safeguards",
+            context=context,
+            inputs=["migration plan", "worker results"],
+            outputs=["rollback notes", "compatibility notes"],
+            acceptance_criteria=["Rollback path and compatibility risks are explicitly documented"],
+            risk_level="high",
+            parallelizable=False,
+            owner_type="claude_team",
+            max_depth=contract.max_depth,
+            failure_policy="rescue",
+            provider_hint=_flow_provider(flow, 2, fallback="claude"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Validate merge readiness",
+            context=context,
+            inputs=["rollback notes", "compatibility notes"],
+            outputs=["review summary"],
+            acceptance_criteria=["Review determines whether migration output is acceptable"],
+            risk_level="high",
+            parallelizable=False,
+            owner_type="claude_team",
+            max_depth=contract.max_depth,
+            failure_policy="rescue",
+            provider_hint=_flow_provider(flow, 2, fallback="claude"),
+            depends_on=[],
+        ),
+    ]
+    base_units[1].depends_on = [base_units[0].id]
+    base_units[2].depends_on = [base_units[1].id]
+    base_units[3].depends_on = [base_units[2].id]
+    return base_units
+
+
+def _build_docs_template_units(
+    contract: TaskContract,
+    policy: PolicyProfile,
+    *,
+    context: str,
+    structured_inputs: list[str],
+    implementation_outputs: list[str],
+) -> list[WorkUnit]:
+    flow = policy.provider_flow
+    base_units = [
+        WorkUnit(
+            goal="Inspect the current behavior and source references",
+            context=context,
+            inputs=structured_inputs,
+            outputs=["source notes"],
+            acceptance_criteria=["Source notes identify the behavior the documentation must describe"],
+            risk_level=contract.risk_level,
+            parallelizable=True,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy=contract.failure_policy,
+            provider_hint=_flow_provider(flow, 0, fallback="claude"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Draft the requested documentation update",
+            context=context,
+            inputs=["source notes", *structured_inputs],
+            outputs=implementation_outputs,
+            acceptance_criteria=_build_team_execution_acceptance(contract),
+            risk_level=contract.risk_level,
+            parallelizable=True,
+            owner_type="codex_swarm",
+            max_depth=contract.max_depth,
+            failure_policy=contract.failure_policy,
+            provider_hint=_flow_provider(flow, 1, fallback="codex"),
+            depends_on=[],
+        ),
+        WorkUnit(
+            goal="Validate documentation consistency",
+            context=context,
+            inputs=["docs patch", "validation notes"],
+            outputs=["review summary"],
+            acceptance_criteria=["Review confirms the documentation matches the referenced behavior"],
+            risk_level="medium",
+            parallelizable=False,
+            owner_type="claude_team",
+            max_depth=contract.max_depth,
+            failure_policy="rescue",
+            provider_hint=_flow_provider(flow, 2, fallback="claude"),
+            depends_on=[],
+        ),
+    ]
+    base_units[1].depends_on = [base_units[0].id]
+    base_units[2].depends_on = [base_units[1].id]
+    return base_units
+
+
+def _extract_explicit_paths(requirement: str) -> list[str]:
+    return _dedupe_preserve_order(re.findall(r"\b[\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|yml|yaml)\b", requirement))
+
+
+def _extract_explicit_symbols(requirement: str) -> list[str]:
+    symbols = re.findall(r"\b[A-Za-z_][\w]*\.[A-Za-z_][\w]*\b", requirement)
+    backticked = re.findall(r"`([^`]+)`", requirement)
+    return _dedupe_preserve_order(symbols + [item for item in backticked if "." in item or "_" in item])
+
+
+def _extract_explicit_constraints(requirement: str) -> list[str]:
+    constraints: list[str] = []
+    for sentence in _split_requirement(requirement):
+        lowered = sentence.lower()
+        if lowered.startswith("only ") or lowered.startswith("must ") or "without " in lowered:
+            constraints.append(_normalize_sentence_case(sentence))
+    return _dedupe_preserve_order(constraints)
+
+
+def _extract_explicit_non_goals(requirement: str) -> list[str]:
+    non_goals: list[str] = []
+    for sentence in _split_requirement(requirement):
+        lowered = sentence.lower()
+        if lowered.startswith("do not ") or "don't " in lowered:
+            non_goals.append(_normalize_sentence_case(sentence))
+        for pattern in (r"(without changing [^.;]+)", r"(without breaking [^.;]+)"):
+            match = re.search(pattern, sentence, flags=re.IGNORECASE)
+            if match:
+                non_goals.append(_normalize_sentence_case(match.group(1)))
+    return _dedupe_preserve_order(non_goals)
+
+
+def _extract_artifact_hints(requirement: str) -> list[str]:
+    lowered = requirement.lower()
+    hints: list[str] = []
+    artifact_tokens = {
+        r"\btest\b": "tests",
+        r"\btests\b": "tests",
+        r"\bdoc\b": "docs patch",
+        r"\bdocs\b": "docs patch",
+        r"\bplan\b": "migration plan",
+        r"\bsummary\b": "analysis note",
+        r"\banalysis\b": "analysis note",
+    }
+    for pattern, hint in artifact_tokens.items():
+        if re.search(pattern, lowered):
+            hints.append(hint)
+    return _dedupe_preserve_order(hints)
+
+
+def _infer_risk_signals_from_rules(requirement: str) -> list[str]:
+    lowered = requirement.lower()
+    signals: list[str] = []
+    risk_map = {
+        "migration": "Touches migration behavior",
+        "security": "Touches security-sensitive behavior",
+        "payment": "Touches payment behavior",
+        "auth": "Touches authentication behavior",
+        "login": "Touches authentication behavior",
+        "parallel": "Introduces parallel execution behavior",
+        "integration": "Touches integration boundaries",
+        "refactor": "May shift existing implementation boundaries",
+    }
+    for token, signal in risk_map.items():
+        if token in lowered:
+            signals.append(signal)
+    return _dedupe_preserve_order(signals)
+
+
+def _infer_task_hints(requirement: str) -> list[str]:
+    lowered = requirement.lower()
+    hints: list[str] = []
+    keyword_map = {
+        "bugfix": ["fix", "bug", "issue"],
+        "feature": ["build", "add", "implement", "create"],
+        "refactor": ["refactor", "cleanup", "restructure"],
+        "migration": ["migrate", "migration"],
+        "investigation": ["investigate", "analyze", "diagnose", "root cause", "summarize"],
+        "docs": ["document", "docs", "readme"],
+        "test_only": ["test only", "tests only", "add tests"],
+    }
+    for hint, tokens in keyword_map.items():
+        if any(token in lowered for token in tokens):
+            hints.append(hint)
+    return _dedupe_preserve_order(hints)
+
+
+def _infer_task_type_from_rules(signals: ExtractedSignals) -> str:
+    ordered = ["migration", "investigation", "refactor", "docs", "test_only", "bugfix", "feature"]
+    for candidate in ordered:
+        if candidate in signals.task_hints:
+            return candidate
+    return "implementation"
+
+
+def _normalize_task_type(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    normalized = TASK_TYPE_ALIASES.get(normalized, normalized)
+    if normalized in VALID_TASK_TYPES:
+        return normalized
+    return None
+
+
+def _normalize_expected_artifacts(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        mapped = ARTIFACT_ALIASES.get(cleaned.lower(), cleaned.lower())
+        normalized.append(mapped)
+    return _dedupe_preserve_order(normalized)
+
+
+def _infer_expected_artifacts_from_rules(task_type: str, artifact_hints: list[str]) -> list[str]:
+    defaults = {
+        "bugfix": ["patch", "tests", "validation notes"],
+        "feature": ["patch", "tests", "validation notes"],
+        "refactor": ["patch", "tests", "validation notes"],
+        "migration": ["migration plan", "patch", "rollback notes"],
+        "investigation": ["analysis note", "findings", "recommendation"],
+        "docs": ["docs patch", "validation notes"],
+        "test_only": ["tests", "validation notes"],
+        "implementation": ["task tree", "worker results", "review summary"],
+    }
+    return _dedupe_preserve_order([*defaults.get(task_type, defaults["implementation"]), *artifact_hints])
+
+
+def _build_acceptance_criteria(task_type: str) -> list[str]:
+    if task_type == "investigation":
+        return [
+            "Findings describe the observed issue and likely root cause",
+            "Recommendation explains the next action without speculative code changes",
+            "Validation notes reference the evidence used for the conclusion",
+        ]
+    if task_type == "migration":
+        return [
+            "Migration work is represented as executable work units",
+            "Plan includes validation or rollback guidance",
+            "Failures are routed according to policy",
+        ]
+    return [
+        "Requirement is represented as executable work units",
+        "Worker results include tests or validation notes",
+        "Failures are routed according to policy",
+    ]
+
+
+def _build_decomposition_context(contract: TaskContract) -> str:
+    details: list[str] = [contract.context, contract.goal]
+    if contract.task_type:
+        details.append(f"Task type: {contract.task_type}.")
+    if contract.target_scope:
+        details.append(f"Target scope: {', '.join(contract.target_scope)}.")
+    if contract.constraints:
+        details.append(f"Constraints: {'; '.join(contract.constraints)}.")
+    if contract.non_goals:
+        details.append(f"Non-goals: {'; '.join(contract.non_goals)}.")
+    return " ".join(detail for detail in details if detail)
+
+
+def _build_decomposition_inputs(contract: TaskContract) -> list[str]:
+    inputs = list(contract.inputs)
+    inputs.extend(f"constraint: {item}" for item in contract.constraints)
+    inputs.extend(f"scope: {item}" for item in contract.target_scope)
+    inputs.extend(f"non_goal: {item}" for item in contract.non_goals)
+    inputs.extend(f"artifact: {item}" for item in contract.expected_artifacts)
+    return _dedupe_preserve_order(inputs)
+
+
+def _build_direct_execution_goal(contract: TaskContract) -> str:
+    if contract.task_type == "investigation":
+        return "Investigate the requested issue directly and summarize findings"
+    if contract.task_type == "migration":
+        return "Execute the migration path directly with rollback awareness"
+    return "Execute the requested change directly"
+
+
+def _build_direct_execution_acceptance(contract: TaskContract) -> list[str]:
+    if contract.acceptance_criteria:
+        return list(contract.acceptance_criteria)
+    return ["Direct execution completes without agent delegation"]
+
+
+def _build_team_execution_goal(contract: TaskContract) -> str:
+    if contract.task_type == "investigation":
+        return "Investigate the issue and produce structured findings"
+    if contract.task_type == "migration":
+        return "Implement the migration path and capture rollback guidance"
+    if contract.task_type == "docs":
+        return "Update the requested documentation deliverables"
+    return "Implement worker execution path"
+
+
+def _build_team_execution_acceptance(contract: TaskContract) -> list[str]:
+    if contract.acceptance_criteria:
+        return list(contract.acceptance_criteria)
+    return ["Worker returns a structured result"]
+
+
+def _build_user_intent_summary(requirement: str, task_type: str) -> str:
+    lowered = requirement.lower()
+    if task_type == "investigation":
+        return "Investigate the reported issue and summarize the most likely root cause."
+    if task_type == "migration":
+        return "Plan and implement the requested migration with explicit validation safeguards."
+    if task_type == "refactor":
+        return "Refine the targeted implementation into a cleaner, more structured change."
+    if task_type == "docs":
+        return "Update the requested documentation to reflect the intended behavior."
+    if task_type == "test_only":
+        return "Add or adjust tests to cover the requested behavior."
+    if task_type == "bugfix":
+        return "Fix the reported issue without regressing adjacent behavior."
+    if task_type == "feature":
+        return "Implement the requested feature change and validate the result."
+    if lowered == "clarify and implement the requested change":
+        return "Clarify and implement the requested change."
+    return requirement
+
+
+def _collapse_risk_level(risk_signals: list[str]) -> RiskLevel:
+    joined = " ".join(risk_signals).lower()
+    if any(token in joined for token in ["migration", "security", "payment", "authentication"]):
         return "high"
-    if any(token in lowered for token in ["refactor", "integration", "parallel"]):
+    if any(token in joined for token in ["parallel", "integration", "boundary", "refactor"]):
         return "medium"
     return "low"
+
+
+def _looks_ambiguous(requirement: str) -> bool:
+    lowered = requirement.lower()
+    ambiguous_tokens = ["this", "that", "something", "look into", "maybe", "if needed", "as needed"]
+    if len(lowered.split()) <= 8:
+        return True
+    return any(token in lowered for token in ambiguous_tokens)
+
+
+def _default_openai_compatible_transport(
+    request_url: str,
+    payload: dict[str, object],
+    headers: dict[str, str],
+    timeout_seconds: int,
+) -> dict[str, object]:
+    body = json.dumps(payload).encode("utf-8")
+    req = urlrequest.Request(request_url, data=body, headers=headers, method="POST")
+    try:
+        with urlrequest.urlopen(req, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8")
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"http {exc.code}: {detail}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(str(exc.reason) or "request failed") from exc
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise RuntimeError("non-object response payload")
+    return data
+
+
+def _load_project_env_file(project_root: Path | None = None) -> dict[str, str]:
+    root = project_root or Path.cwd()
+    for candidate in (root / ".env.local", root / ".env"):
+        values = _parse_simple_env_file(candidate)
+        if values:
+            return values
+    return {}
+
+
+def _parse_simple_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return {}
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key:
+            values[key] = value
+    return values
+
+
+def _extract_openai_message_content(payload: dict[str, object]) -> str:
+    choices = payload.get("choices", [])
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message", {})
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                text_parts.append(str(item["text"]))
+        return "\n".join(text_parts)
+    return ""
+
+
+def _split_requirement(requirement: str) -> list[str]:
+    return [segment.strip(" ;,.") for segment in re.split(r";|\n|(?<=[a-z])\.\s+", requirement) if segment.strip(" ;,.")]
+
+
+def _normalize_sentence_case(sentence: str) -> str:
+    normalized = sentence.strip(" ;,.")
+    if not normalized:
+        return normalized
+    return normalized[0].upper() + normalized[1:]
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in items:
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
 
 
 def _should_review(work_unit: WorkUnit, policy: PolicyProfile) -> bool:

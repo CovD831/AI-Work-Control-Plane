@@ -153,6 +153,29 @@ def test_print_run_summary_reports_partial_rescue_without_reroute(capsys) -> Non
     assert "rerouted:" not in out
 
 
+def test_print_run_summary_reports_clarify_summary(capsys) -> None:
+    run = Orchestrator().run("Look into this and tell me what is wrong.", OrchestrationMode.COST_FIRST)
+
+    _print_run_summary(run)
+    out = capsys.readouterr().out
+
+    assert "clarify: " in out
+    assert "task_type=implementation" in out
+    assert "unknown_slots=task_type,target_scope,user_intent_summary" in out
+
+
+def test_print_run_summary_reports_decomposition_summary(capsys) -> None:
+    run = Orchestrator().run("Refactor auth integration safely.", OrchestrationMode.SUCCESS_FIRST)
+
+    _print_run_summary(run)
+    out = capsys.readouterr().out
+
+    assert "decompose: " in out
+    assert "selected=general_pipeline" in out
+    assert "candidate_count=2" in out
+    assert "rejected=risk_trimmed_pipeline" in out
+
+
 def test_run_to_dict_preserves_reroute_history() -> None:
     run = Orchestrator().run("Fail the auth migration", OrchestrationMode.SPEED_FIRST)
     payload = run.to_dict()

@@ -873,6 +873,50 @@ def _print_run_summary(run: object) -> None:
             f"source={execution_contract.get('source', 'unknown')} "
             f"goal={execution_contract.get('goal', 'unknown')}"
         )
+        clarify_summary = execution_contract.get("clarify_summary", {})
+        if isinstance(clarify_summary, dict) and clarify_summary:
+            print(_format_clarify_summary_line(clarify_summary))
+        decomposition_summary = execution_contract.get("decomposition_summary", {})
+        if isinstance(decomposition_summary, dict) and decomposition_summary:
+            print(_format_decomposition_summary_line(decomposition_summary))
+
+
+def _format_clarify_summary_line(summary: dict[str, object]) -> str:
+    task_type = summary.get("task_type", "unknown")
+    slot_sources = summary.get("slot_sources", {})
+    slot_source_text = (
+        ",".join(f"{key}={value}" for key, value in sorted(slot_sources.items()))
+        if isinstance(slot_sources, dict) and slot_sources
+        else "none"
+    )
+    unknown_slots = summary.get("unknown_slots", [])
+    unknown_text = ",".join(str(item) for item in unknown_slots) if isinstance(unknown_slots, list) and unknown_slots else "none"
+    warnings = summary.get("slot_fill_warnings", [])
+    warning_text = "; ".join(str(item) for item in warnings) if isinstance(warnings, list) and warnings else "none"
+    return (
+        "clarify: "
+        f"task_type={task_type} "
+        f"slot_sources={slot_source_text} "
+        f"unknown_slots={unknown_text} "
+        f"warnings={warning_text}"
+    )
+
+
+def _format_decomposition_summary_line(summary: dict[str, object]) -> str:
+    strategy = summary.get("selected_strategy", "unknown")
+    shape = summary.get("selected_shape", "unknown")
+    score = summary.get("selected_score", "unknown")
+    candidate_count = summary.get("candidate_count", 0)
+    rejected = summary.get("rejected_strategies", [])
+    rejected_text = ",".join(str(item) for item in rejected) if isinstance(rejected, list) and rejected else "none"
+    return (
+        "decompose: "
+        f"selected={strategy} "
+        f"shape={shape} "
+        f"score={score} "
+        f"candidate_count={candidate_count} "
+        f"rejected={rejected_text}"
+    )
 
 
 def _parse_agent_flag(value: str | None) -> bool | None:

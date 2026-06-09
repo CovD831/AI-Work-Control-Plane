@@ -333,6 +333,19 @@ def test_print_execution_session_summary_reports_structured_fields(capsys) -> No
                 "goal": "Ship dashboard",
                 "selected_topology": "team",
                 "selected_provider_runtime": {"provider": "codex", "runtime": "command"},
+                "clarify_summary": {
+                    "task_type": "investigation",
+                    "slot_sources": {"task_type": "llm", "goal": "rule"},
+                    "unknown_slots": ["target_scope", "risk_signals"],
+                    "slot_fill_warnings": ["slot_fill_response_partial"],
+                },
+                "decomposition_summary": {
+                    "selected_strategy": "migration_pipeline",
+                    "selected_shape": "migration_pipeline",
+                    "selected_score": 42,
+                    "candidate_count": 2,
+                    "rejected_strategies": ["risk_trimmed_pipeline"],
+                },
                 "execution_context_policy": {
                     "policy": "resume_if_same_task",
                     "resume_target": "run-456",
@@ -358,6 +371,8 @@ def test_print_execution_session_summary_reports_structured_fields(capsys) -> No
     assert "goal: Ship dashboard" in out
     assert "selected_topology: team" in out
     assert 'selected_provider_runtime: {"provider": "codex", "runtime": "command"}' in out
+    assert "clarify: task_type=investigation slot_sources=goal=rule,task_type=llm unknown_slots=target_scope,risk_signals warnings=slot_fill_response_partial" in out
+    assert "decompose: selected=migration_pipeline shape=migration_pipeline score=42 candidate_count=2 rejected=risk_trimmed_pipeline" in out
     assert "execution_context_policy: policy=resume_if_same_task resume_target=run-456 stop_reason=execution_completed" in out
     assert "blocking: migration check pending" in out
     assert "warnings: header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value" in out

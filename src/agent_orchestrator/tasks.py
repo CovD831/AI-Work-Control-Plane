@@ -180,6 +180,17 @@ class TaskContract:
     owner_type: OwnerType
     max_depth: int
     failure_policy: FailurePolicy
+    task_type: str = "implementation"
+    constraints: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+    target_scope: list[str] = field(default_factory=list)
+    expected_artifacts: list[str] = field(default_factory=list)
+    risk_signals: list[str] = field(default_factory=list)
+    user_intent_summary: str = ""
+    raw_requirement: str = ""
+    slot_sources: dict[str, str] = field(default_factory=dict)
+    unknown_slots: list[str] = field(default_factory=list)
+    slot_fill_warnings: list[str] = field(default_factory=list)
     dependencies: list[dict[str, object]] = field(default_factory=list)
     id: str = field(default_factory=lambda: _new_id("task"))
 
@@ -197,6 +208,17 @@ class TaskContract:
             "owner_type": self.owner_type,
             "max_depth": self.max_depth,
             "failure_policy": self.failure_policy,
+            "task_type": self.task_type,
+            "constraints": self.constraints,
+            "assumptions": self.assumptions,
+            "target_scope": self.target_scope,
+            "expected_artifacts": self.expected_artifacts,
+            "risk_signals": self.risk_signals,
+            "user_intent_summary": self.user_intent_summary,
+            "raw_requirement": self.raw_requirement,
+            "slot_sources": self.slot_sources,
+            "unknown_slots": self.unknown_slots,
+            "slot_fill_warnings": self.slot_fill_warnings,
             "dependencies": self.dependencies,
         }
 
@@ -214,6 +236,17 @@ class TaskContract:
             owner_type=data["owner_type"],
             max_depth=int(data["max_depth"]),
             failure_policy=data["failure_policy"],
+            task_type=str(data.get("task_type", "implementation")),
+            constraints=list(data.get("constraints", [])),
+            assumptions=list(data.get("assumptions", [])),
+            target_scope=list(data.get("target_scope", [])),
+            expected_artifacts=list(data.get("expected_artifacts", [])),
+            risk_signals=list(data.get("risk_signals", [])),
+            user_intent_summary=str(data.get("user_intent_summary", "")),
+            raw_requirement=str(data.get("raw_requirement", "")),
+            slot_sources=dict(data.get("slot_sources", {})),
+            unknown_slots=list(data.get("unknown_slots", [])),
+            slot_fill_warnings=list(data.get("slot_fill_warnings", [])),
             dependencies=list(data.get("dependencies", [])),
             id=str(data["id"]),
         )

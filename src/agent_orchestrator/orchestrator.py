@@ -344,6 +344,11 @@ class Orchestrator:
             state.transition("clarified")
 
             work_units = self.decomposer.decompose(contract, policy)
+            decomposition_candidates = [
+                candidate.to_dict()
+                for candidate in getattr(self.decomposer, "last_candidates", [])
+                if hasattr(candidate, "to_dict")
+            ]
             attempt_events.record("work_units_created", count=len(work_units), parallelism=policy.parallelism)
             state.transition("decomposed")
 
@@ -543,6 +548,7 @@ class Orchestrator:
                 routing_decision=routing_decision,
                 review_policy_override=review_policy_override,
                 provider_health_snapshot=provider_health_snapshot,
+                decomposition_candidates=decomposition_candidates,
             ),
         )
 
@@ -574,6 +580,7 @@ class Orchestrator:
                 policy_mode=run.final_mode.value,
                 contract=run.contract,
                 work_units=run.work_units,
+                decomposition_candidates=[],
                 runtime_recommendation=_direct_runtime_recommendation(worker=self.worker, reviewer=self.reviewer),
                 review_policy_override=_metadata_review_policy_override(metadata),
             ),
@@ -960,6 +967,7 @@ def _build_execution_contract_payload(
     policy_mode: str,
     contract: TaskContract | None,
     work_units: list[WorkUnit],
+    decomposition_candidates: list[dict[str, object]] | None = None,
     runtime_recommendation: dict[str, object] | None = None,
     review_policy_override: str | None = None,
 ) -> dict[str, object]:
@@ -1020,9 +1028,36 @@ def _build_execution_contract_payload(
                 "warning_count": 0,
                 "source": "direct_run",
             },
+            "clarify_summary": _clarify_summary_payload(contract),
+            "decomposition_summary": _decomposition_summary_payload(decomposition_candidates),
         }
     )
     return execution_contract
+
+
+def _clarify_summary_payload(contract: TaskContract | None) -> dict[str, object]:
+    if contract is None:
+        return {}
+    return {
+        "task_type": contract.task_type,
+        "slot_sources": dict(contract.slot_sources),
+        "unknown_slots": list(contract.unknown_slots),
+        "slot_fill_warnings": list(contract.slot_fill_warnings),
+    }
+
+
+def _decomposition_summary_payload(candidates: list[dict[str, object]] | None) -> dict[str, object]:
+    if not candidates:
+        return {}
+    selected = next((candidate for candidate in candidates if candidate.get("selected")), None)
+    rejected = [candidate for candidate in candidates if not candidate.get("selected")]
+    return {
+        "selected_strategy": selected.get("strategy") if isinstance(selected, dict) else None,
+        "selected_score": selected.get("score") if isinstance(selected, dict) else None,
+        "selected_shape": selected.get("graph_metadata", {}).get("shape") if isinstance(selected, dict) and isinstance(selected.get("graph_metadata"), dict) else None,
+        "candidate_count": len(candidates),
+        "rejected_strategies": [candidate.get("strategy") for candidate in rejected if isinstance(candidate, dict)],
+    }
 
 
 def _direct_review_policy_payload(
@@ -1128,12 +1163,14 @@ def _build_run_metadata(
     routing_decision: RoutingDecision | None,
     review_policy_override: str | None = None,
     provider_health_snapshot: dict[str, object] | None = None,
+    decomposition_candidates: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     execution_contract = _build_execution_contract_payload(
         requirement=requirement,
         policy_mode=mode,
         contract=contract,
         work_units=work_units,
+        decomposition_candidates=decomposition_candidates,
         runtime_recommendation=_direct_runtime_recommendation(worker=worker, reviewer=reviewer),
         review_policy_override=review_policy_override,
     )
