@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agent_orchestrator.planning_governance import get_governance_status
+
 
 @dataclass(frozen=True, slots=True)
 class TeamAction:
@@ -59,7 +61,7 @@ ACTION_LABELS = {
 
 def build_session_actions(session_payload: dict[str, object]) -> list[dict[str, object]]:
     status = str(session_payload.get("status") or "unknown")
-    summary = session_payload.get("status_summary", {}) if isinstance(session_payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(session_payload)
     primary_action = str(summary.get("primary_action") or "")
     recovery_actions = [str(item) for item in summary.get("recovery_actions", [])] if isinstance(summary.get("recovery_actions"), list) else []
     recommended_commands = [str(item) for item in summary.get("recommended_commands", [])] if isinstance(summary.get("recommended_commands"), list) else []
@@ -90,7 +92,7 @@ def build_session_actions(session_payload: dict[str, object]) -> list[dict[str, 
 
 
 def primary_action_from_registry(session_payload: dict[str, object]) -> dict[str, object]:
-    summary = session_payload.get("status_summary", {}) if isinstance(session_payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(session_payload)
     primary = str(summary.get("primary_action") or "inspect_session")
     actions = build_session_actions(session_payload)
     enabled_actions = [action for action in actions if action.get("enabled")]
@@ -125,7 +127,7 @@ def _allowed_actions_for_status(status: str, primary_action: str, recovery_actio
     if status == "draft_ready":
         allowed.update({"lead_chat", "submit_review"})
     if status == "awaiting_human_confirmation":
-        allowed.update({"lead_chat"})
+        allowed.update({"lead_chat", "approve"})
         if primary_action == "approve":
             allowed.add("approve")
         else:

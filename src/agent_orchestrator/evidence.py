@@ -425,7 +425,11 @@ def _capture_case(
             execution_payload = team_orchestrator.run_store.read(executed.resume.linked_execution_run_id)
 
     team_session = executed or session
-    team_summary = team_session.to_dict()["status_summary"]
+    team_payload = team_session.to_dict()
+    governance = team_payload.get("governance_snapshot", {}) if isinstance(team_payload.get("governance_snapshot"), dict) else {}
+    team_summary = governance.get("governance_status", {}) if isinstance(governance.get("governance_status"), dict) else {}
+    if not team_summary:
+        team_summary = team_payload.get("status_summary", {})
     approved_plan = team_session.approved_plan if isinstance(team_session.approved_plan, dict) else {}
     selected_provider_runtime = (
         team_session.decision_verdict.selected_provider_runtime
@@ -769,6 +773,7 @@ def _team_advantages(
         advantages.append("execution_provenance")
     if status_summary.get("recommended_commands"):
         advantages.append("recovery_guidance")
+        advantages.append("recovery_guidance_present")
     if status_summary.get("next_executable_task"):
         advantages.append("task_next_visibility")
     if status_summary.get("approval_state"):
@@ -954,6 +959,7 @@ def _postmortem_signals(
         "matched_expected_signals": matched,
         "matched_expected_signal_count": len(matched),
         "recovery_recommendation_actionable": bool(recovery.get("has_guidance")),
+        "recovery_guidance_present": bool(recovery.get("has_guidance")),
         "compliance_blocking_represented": "compliance_blocking" in expected or doc_sync.get("status") == "blocking",
         "runtime_fidelity_represented": "runtime_fidelity" in expected or bool(runtime_health),
         "interruption_recovery_represented": "interruption_recovery" in expected or bool(recovery.get("resume_action")),
@@ -974,6 +980,8 @@ def _expected_signal_matched(
     status_summary: dict[str, object],
 ) -> bool:
     if signal == "recovery_guidance":
+        return bool(recovery.get("has_guidance"))
+    if signal == "recovery_guidance_present":
         return bool(recovery.get("has_guidance"))
     if signal == "doc_sync":
         return bool(doc_sync.get("present"))

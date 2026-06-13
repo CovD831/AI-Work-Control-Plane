@@ -31,10 +31,45 @@ class ExtractedSignals:
 
 
 @dataclass(slots=True)
-class ContractDraft:
-    raw_requirement: str
+class ClarifySourceFrame:
+    raw_requirement: str = ""
+    normalized_requirement: str = ""
+
+
+@dataclass(slots=True)
+class ClarifyIntentFrame:
     goal: str = ""
-    user_intent_summary: str = ""
+    intent_summary: str = ""
+    task_type: str = "implementation"
+    constraints: list[str] = field(default_factory=list)
+    non_goals: list[str] = field(default_factory=list)
+    target_scope: list[str] = field(default_factory=list)
+    expected_artifacts: list[str] = field(default_factory=list)
+    acceptance_criteria: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ClarifyControlFrame:
+    risk_signals: list[str] = field(default_factory=list)
+    missing_slots: list[str] = field(default_factory=list)
+    uncertain_slots: list[str] = field(default_factory=list)
+    slot_sources: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ClarifyState:
+    source: ClarifySourceFrame
+    intent: ClarifyIntentFrame
+    control: ClarifyControlFrame
+
+
+@dataclass(slots=True)
+class ContractDraft:
+    raw_requirement: str = ""
+    normalized_requirement: str = ""
+    goal: str = ""
+    intent_summary: str = ""
     task_type: str = "implementation"
     constraints: list[str] = field(default_factory=list)
     non_goals: list[str] = field(default_factory=list)
@@ -56,6 +91,9 @@ class DecompositionCandidate:
     work_units: list[WorkUnit]
     score: int = 0
     selected: bool = False
+    score_breakdown: dict[str, int] = field(default_factory=dict)
+    rationale_items: list[str] = field(default_factory=list)
+    explanation_blocks: list[dict[str, object]] = field(default_factory=list)
     graph_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
@@ -66,6 +104,9 @@ class DecompositionCandidate:
             "work_units": [work_unit.to_dict() for work_unit in self.work_units],
             "score": self.score,
             "selected": self.selected,
+            "score_breakdown": dict(self.score_breakdown),
+            "rationale_items": list(self.rationale_items),
+            "explanation_blocks": [dict(block) for block in self.explanation_blocks],
             "graph_metadata": dict(self.graph_metadata),
         }
 
@@ -82,8 +123,74 @@ class DecompositionCandidate:
             ],
             score=int(data.get("score", 0)),
             selected=bool(data.get("selected", False)),
+            score_breakdown={str(key): int(value) for key, value in dict(data.get("score_breakdown", {})).items()},
+            rationale_items=[str(item) for item in data.get("rationale_items", [])],
+            explanation_blocks=[dict(item) for item in data.get("explanation_blocks", []) if isinstance(item, dict)],
             graph_metadata=dict(data.get("graph_metadata", {})),
         )
+
+
+@dataclass(slots=True)
+class DecompositionExplanationBlock:
+    dimension: str
+    points: int
+    reasons: list[str]
+
+
+@dataclass(slots=True)
+class DecompositionSignalFrame:
+    task_family: str
+    execution_shape: str
+    verification_intensity: str
+    coordination_cost: str
+    scope_cardinality: int
+    artifact_count: int
+    risk_signal_count: int
+    dependency_pressure: str
+    rollback_required: bool
+
+
+@dataclass(slots=True)
+class DecompositionStructureProfile:
+    task_family: str
+    execution_shape: str
+    parallelism: str
+    topology_depth: int
+    has_dependencies: bool
+    scope_cardinality: int
+
+
+@dataclass(slots=True)
+class DecompositionSafetyProfile:
+    risk_level: str
+    verification_intensity: str
+    rollback_required: bool
+    risk_signal_count: int
+    review_required: str
+
+
+@dataclass(slots=True)
+class DecompositionCoordinationProfile:
+    coordination_cost: str
+    dependency_pressure: str
+    scope_cardinality: int
+    artifact_count: int
+    has_dependencies: bool
+
+
+@dataclass(slots=True)
+class DecompositionArtifactProfile:
+    artifact_count: int
+    primary_artifacts: list[str] = field(default_factory=list)
+    implementation_outputs: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DecompositionProfile:
+    structure: DecompositionStructureProfile
+    safety: DecompositionSafetyProfile
+    coordination: DecompositionCoordinationProfile
+    artifact: DecompositionArtifactProfile
 
 
 @dataclass(slots=True)
@@ -210,14 +317,16 @@ class MockClaudePlanner:
     def clarify(self, requirement: str, policy: PolicyProfile) -> TaskContract:
         normalized_requirement = _normalize_requirement(requirement)
         signals = _extract_signals(normalized_requirement)
-        draft = _build_contract_draft(signals)
-        draft = _assess_contract_draft(draft, signals)
+        state = _build_clarify_state(signals, normalized_requirement=normalized_requirement)
+        state = _assess_clarify_state(state, signals)
+        draft = _clarify_state_to_draft(state)
         fill_result = SlotFillResult()
-        if self.slot_filler and _needs_slot_fill(draft):
+        if self.slot_filler and _needs_slot_fill(state):
             fill_result = self.slot_filler(draft, policy)
             draft = _merge_slot_fill_result(draft, fill_result)
+            state = _clarify_state_from_draft(draft)
         topology = policy.execution_topology
-        non_goals = list(draft.non_goals)
+        non_goals = list(state.intent.non_goals)
         if not topology.agent_enabled:
             context = "Run through the control plane without spawning agent topology."
             non_goals.append("Do not recurse into agent delegation when agent mode is disabled")
@@ -228,40 +337,40 @@ class MockClaudePlanner:
             )
             non_goals.append("Do not recurse beyond the selected policy depth")
 
-        if draft.target_scope:
-            context = f"{context} Scope hints: {', '.join(draft.target_scope)}."
-        if draft.constraints:
-            context = f"{context} Constraints: {'; '.join(draft.constraints)}."
+        if state.intent.target_scope:
+            context = f"{context} Scope hints: {', '.join(state.intent.target_scope)}."
+        if state.intent.constraints:
+            context = f"{context} Constraints: {'; '.join(state.intent.constraints)}."
 
-        outputs = list(draft.expected_artifacts) if draft.expected_artifacts else ["task tree", "worker results", "review summary"]
-        inputs = [draft.goal]
-        if draft.constraints:
-            inputs.extend(f"constraint: {item}" for item in draft.constraints)
-        if draft.target_scope:
-            inputs.extend(f"scope: {item}" for item in draft.target_scope)
+        outputs = list(state.intent.expected_artifacts) if state.intent.expected_artifacts else ["task tree", "worker results", "review summary"]
+        inputs = [state.intent.goal]
+        if state.intent.constraints:
+            inputs.extend(f"constraint: {item}" for item in state.intent.constraints)
+        if state.intent.target_scope:
+            inputs.extend(f"scope: {item}" for item in state.intent.target_scope)
 
         return TaskContract(
-            goal=draft.goal,
+            goal=state.intent.goal,
             non_goals=_dedupe_preserve_order(non_goals),
             context=context,
             inputs=inputs,
             outputs=outputs,
-            acceptance_criteria=list(draft.acceptance_criteria),
-            risk_level=_collapse_risk_level(draft.risk_signals),
-            parallelizable=draft.task_type not in {"migration", "investigation"},
+            acceptance_criteria=list(state.intent.acceptance_criteria),
+            risk_level=_collapse_risk_level(state.control.risk_signals),
+            parallelizable=state.intent.task_type not in {"migration", "investigation"},
             owner_type="claude_team",
             max_depth=policy.max_depth,
             failure_policy="rescue" if policy.rescue_enabled else "retry",
-            task_type=draft.task_type,
-            constraints=list(draft.constraints),
-            assumptions=list(draft.assumptions),
-            target_scope=list(draft.target_scope),
-            expected_artifacts=list(draft.expected_artifacts),
-            risk_signals=list(draft.risk_signals),
-            user_intent_summary=draft.user_intent_summary,
-            raw_requirement=normalized_requirement,
-            slot_sources=dict(draft.slot_sources),
-            unknown_slots=_dedupe_preserve_order([*draft.missing_slots, *draft.uncertain_slots, *fill_result.unknown_slots]),
+            task_type=state.intent.task_type,
+            constraints=list(state.intent.constraints),
+            assumptions=list(state.intent.assumptions),
+            target_scope=list(state.intent.target_scope),
+            expected_artifacts=list(state.intent.expected_artifacts),
+            risk_signals=list(state.control.risk_signals),
+            user_intent_summary=state.intent.intent_summary,
+            raw_requirement=state.source.normalized_requirement,
+            slot_sources=dict(state.control.slot_sources),
+            unknown_slots=_dedupe_preserve_order([*state.control.missing_slots, *state.control.uncertain_slots, *fill_result.unknown_slots]),
             slot_fill_warnings=list(fill_result.warnings),
         )
 
@@ -463,9 +572,14 @@ def _extract_signals(requirement: str) -> ExtractedSignals:
     )
 
 
-def _build_contract_draft(signals: ExtractedSignals) -> ContractDraft:
+def _build_clarify_state(
+    signals: ExtractedSignals,
+    *,
+    normalized_requirement: str,
+) -> ClarifyState:
     task_type = _infer_task_type_from_rules(signals)
-    goal = signals.raw_requirement
+    raw_requirement = signals.raw_requirement
+    goal = normalized_requirement
     target_scope = _dedupe_preserve_order([*signals.explicit_paths, *signals.explicit_symbols])
     constraints = _dedupe_preserve_order(signals.explicit_constraints)
     non_goals = _dedupe_preserve_order(signals.explicit_non_goals)
@@ -474,11 +588,10 @@ def _build_contract_draft(signals: ExtractedSignals) -> ContractDraft:
     assumptions: list[str] = []
     if not target_scope:
         assumptions.append("Target scope must be inferred from repository context if execution requires file selection.")
-
-    draft = ContractDraft(
-        raw_requirement=signals.raw_requirement,
+    source = ClarifySourceFrame(raw_requirement=raw_requirement, normalized_requirement=normalized_requirement)
+    intent = ClarifyIntentFrame(
         goal=goal,
-        user_intent_summary=_build_user_intent_summary(signals.raw_requirement, task_type),
+        intent_summary=_build_intent_summary(normalized_requirement, task_type),
         task_type=task_type,
         constraints=constraints,
         non_goals=non_goals,
@@ -486,45 +599,91 @@ def _build_contract_draft(signals: ExtractedSignals) -> ContractDraft:
         expected_artifacts=expected_artifacts,
         acceptance_criteria=_build_acceptance_criteria(task_type),
         assumptions=assumptions,
-        risk_signals=risk_signals,
     )
-    draft.slot_sources = {
-        "goal": "rule",
-        "user_intent_summary": "rule",
-        "task_type": "rule",
-        "constraints": "rule" if constraints else "default",
-        "non_goals": "rule" if non_goals else "default",
-        "target_scope": "rule" if target_scope else "default",
-        "expected_artifacts": "rule",
-        "acceptance_criteria": "rule",
-        "assumptions": "rule" if assumptions else "default",
-        "risk_signals": "rule" if risk_signals else "default",
-    }
-    return draft
+    control = ClarifyControlFrame(
+        risk_signals=risk_signals,
+        slot_sources={
+            "goal": "rule",
+            "intent_summary": "rule",
+            "task_type": "rule",
+            "constraints": "rule" if constraints else "default",
+            "non_goals": "rule" if non_goals else "default",
+            "target_scope": "rule" if target_scope else "default",
+            "expected_artifacts": "rule",
+            "acceptance_criteria": "rule",
+            "assumptions": "rule" if assumptions else "default",
+            "risk_signals": "rule" if risk_signals else "default",
+        },
+    )
+    return ClarifyState(source=source, intent=intent, control=control)
 
 
-def _assess_contract_draft(draft: ContractDraft, signals: ExtractedSignals) -> ContractDraft:
-    draft.missing_slots = []
-    draft.uncertain_slots = []
-    if not draft.goal:
-        draft.missing_slots.append("goal")
-    if draft.task_type == "implementation":
-        draft.uncertain_slots.append("task_type")
-    if not draft.target_scope:
-        draft.uncertain_slots.append("target_scope")
-    if not draft.expected_artifacts:
-        draft.missing_slots.append("expected_artifacts")
-    if not draft.acceptance_criteria:
-        draft.missing_slots.append("acceptance_criteria")
+def _assess_clarify_state(state: ClarifyState, signals: ExtractedSignals) -> ClarifyState:
+    state.control.missing_slots = []
+    state.control.uncertain_slots = []
+    if not state.intent.goal:
+        state.control.missing_slots.append("goal")
+    if state.intent.task_type == "implementation":
+        state.control.uncertain_slots.append("task_type")
+    if not state.intent.target_scope:
+        state.control.uncertain_slots.append("target_scope")
+    if not state.intent.expected_artifacts:
+        state.control.missing_slots.append("expected_artifacts")
+    if not state.intent.acceptance_criteria:
+        state.control.missing_slots.append("acceptance_criteria")
     if _looks_ambiguous(signals.raw_requirement):
-        draft.uncertain_slots.append("user_intent_summary")
-    draft.missing_slots = _dedupe_preserve_order(draft.missing_slots)
-    draft.uncertain_slots = _dedupe_preserve_order(draft.uncertain_slots)
+        state.control.uncertain_slots.append("user_intent_summary")
+    state.control.missing_slots = _dedupe_preserve_order(state.control.missing_slots)
+    state.control.uncertain_slots = _dedupe_preserve_order(state.control.uncertain_slots)
+    return state
+
+
+def _needs_slot_fill(state: ClarifyState) -> bool:
+    return bool(state.control.missing_slots or state.control.uncertain_slots)
+
+
+def _clarify_state_to_draft(state: ClarifyState) -> ContractDraft:
+    draft = ContractDraft(
+        raw_requirement=state.source.raw_requirement,
+        normalized_requirement=state.source.normalized_requirement,
+        goal=state.intent.goal,
+        intent_summary=state.intent.intent_summary,
+        task_type=state.intent.task_type,
+        constraints=list(state.intent.constraints),
+        non_goals=list(state.intent.non_goals),
+        target_scope=list(state.intent.target_scope),
+        expected_artifacts=list(state.intent.expected_artifacts),
+        acceptance_criteria=list(state.intent.acceptance_criteria),
+        assumptions=list(state.intent.assumptions),
+        risk_signals=list(state.control.risk_signals),
+    )
+    draft.missing_slots = list(state.control.missing_slots)
+    draft.uncertain_slots = list(state.control.uncertain_slots)
+    draft.slot_sources = dict(state.control.slot_sources)
     return draft
 
 
-def _needs_slot_fill(draft: ContractDraft) -> bool:
-    return bool(draft.missing_slots or draft.uncertain_slots)
+def _clarify_state_from_draft(draft: ContractDraft) -> ClarifyState:
+    return ClarifyState(
+        source=ClarifySourceFrame(raw_requirement=draft.raw_requirement, normalized_requirement=draft.normalized_requirement),
+        intent=ClarifyIntentFrame(
+            goal=draft.goal,
+            intent_summary=draft.intent_summary,
+            task_type=draft.task_type,
+            constraints=list(draft.constraints),
+            non_goals=list(draft.non_goals),
+            target_scope=list(draft.target_scope),
+            expected_artifacts=list(draft.expected_artifacts),
+            acceptance_criteria=list(draft.acceptance_criteria),
+            assumptions=list(draft.assumptions),
+        ),
+        control=ClarifyControlFrame(
+            risk_signals=list(draft.risk_signals),
+            missing_slots=list(draft.missing_slots),
+            uncertain_slots=list(draft.uncertain_slots),
+            slot_sources=dict(draft.slot_sources),
+        ),
+    )
 
 
 def _merge_slot_fill_result(draft: ContractDraft, fill_result: SlotFillResult) -> ContractDraft:
@@ -532,8 +691,12 @@ def _merge_slot_fill_result(draft: ContractDraft, fill_result: SlotFillResult) -
     for field_name, value in fill_result.filled_slots.items():
         if field_name in locked_slots or field_name not in ALLOWED_SLOT_FILL_FIELDS:
             continue
-        if field_name in {"goal", "user_intent_summary"} and isinstance(value, str) and value.strip():
-            setattr(draft, field_name, value.strip())
+        if field_name == "goal" and isinstance(value, str) and value.strip():
+            draft.goal = value.strip()
+            draft.slot_sources[field_name] = "llm"
+            continue
+        if field_name == "user_intent_summary" and isinstance(value, str) and value.strip():
+            draft.intent_summary = value.strip()
             draft.slot_sources[field_name] = "llm"
             continue
         if field_name == "task_type" and isinstance(value, str):
@@ -580,6 +743,7 @@ class OpenAICompatibleSlotFiller:
     def _build_payload(self, draft: ContractDraft, policy: PolicyProfile) -> dict[str, object]:
         prompt = {
             "raw_requirement": draft.raw_requirement,
+            "normalized_requirement": draft.normalized_requirement,
             "locked_slots": {
                 "constraints": draft.constraints,
                 "non_goals": draft.non_goals,
@@ -587,7 +751,7 @@ class OpenAICompatibleSlotFiller:
             },
             "candidate_slots": {
                 "goal": draft.goal,
-                "user_intent_summary": draft.user_intent_summary,
+                "user_intent_summary": draft.intent_summary,
                 "task_type": draft.task_type,
                 "expected_artifacts": draft.expected_artifacts,
                 "acceptance_criteria": draft.acceptance_criteria,
@@ -645,7 +809,10 @@ class OpenAICompatibleSlotFiller:
                 if normalized_task_type is not None:
                     filled_slots[key] = normalized_task_type
                 continue
-            if key in {"goal", "user_intent_summary"} and isinstance(value, str) and value.strip():
+            if key == "goal" and isinstance(value, str) and value.strip():
+                filled_slots[key] = value.strip()
+                continue
+            if key == "user_intent_summary" and isinstance(value, str) and value.strip():
                 filled_slots[key] = value.strip()
                 continue
             if key in {"expected_artifacts", "acceptance_criteria", "assumptions", "risk_signals"} and isinstance(value, list):
@@ -668,6 +835,8 @@ class OpenAICompatibleSlotFiller:
 
 
 def _build_legacy_decomposition_candidate(contract: TaskContract, policy: PolicyProfile) -> DecompositionCandidate:
+    profile = _build_decomposition_profile(contract, policy)
+    signals = _decomposition_signal_view(profile)
     context = _build_decomposition_context(contract)
     structured_inputs = _build_decomposition_inputs(contract)
     implementation_outputs = list(contract.expected_artifacts) if contract.expected_artifacts else ["patch", "validation notes"]
@@ -692,11 +861,22 @@ def _build_legacy_decomposition_candidate(contract: TaskContract, policy: Policy
         return DecompositionCandidate(
             name="direct_execution",
             strategy="legacy_direct_execution",
-            rationale=["Agent topology is disabled, so the control plane emits a single direct-execution unit."],
+            rationale=[
+                "Agent topology is disabled, so the control plane emits a single direct-execution unit.",
+                f"Signal profile: {signals.execution_shape} / {signals.coordination_cost} / {signals.verification_intensity}.",
+            ],
             work_units=work_units,
             score=1,
             selected=True,
-            graph_metadata={"task_type": contract.task_type, "topology_depth": 0, "shape": "single_node"},
+            score_breakdown={"shape": 1},
+            rationale_items=["shape: direct execution when agent topology is disabled (+1)"],
+            graph_metadata={
+                "task_type": contract.task_type,
+                "topology_depth": 0,
+                "shape": "single_node",
+                "profiles": _decomposition_profile_metadata(profile),
+                "legacy_signals": _decomposition_signal_metadata(signals),
+            },
         )
 
     base_units, shape = _build_task_type_template_units(
@@ -732,21 +912,37 @@ def _build_legacy_decomposition_candidate(contract: TaskContract, policy: Policy
         selected_units = base_units + [compatibility]
         shape = f"{shape}_plus_compatibility"
 
+    score_card = _score_decomposition_shape(selected_units, contract, policy, profile)
     return DecompositionCandidate(
         name="legacy_team_pipeline",
         strategy=shape,
         rationale=[
             "The current control-plane decomposition expands a fixed contract -> execute -> review pipeline.",
             "Topology depth and parallelism trim or extend the fixed pipeline shape.",
+            f"Signal profile: {signals.execution_shape} / {signals.coordination_cost} / {signals.verification_intensity}.",
         ],
         work_units=selected_units,
-        score=len(selected_units),
+        score=score_card.total,
         selected=True,
+        score_breakdown=score_card.breakdown,
+        rationale_items=score_card.rationale_items,
+        explanation_blocks=[
+            {
+                "dimension": block.dimension,
+                "points": block.points,
+                "reasons": list(block.reasons),
+            }
+            for block in score_card.explanation_blocks
+        ],
         graph_metadata={
             "task_type": contract.task_type,
             "topology_depth": policy.topology_depth,
             "parallelism": policy.parallelism,
             "shape": shape,
+            "profiles": _decomposition_profile_metadata(profile),
+            "legacy_signals": _decomposition_signal_metadata(signals),
+            "score_breakdown": score_card.breakdown,
+            "score_rationale": score_card.rationale_items,
         },
     )
 
@@ -766,6 +962,17 @@ def _build_decomposition_candidates(contract: TaskContract, policy: PolicyProfil
         work_units=trimmed_units,
         score=0,
         selected=False,
+        score_breakdown={},
+        rationale_items=[
+            "coordination: trimmed candidate removes later-stage validation to reduce cost (-4)"
+        ],
+        explanation_blocks=[
+            {
+                "dimension": "coordination",
+                "points": -4,
+                "reasons": ["trimmed candidate removes later-stage validation to reduce cost"],
+            }
+        ],
         graph_metadata={**primary.graph_metadata, "shape": f"{primary.graph_metadata.get('shape', 'pipeline')}_trimmed"},
     )
     return [primary, trimmed]
@@ -780,44 +987,261 @@ def _select_decomposition_candidate(
     best_score: int | None = None
     best_index = 0
     for index, candidate in enumerate(candidates):
-        score = _score_decomposition_candidate(candidate, contract, policy)
-        candidate.score = score
+        score_card = _score_decomposition_candidate(candidate, contract, policy)
+        candidate.score = score_card.total
+        candidate.score_breakdown = score_card.breakdown
+        candidate.rationale_items = score_card.rationale_items
+        candidate.graph_metadata["score_breakdown"] = score_card.breakdown
+        candidate.graph_metadata["score_rationale"] = score_card.rationale_items
         candidate.selected = False
         scored.append(candidate)
-        if best_score is None or score > best_score:
-            best_score = score
+        if best_score is None or score_card.total > best_score:
+            best_score = score_card.total
             best_index = index
     scored[best_index].selected = True
     return scored
+
+
+@dataclass(slots=True)
+class DecompositionScoreCard:
+    total: int
+    breakdown: dict[str, int]
+    rationale_items: list[str]
+    explanation_blocks: list[DecompositionExplanationBlock] = field(default_factory=list)
+
+
+def _new_score_state() -> tuple[dict[str, int], dict[str, list[str]], list[str]]:
+    return {}, {"structure": [], "safety": [], "coordination": [], "artifact": []}, []
+
+
+def _record_score(
+    breakdown: dict[str, int],
+    reasons: dict[str, list[str]],
+    dimension: str,
+    points: int,
+    reason: str | None = None,
+) -> None:
+    dimension = _canonical_score_dimension(dimension)
+    if points == 0:
+        return
+    breakdown[dimension] = breakdown.get(dimension, 0) + points
+    if reason:
+        reasons.setdefault(dimension, []).append(reason)
+
+
+def _build_score_card(
+    breakdown: dict[str, int],
+    reasons: dict[str, list[str]],
+) -> DecompositionScoreCard:
+    explanation_blocks = build_decomposition_explanation_blocks(breakdown, reasons)
+    rationale_items = _explanation_blocks_to_rationale(explanation_blocks)
+    return DecompositionScoreCard(
+        total=sum(breakdown.values()),
+        breakdown=breakdown,
+        rationale_items=rationale_items,
+        explanation_blocks=explanation_blocks,
+    )
+
+
+def _canonicalize_score_card(score_card: DecompositionScoreCard) -> DecompositionScoreCard:
+    breakdown: dict[str, int] = {}
+    reasons: dict[str, list[str]] = {"structure": [], "safety": [], "coordination": [], "artifact": []}
+    for dimension, points in score_card.breakdown.items():
+        canonical_dimension = _canonical_score_dimension(dimension)
+        breakdown[canonical_dimension] = breakdown.get(canonical_dimension, 0) + points
+    for item in score_card.rationale_items:
+        if ":" in item:
+            prefix, detail = item.split(":", 1)
+            canonical_dimension = _canonical_score_dimension(prefix.strip())
+            reasons.setdefault(canonical_dimension, []).append(detail.strip())
+        else:
+            reasons.setdefault("coordination", []).append(item)
+    explanation_blocks = [
+        DecompositionExplanationBlock(
+            dimension=dimension,
+            points=points,
+            reasons=list(reasons.get(dimension, [])),
+        )
+        for dimension, points in breakdown.items()
+        if points != 0
+    ]
+    rationale_items = [
+        f"{block.dimension}: {', '.join(block.reasons) if block.reasons else 'no explanation available'} ({block.points:+d})"
+        for block in explanation_blocks
+    ]
+    if not rationale_items:
+        rationale_items.append("No scoring signals were triggered; defaulting to neutral score.")
+    return DecompositionScoreCard(
+        total=score_card.total,
+        breakdown=breakdown,
+        rationale_items=rationale_items,
+        explanation_blocks=explanation_blocks,
+    )
+
+
+def _canonical_score_dimension(dimension: str) -> str:
+    if dimension in {"structure", "shape", "dependency"}:
+        return "structure"
+    if dimension in {"safety", "review", "task_type"}:
+        return "safety"
+    if dimension == "artifact":
+        return "artifact"
+    return "coordination"
+
+
+def build_decomposition_explanation_blocks(
+    breakdown: dict[str, int],
+    reasons: dict[str, list[str]],
+) -> list[DecompositionExplanationBlock]:
+    blocks = [
+        DecompositionExplanationBlock(
+            dimension=dimension,
+            points=points,
+            reasons=list(reasons.get(dimension, [])),
+        )
+        for dimension, points in breakdown.items()
+        if points != 0
+    ]
+    if blocks:
+        return blocks
+    return [DecompositionExplanationBlock(dimension="coordination", points=0, reasons=["No scoring signals were triggered; defaulting to neutral score."])]
+
+
+def _explanation_blocks_to_rationale(blocks: list[DecompositionExplanationBlock]) -> list[str]:
+    rationale_items = [
+        f"{block.dimension}: {', '.join(block.reasons) if block.reasons else 'no explanation available'} ({block.points:+d})"
+        for block in blocks
+        if block.points != 0
+    ]
+    if rationale_items:
+        return rationale_items
+    return ["No scoring signals were triggered; defaulting to neutral score."]
 
 
 def _score_decomposition_candidate(
     candidate: DecompositionCandidate,
     contract: TaskContract,
     policy: PolicyProfile,
-) -> int:
+) -> DecompositionScoreCard:
+    profiles = candidate.graph_metadata.get("profiles")
+    profile_payload = profiles if isinstance(profiles, dict) else {}
+    breakdown: dict[str, int] = {}
+    rationale_items: list[str] = []
+
+    def add(bucket: str, points: int, reason: str | None = None) -> None:
+        if points == 0:
+            return
+        breakdown[bucket] = breakdown.get(bucket, 0) + points
+        if reason:
+            rationale_items.append(f"{bucket}: {reason} ({points:+d})")
+
     score = 0
     work_unit_count = len(candidate.work_units)
-    score += work_unit_count * 5
+    add("shape", work_unit_count * 5, f"{work_unit_count} work units")
     if any("review summary" in unit.outputs for unit in candidate.work_units):
-        score += 8
+        add("safety", 8, "includes review summary output")
     if any(unit.depends_on for unit in candidate.work_units):
-        score += 4
+        add("structure", 4, "has dependent work units")
     if contract.risk_level == "high":
-        score += work_unit_count * 3
+        add("safety", work_unit_count * 3, f"high risk contract across {work_unit_count} units")
         if any("rollback" in " ".join(unit.outputs).lower() for unit in candidate.work_units):
-            score += 10
+            add("safety", 10, "rollback coverage present")
     elif contract.risk_level == "low":
-        score -= max(0, work_unit_count - 2) * 2
+        penalty = -max(0, work_unit_count - 2) * 2
+        add("safety", penalty, "low risk favors leaner unit counts")
     if contract.task_type == "migration" and any("rollback" in " ".join(unit.outputs).lower() for unit in candidate.work_units):
-        score += 12
+        add("safety", 12, "migration candidate covers rollback")
     if contract.task_type == "investigation" and any("findings" in unit.outputs for unit in candidate.work_units):
-        score += 6
+        add("artifact", 6, "investigation candidate produces findings")
     if policy.parallelism == "aggressive" and work_unit_count > 2:
-        score += 2
+        add("structure", 2, "aggressive parallelism favors broader pipelines")
     if candidate.strategy == "risk_trimmed_pipeline":
-        score -= 4
-    return score
+        add("shape", -4, "trimmed pipeline is cheaper but less complete")
+    safety_payload = profile_payload.get("safety")
+    if isinstance(safety_payload, dict):
+        verification_intensity = str(safety_payload.get("verification_intensity", "medium"))
+        rollback_required = bool(safety_payload.get("rollback_required", False))
+        review_required = str(safety_payload.get("review_required", "risk_based"))
+        if verification_intensity == "high":
+            add("safety", 5, "high verification intensity")
+        elif verification_intensity == "medium":
+            add("safety", 2, "medium verification intensity")
+        if rollback_required:
+            add("safety", 3, "rollback required")
+        if review_required == "always":
+            add("safety", 2, "review always required")
+    coordination_payload = profile_payload.get("coordination")
+    if isinstance(coordination_payload, dict):
+        coordination_cost = str(coordination_payload.get("coordination_cost", "medium"))
+        dependency_pressure = str(coordination_payload.get("dependency_pressure", "medium"))
+        if coordination_cost == "high":
+            add("coordination", 4, "high coordination cost")
+        elif coordination_cost == "low":
+            add("coordination", -1, "low coordination cost")
+        if dependency_pressure == "high":
+            add("coordination", 2, "high dependency pressure")
+    structure_payload = profile_payload.get("structure")
+    if isinstance(structure_payload, dict):
+        topology_depth = int(structure_payload.get("topology_depth", policy.topology_depth))
+        if topology_depth >= 3:
+            add("structure", 1, "deeper topology")
+        elif topology_depth == 0:
+            add("structure", -1, "flat topology")
+        if bool(structure_payload.get("has_dependencies", False)):
+            add("structure", 1, "dependencies present")
+    artifact_payload = profile_payload.get("artifact")
+    if isinstance(artifact_payload, dict):
+        artifact_count = int(artifact_payload.get("artifact_count", 0))
+        if artifact_count >= 3:
+            add("artifact", 1, "multiple expected artifacts")
+    score = sum(breakdown.values())
+    if not rationale_items:
+        rationale_items.append("No scoring signals were triggered; defaulting to neutral score.")
+    return _canonicalize_score_card(DecompositionScoreCard(total=score, breakdown=breakdown, rationale_items=rationale_items))
+
+
+def _score_decomposition_shape(
+    work_units: list[WorkUnit],
+    contract: TaskContract,
+    policy: PolicyProfile,
+    profile: DecompositionProfile,
+) -> DecompositionScoreCard:
+    breakdown: dict[str, int] = {}
+    rationale_items: list[str] = []
+
+    def add(bucket: str, points: int, reason: str | None = None) -> None:
+        if points == 0:
+            return
+        breakdown[bucket] = breakdown.get(bucket, 0) + points
+        if reason:
+            rationale_items.append(f"{bucket}: {reason} ({points:+d})")
+
+    add("shape", len(work_units) * 5, f"{len(work_units)} work units")
+    safety = profile.safety
+    coordination = profile.coordination
+    structure = profile.structure
+    if safety.verification_intensity == "high":
+        add("safety", 6, "high verification intensity")
+    elif safety.verification_intensity == "medium":
+        add("safety", 3, "medium verification intensity")
+    if coordination.coordination_cost == "high":
+        add("coordination", 4, "high coordination cost")
+    elif coordination.coordination_cost == "low":
+        add("coordination", -1, "low coordination cost")
+    if safety.rollback_required:
+        add("safety", 5, "rollback required")
+    if coordination.dependency_pressure == "high":
+        add("coordination", 3, "high dependency pressure")
+    if structure.task_family == "analysis":
+        add("structure", 1, "analysis task family")
+    if contract.task_type == "migration":
+        add("safety", 4, "migration task family")
+    if policy.parallelism == "aggressive" and len(work_units) > 2:
+        add("structure", 2, "aggressive parallelism with multi-step pipeline")
+    score = sum(breakdown.values())
+    if not rationale_items:
+        rationale_items.append("No scoring signals were triggered; defaulting to neutral score.")
+    return _canonicalize_score_card(DecompositionScoreCard(total=score, breakdown=breakdown, rationale_items=rationale_items))
 
 
 def _build_task_type_template_units(
@@ -1083,6 +1507,129 @@ def _build_docs_template_units(
     return base_units
 
 
+def _build_decomposition_profile(contract: TaskContract, policy: PolicyProfile) -> DecompositionProfile:
+    scope_cardinality = len(contract.target_scope) + len(contract.constraints)
+    artifact_count = len(contract.expected_artifacts)
+    risk_signal_count = len(contract.risk_signals)
+    has_dependencies = bool(contract.dependencies)
+    rollback_required = contract.task_type == "migration" or any("rollback" in artifact.lower() for artifact in contract.expected_artifacts)
+    task_family = contract.task_type if contract.task_type != "implementation" else ("analysis" if contract.risk_level == "high" else "general")
+    execution_shape = _infer_decomposition_shape(contract.task_type, rollback_required, policy.parallelism)
+    verification_intensity = "low"
+    if contract.risk_level == "high" or policy.review_required is True or risk_signal_count >= 2:
+        verification_intensity = "high"
+    elif contract.risk_level == "medium" or artifact_count >= 3 or policy.review_required == "risk_based":
+        verification_intensity = "medium"
+    coordination_cost = "low"
+    if scope_cardinality >= 3 or has_dependencies or contract.task_type in {"migration", "investigation"}:
+        coordination_cost = "high"
+    elif scope_cardinality >= 1 or artifact_count >= 2:
+        coordination_cost = "medium"
+    dependency_pressure = "high" if has_dependencies or scope_cardinality >= 3 else "medium" if scope_cardinality >= 1 else "low"
+    review_required = "always" if policy.review_required is True else "risk_based" if policy.review_required == "risk_based" else "default"
+    return DecompositionProfile(
+        structure=DecompositionStructureProfile(
+            task_family=task_family,
+            execution_shape=execution_shape,
+            parallelism=policy.parallelism,
+            topology_depth=policy.topology_depth,
+            has_dependencies=has_dependencies,
+            scope_cardinality=scope_cardinality,
+        ),
+        safety=DecompositionSafetyProfile(
+            risk_level=contract.risk_level,
+            verification_intensity=verification_intensity,
+            rollback_required=rollback_required,
+            risk_signal_count=risk_signal_count,
+            review_required=review_required,
+        ),
+        coordination=DecompositionCoordinationProfile(
+            coordination_cost=coordination_cost,
+            dependency_pressure=dependency_pressure,
+            scope_cardinality=scope_cardinality,
+            artifact_count=artifact_count,
+            has_dependencies=has_dependencies,
+        ),
+        artifact=DecompositionArtifactProfile(
+            artifact_count=artifact_count,
+            primary_artifacts=list(contract.expected_artifacts),
+            implementation_outputs=list(contract.expected_artifacts) if contract.expected_artifacts else ["patch", "validation notes"],
+        ),
+    )
+
+
+def _decomposition_signal_view(profile: DecompositionProfile) -> DecompositionSignalFrame:
+    return DecompositionSignalFrame(
+        task_family=profile.structure.task_family,
+        execution_shape=profile.structure.execution_shape,
+        verification_intensity=profile.safety.verification_intensity,
+        coordination_cost=profile.coordination.coordination_cost,
+        scope_cardinality=profile.coordination.scope_cardinality,
+        artifact_count=profile.artifact.artifact_count,
+        risk_signal_count=profile.safety.risk_signal_count,
+        dependency_pressure=profile.coordination.dependency_pressure,
+        rollback_required=profile.safety.rollback_required,
+    )
+
+
+def _decomposition_signal_metadata(signals: DecompositionSignalFrame) -> dict[str, object]:
+    return {
+        "task_family": signals.task_family,
+        "execution_shape": signals.execution_shape,
+        "verification_intensity": signals.verification_intensity,
+        "coordination_cost": signals.coordination_cost,
+        "scope_cardinality": signals.scope_cardinality,
+        "artifact_count": signals.artifact_count,
+        "risk_signal_count": signals.risk_signal_count,
+        "dependency_pressure": signals.dependency_pressure,
+        "rollback_required": signals.rollback_required,
+    }
+
+
+def _decomposition_profile_metadata(profile: DecompositionProfile) -> dict[str, object]:
+    return {
+        "structure": {
+            "task_family": profile.structure.task_family,
+            "execution_shape": profile.structure.execution_shape,
+            "parallelism": profile.structure.parallelism,
+            "topology_depth": profile.structure.topology_depth,
+            "has_dependencies": profile.structure.has_dependencies,
+            "scope_cardinality": profile.structure.scope_cardinality,
+        },
+        "safety": {
+            "risk_level": profile.safety.risk_level,
+            "verification_intensity": profile.safety.verification_intensity,
+            "rollback_required": profile.safety.rollback_required,
+            "risk_signal_count": profile.safety.risk_signal_count,
+            "review_required": profile.safety.review_required,
+        },
+        "coordination": {
+            "coordination_cost": profile.coordination.coordination_cost,
+            "dependency_pressure": profile.coordination.dependency_pressure,
+            "scope_cardinality": profile.coordination.scope_cardinality,
+            "artifact_count": profile.coordination.artifact_count,
+            "has_dependencies": profile.coordination.has_dependencies,
+        },
+        "artifact": {
+            "artifact_count": profile.artifact.artifact_count,
+            "primary_artifacts": list(profile.artifact.primary_artifacts),
+            "implementation_outputs": list(profile.artifact.implementation_outputs),
+        },
+    }
+
+
+def _infer_decomposition_shape(task_type: str, rollback_required: bool, parallelism: str) -> str:
+    if task_type == "investigation":
+        return "investigation_pipeline"
+    if task_type == "migration":
+        return "migration_pipeline" if rollback_required else "migration_pipeline_light"
+    if task_type == "docs":
+        return "docs_pipeline"
+    if parallelism == "aggressive":
+        return "general_pipeline_parallel"
+    return "general_pipeline"
+
+
 def _extract_explicit_paths(requirement: str) -> list[str]:
     return _dedupe_preserve_order(re.findall(r"\b[\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|yml|yaml)\b", requirement))
 
@@ -1287,7 +1834,7 @@ def _build_team_execution_acceptance(contract: TaskContract) -> list[str]:
     return ["Worker returns a structured result"]
 
 
-def _build_user_intent_summary(requirement: str, task_type: str) -> str:
+def _build_intent_summary(requirement: str, task_type: str) -> str:
     lowered = requirement.lower()
     if task_type == "investigation":
         return "Investigate the reported issue and summarize the most likely root cause."

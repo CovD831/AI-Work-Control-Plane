@@ -97,6 +97,8 @@ def test_clarify_draft_models_default_to_empty_slot_state() -> None:
     assert draft.missing_slots == []
     assert draft.uncertain_slots == []
     assert draft.slot_sources == {}
+    assert draft.normalized_requirement == ""
+    assert draft.intent_summary == ""
     assert fill.filled_slots == {}
     assert fill.unknown_slots == []
     assert fill.warnings == []
@@ -162,6 +164,7 @@ def test_mock_claude_planner_does_not_require_slot_filler_for_normal_flow() -> N
 
     assert contract.goal == "Refactor auth integration safely."
     assert contract.task_type == "refactor"
+    assert contract.user_intent_summary
 
 
 def test_mock_claude_planner_uses_slot_filler_for_ambiguous_input() -> None:
@@ -191,6 +194,17 @@ def test_mock_claude_planner_uses_slot_filler_for_ambiguous_input() -> None:
     assert contract.expected_artifacts == ["analysis note", "findings", "recommendation"]
     assert contract.slot_sources["task_type"] == "llm"
     assert "target_scope" in contract.unknown_slots
+
+
+def test_mock_claude_planner_records_intent_summary_separately_from_raw_requirement() -> None:
+    planner = MockClaudePlanner()
+    policy = get_policy(OrchestrationMode.SUCCESS_FIRST)
+
+    contract = planner.clarify("Refactor auth integration safely.", policy)
+
+    assert contract.raw_requirement == "Refactor auth integration safely."
+    assert contract.goal == "Refactor auth integration safely."
+    assert contract.user_intent_summary == "Refine the targeted implementation into a cleaner, more structured change."
 
 
 def test_mock_claude_planner_preserves_locked_fields_during_slot_fill() -> None:
@@ -301,6 +315,15 @@ def test_mock_claude_decomposer_records_selected_candidate_for_current_pipeline(
     assert candidate.selected is True
     assert candidate.strategy == "general_pipeline"
     assert candidate.graph_metadata["shape"] == "general_pipeline"
+    assert candidate.graph_metadata["profiles"]["structure"]["task_family"] == "refactor"
+    assert candidate.graph_metadata["profiles"]["safety"]["verification_intensity"] in {"low", "medium", "high"}
+    assert candidate.score_breakdown
+    assert candidate.rationale_items
+    assert candidate.explanation_blocks
+    assert candidate.graph_metadata["score_breakdown"] == candidate.score_breakdown
+    assert candidate.graph_metadata["score_rationale"] == candidate.rationale_items
+    assert candidate.graph_metadata["legacy_signals"]["task_family"] == "refactor"
+    assert candidate.graph_metadata["legacy_signals"]["verification_intensity"] in {"low", "medium", "high"}
     assert [unit.id for unit in candidate.work_units] == [unit.id for unit in work_units]
 
 
@@ -339,6 +362,14 @@ def test_mock_claude_decomposer_builds_migration_pipeline_with_rollback_step() -
     assert work_units[2].goal == "Validate rollback and compatibility safeguards"
     assert work_units[3].goal == "Validate merge readiness"
     assert work_units[2].outputs == ["rollback notes", "compatibility notes"]
+    assert decomposer.last_candidates[0].graph_metadata["profiles"]["safety"]["rollback_required"] is True
+    assert decomposer.last_candidates[0].graph_metadata["profiles"]["safety"]["verification_intensity"] == "high"
+    assert set(decomposer.last_candidates[0].score_breakdown).issubset({"structure", "safety", "coordination", "artifact"})
+    assert decomposer.last_candidates[0].score_breakdown["safety"] >= 0
+    assert decomposer.last_candidates[0].rationale_items
+    assert decomposer.last_candidates[0].explanation_blocks
+    assert decomposer.last_candidates[0].graph_metadata["legacy_signals"]["rollback_required"] is True
+    assert decomposer.last_candidates[0].graph_metadata["legacy_signals"]["verification_intensity"] == "high"
 
 
 def test_mock_claude_decomposer_builds_docs_pipeline_without_patch_default() -> None:
