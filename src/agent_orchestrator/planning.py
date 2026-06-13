@@ -51,6 +51,7 @@ from agent_orchestrator.planning_support import (
     summarize_document_context_snapshot,
 )
 from agent_orchestrator.review import Finding, ReviewResult
+from agent_orchestrator.strategy import CompatibilityStrategyPlanner
 from agent_orchestrator.tasks import ExecutionContract
 from agent_orchestrator.topology import TopologyName
 from agent_orchestrator.work_graph import WorkGraphStore, build_initial_work_graph, next_executable_node
@@ -829,7 +830,8 @@ class TeamOrchestrator:
     ) -> PlanSession:
         policy = get_policy(OrchestrationMode.SUCCESS_FIRST)
         contract = self.orchestrator.planner.clarify(requirement, policy)
-        work_units = self.orchestrator.decomposer.decompose(contract, policy)
+        strategy_planner = self.orchestrator.strategy_planner or CompatibilityStrategyPlanner(self.orchestrator.decomposer)
+        work_units = strategy_planner.plan(contract, policy).work_units
         session = PlanSession.new(requirement=requirement, stage_target=self.stage_target)
         session.status = "intake_chat"
         session.resume.current_phase = "intake_chat"

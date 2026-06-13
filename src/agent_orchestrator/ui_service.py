@@ -462,13 +462,19 @@ def _round_node(item: dict[str, object], index: int) -> dict[str, object]:
 
 def _execution_node(linked_run: dict[str, object]) -> dict[str, object]:
     status = str(linked_run.get("status") or "unknown")
+    execution_summary = _linked_execution_summary(linked_run)
+    summary_parts = [
+        str(linked_run.get("summary") or linked_run.get("final_mode") or ""),
+        f"runtime={execution_summary.get('runtime_name')}" if execution_summary.get("runtime_name") else "",
+        f"verify={execution_summary.get('verification_status')}" if execution_summary.get("verification_status") else "",
+    ]
     return {
         "id": str(linked_run.get("run_id") or "linked-run"),
         "label": "执行运行",
         "kind": "execution_run",
         "status": status,
         "state": _node_state(status),
-        "summary": str(linked_run.get("summary") or linked_run.get("final_mode") or ""),
+        "summary": " ".join(part for part in summary_parts if part),
         "related_agent_ids": [],
         "children": [],
     }
@@ -811,6 +817,7 @@ def _build_evidence_summary(
     ]
     memory_records = memory_records or []
     postmortems = [record for record in memory_records if record.get("record_type") == "postmortem"]
+    execution_summary = _linked_execution_summary(linked_run)
     return {
         "review_round_count": len(rounds),
         "gap_count": len(gaps),
@@ -823,6 +830,10 @@ def _build_evidence_summary(
         "tool_surfaces": ["team_orchestrator", "run_store", "job_runtime"],
         "memory_record_count": len(memory_records),
         "postmortem_count": len(postmortems),
+        "execution_runtime": execution_summary.get("runtime_name"),
+        "verification_status": execution_summary.get("verification_status"),
+        "repair_attempt_count": execution_summary.get("repair_attempt_count", 0),
+        "recovery_action": execution_summary.get("recovery_action"),
         "recent_memory": [
             {
                 "namespace": record.get("namespace"),
@@ -854,6 +865,7 @@ def _build_operator_summary(
     fallback_policy = execution_contract.get("fallback_policy", {}) if isinstance(execution_contract.get("fallback_policy"), dict) else {}
     review_policy = execution_contract.get("review_policy", {}) if isinstance(execution_contract.get("review_policy"), dict) else {}
     events = payload.get("events", []) if isinstance(payload.get("events"), list) else []
+    execution_summary = _linked_execution_summary(linked_run)
     return {
         "session": {
             "id": payload.get("id"),
@@ -873,6 +885,7 @@ def _build_operator_summary(
             "selected_provider_runtime": provenance.get("selected_provider_runtime") or provider_runtime,
             "linked_run_status": linked_run.get("status") if isinstance(linked_run, dict) else None,
         },
+        "execution_runtime_summary": execution_summary,
         "review_policy": review_policy or payload.get("structured_brief", {}).get("review_policy", {})
         if isinstance(payload.get("structured_brief"), dict)
         else {},
@@ -964,6 +977,30 @@ def _format_provider_runtime(provider_runtime: dict[str, object]) -> str:
         return ""
     parts = [f"{key}:{value}" for key, value in provider_runtime.items() if value not in {None, ""}]
     return " · ".join(parts)
+
+
+def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str, object]:
+    if not isinstance(linked_run, dict):
+        return {}
+    payload = linked_run.get("payload", {}) if isinstance(linked_run.get("payload"), dict) else {}
+    verification = payload.get("verification", {}) if isinstance(payload.get("verification"), dict) else {}
+    repair_summary = payload.get("repair_summary", {}) if isinstance(payload.get("repair_summary"), dict) else {}
+    recovery_summary = payload.get("recovery_summary", {}) if isinstance(payload.get("recovery_summary"), dict) else {}
+    attempt_memory = payload.get("attempt_memory", []) if isinstance(payload.get("attempt_memory"), list) else []
+    runtime_name = payload.get("runtime_name")
+    if runtime_name is None and linked_run.get("attempts"):
+        runtime_name = "legacy"
+    return {
+        "runtime_name": runtime_name,
+        "execution_mode": payload.get("execution_mode"),
+        "verification_status": verification.get("status"),
+        "verification_failure_kind": verification.get("failure_kind"),
+        "repair_attempt_count": repair_summary.get("attempt_count", len(attempt_memory)),
+        "repair_outcome": repair_summary.get("outcome"),
+        "recovery_action": recovery_summary.get("action"),
+        "recovery_reason": recovery_summary.get("reason"),
+        "human_review_recommended": recovery_summary.get("human_review_recommended"),
+    }
 
 
 def _job_card(job: dict[str, object], jobs_root: Path | None = None) -> dict[str, object]:

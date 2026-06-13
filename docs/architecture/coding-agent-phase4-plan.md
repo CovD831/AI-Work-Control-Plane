@@ -18,7 +18,7 @@ This phase is the first time the repository gains a true execution backend that 
 
 ## Completion Note
 
-Phase 4 is complete in the repository, but with an intentionally limited interpretation of "execution runtime MVP".
+Phase 4 is complete in the repository, but this document should now be read as a historical Phase 4 architecture record rather than a full description of the repository's current execution capabilities.
 
 What Phase 4 delivered:
 
@@ -35,6 +35,18 @@ What Phase 4 explicitly did **not** finish:
 - proof that code changes were actually applied.
 
 That remaining work is now tracked as a separate later phase in the master plan so the repository state and the architecture documents do not overclaim runtime completeness.
+
+Repository checkpoint update:
+
+- the repository has since moved beyond these original MVP assumptions,
+- bounded real edit application now exists,
+- approval gating and resume are now part of live execution behavior,
+- execution state persistence, artifact externalization, and step-level runtime events are now present,
+- a stage-cursor execution kernel and explicit next-step contracts now exist,
+- continuation-aware resume now restores applied changes, verification context, repair summaries, and planned verification commands,
+- candidate selection now also reuses explicit stage-strategy context on the main planning path, reducing leftover ranking glue from the earlier stage-registry transition,
+- edit and verify stage execution now also dispatch outcome semantics through strategy-level helpers, reducing direct outcome-field plumbing inside the stage executors themselves,
+- the remaining gaps are mainly around richer step-loop behavior, stronger context compression, and broader long-horizon completion logic.
 
 ## Why Phase 4 Exists
 
@@ -130,9 +142,9 @@ The first implementation may be report-first rather than patch-first, as long as
 
 Repository checkpoint:
 
-- this is exactly where the current implementation stopped,
-- `EditExecutor` currently emits bounded implementation intent and patch planning,
-- real file-edit application is deferred to the later execution-closure phase.
+- this was the original Phase 4 stopping point,
+- `EditExecutor` began as a bounded implementation-intent and patch-planning seam,
+- the current repository has since evolved beyond this checkpoint and now applies bounded edits through the governed execution path.
 
 ### `CommandRunner`
 
@@ -204,7 +216,8 @@ Phase 4 is complete when:
 Clarification:
 
 - Phase 4 completeness does **not** mean the runtime is already a full task-completing coding loop,
-- it means the repository now has a real non-legacy execution backend with the right seams in place for later closure work.
+- it means the repository gained a real non-legacy execution backend with the right seams in place for later closure work,
+- later repository work has already filled in part of that closure path, but the fully mature target-mode runtime still remains a later evolution.
 
 ## Targeted Test Slice
 

@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from agent_orchestrator import OrchestrationMode, Orchestrator
+from agent_orchestrator.execution import CodingAgentExecutionRuntime, ExecutionRequest
+from agent_orchestrator.intake import ClarifyPolicy, ExecutionMode, TaskKind, TaskRouterResult
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 from agent_orchestrator.run_store import RunStore
@@ -242,6 +244,7 @@ def test_dashboard_actions_execute_and_read_run(tmp_path) -> None:
     operator = detail["operator_summary"]
     assert operator["execution_provenance"]["plan_session_id"] == session["id"]
     assert operator["execution_provenance"]["linked_run_status"] in {"completed", "blocked"}
+    assert "execution_runtime_summary" in operator
     assert operator["work_graph_summary"]["node_count"] >= 1
     assert service.list_messages()["messages"]
 
@@ -355,3 +358,130 @@ def test_dashboard_role_groups_prefer_persisted_work_graph(tmp_path) -> None:
     assert lead_cards[0]["outbox_count"] >= 1
     assert lead_cards[0]["latest_message_summary"]
     assert any(card["role"] == "runtime" for card in groups["runtime"]["cards"])
+
+
+def test_dashboard_summarizes_coding_agent_execution_artifacts(tmp_path) -> None:
+    service = _service(tmp_path)
+    session = service.create_session("Build a persisted plan artifact")
+    plan_id = str(session["id"])
+    run_id = "coding-run-1"
+    service.team.orchestrator.run_store.write(
+        run_id,
+        {
+            "run_id": run_id,
+            "parent_run_id": None,
+            "requirement": "Fix the login handler",
+            "initial_mode": "success_first",
+            "final_mode": "success_first",
+            "attempts": [],
+            "reroute_history": [],
+            "accepted": False,
+            "final_state": None,
+            "status": "blocked",
+            "reroute_enabled": True,
+            "events": [],
+            "jobs": [],
+            "job_ids": [],
+            "job_status_summary": {},
+            "active_attempt_id": None,
+            "lineage": [],
+            "metadata": {
+                "provenance": {
+                    "plan_session_id": plan_id,
+                    "linked_execution_run_id": run_id,
+                }
+            },
+            "payload": {
+                "runtime_name": "coding_agent",
+                "execution_mode": "coding_agent",
+                "verification": {
+                    "status": "failed",
+                    "failure_kind": "nonzero_exit",
+                },
+                "repair_summary": {
+                    "attempt_count": 2,
+                    "outcome": "failed",
+                },
+                "recovery_summary": {
+                    "action": "inspect_and_retry_later",
+                    "reason": "nonzero_exit",
+                    "human_review_recommended": True,
+                },
+                "attempt_memory": [
+                    {"verification": {"status": "failed"}},
+                    {"verification": {"status": "failed"}},
+                ],
+            },
+        },
+    )
+    stored = service.team.status(plan_id)
+    stored.resume.linked_execution_run_id = run_id
+    service.team.store.write_session(stored)
+
+    detail = service.get_session(plan_id)
+
+    assert detail["evidence_summary"]["execution_runtime"] == "coding_agent"
+    assert detail["evidence_summary"]["verification_status"] == "failed"
+    assert detail["evidence_summary"]["repair_attempt_count"] == 2
+    assert detail["operator_summary"]["execution_runtime_summary"]["runtime_name"] == "coding_agent"
+    assert detail["operator_summary"]["execution_runtime_summary"]["recovery_action"] == "inspect_and_retry_later"
+    execution_nodes = [node for node in detail["plan_tree"]["children"] if node["kind"] == "execution_run"]
+    assert execution_nodes
+
+
+def test_dashboard_lists_execution_step_events(tmp_path) -> None:
+    route = TaskRouterResult(
+        task_kind=TaskKind.DIRECT_FIX,
+        clarify_policy=ClarifyPolicy.LIGHT,
+        execution_mode=ExecutionMode.CODING_AGENT,
+        ambiguity_level="low",
+        risk_level="medium",
+        scope_confidence="high",
+        needs_repo_context=True,
+        requires_human_confirmation=False,
+        reasons=["ui event visibility test"],
+    )
+    target = tmp_path / "note.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+    runtime = CodingAgentExecutionRuntime(orchestrator=Orchestrator())
+    runtime.repo_explorer.workspace_root = tmp_path
+    runtime.edit_executor.workspace_root = tmp_path
+    runtime.edit_executor.action_executor.workspace_root = tmp_path
+    runtime.verify_loop.verifier.workspace_root = tmp_path
+    runtime.verify_loop.verifier.action_executor.workspace_root = tmp_path
+    runtime.event_store.root = tmp_path / "events"
+    runtime.event_store.__post_init__()
+
+    runtime.run(
+        ExecutionRequest(
+            requirement='Append "print(\'bye\')" to note.py',
+            route=route,
+            runtime_name="coding_agent",
+            mode=OrchestrationMode.SUCCESS_FIRST,
+            session_id="agent-session-ui-1",
+            turn_id="turn-ui-1",
+            context_snapshot={"snapshot_id": "snapshot-ui-1"},
+            task_contract={
+                "id": "task-ui-1",
+                "goal": "Append a line",
+                "non_goals": [],
+                "context": "Use repository context.",
+                "inputs": ["Append a line"],
+                "outputs": ["ui events"],
+                "acceptance_criteria": ["No syntax errors"],
+                "risk_level": "medium",
+                "parallelizable": False,
+                "owner_type": "single_worker",
+                "max_depth": 1,
+                "failure_policy": "retry",
+            },
+        )
+    )
+
+    service = _service(tmp_path)
+    events = service.list_session_events("agent-session-ui-1")["events"]
+
+    assert any(event["type"] == "execution.step" for event in events)
+    assert any(event["type"] == "execution.action_requested" for event in events)
+    assert any(event["type"] == "execution.action_completed" for event in events)
+    assert any(event["type"] == "execution.context_compressed" for event in events)

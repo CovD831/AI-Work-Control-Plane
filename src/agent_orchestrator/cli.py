@@ -19,10 +19,15 @@ from agent_orchestrator.cli_evidence import run_evidence_command
 from agent_orchestrator.cli_jobs import run_job_command
 from agent_orchestrator.cli_team import TeamCommandHandlers, run_team_command
 from agent_orchestrator.command import ProviderHealthCheck, RuntimeModeRouter, direct_api_auth_status
+from agent_orchestrator.execution import CodingAgentExecutionRuntime, ExecutionRequest, LegacyExecutionRuntime
+from agent_orchestrator.intake import ExecutionMode, IntentIntake, TaskRouter
 from agent_orchestrator.orchestrator import Orchestrator
-from agent_orchestrator.policies import OrchestrationMode
+from agent_orchestrator.policies import OrchestrationMode, get_policy
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 from agent_orchestrator.run_store import RunStore
+from agent_orchestrator.session import SessionRuntime
+from agent_orchestrator.strategy import CompatibilityStrategyPlanner
+from agent_orchestrator.tasks import TaskContract
 
 
 REVIEW_POLICY_CHOICES = ["auto", "standard", "adversarial", "required-human"]
@@ -565,16 +570,18 @@ def main() -> None:
     if args.command == "start":
         orchestrator = _build_orchestrator(args.runtime, args.provider)
         mode = None if args.mode == "auto" else OrchestrationMode(args.mode)
-        handle = orchestrator.start_run(
-            args.requirement,
-            mode,
+        result = _execute_cli_request(
+            orchestrator=orchestrator,
+            requirement=args.requirement,
+            mode=mode,
             reroute=args.reroute == "on",
             agent_enabled=_parse_agent_flag(args.agent),
             depth=args.depth,
             review_policy_override=getattr(args, "review_policy", "auto"),
             provider_health_snapshot=_provider_health_snapshot() if args.runtime == "command" else None,
+            async_run=True,
         )
-        print(json.dumps(handle.to_dict(), ensure_ascii=False, indent=2))
+        print(json.dumps(result.payload, ensure_ascii=False, indent=2))
         return
 
     if args.command == "poll-run":
@@ -609,28 +616,33 @@ def main() -> None:
     orchestrator = _build_orchestrator(args.runtime, args.provider)
     mode = None if args.mode == "auto" else OrchestrationMode(args.mode)
     if getattr(args, "async_run", False):
-        handle = orchestrator.start_run(
-            args.requirement,
-            mode,
+        result = _execute_cli_request(
+            orchestrator=orchestrator,
+            requirement=args.requirement,
+            mode=mode,
             reroute=args.reroute == "on",
             agent_enabled=_parse_agent_flag(args.agent),
             depth=args.depth,
             review_policy_override=getattr(args, "review_policy", "auto"),
             provider_health_snapshot=_provider_health_snapshot() if args.runtime == "command" else None,
+            async_run=True,
         )
-        print(json.dumps(handle.to_dict(), ensure_ascii=False, indent=2))
+        print(json.dumps(result.payload, ensure_ascii=False, indent=2))
     else:
-        run = orchestrator.run(
-            args.requirement,
-            mode,
+        result = _execute_cli_request(
+            orchestrator=orchestrator,
+            requirement=args.requirement,
+            mode=mode,
             reroute=args.reroute == "on",
             agent_enabled=_parse_agent_flag(args.agent),
             depth=args.depth,
             review_policy_override=getattr(args, "review_policy", "auto"),
             provider_health_snapshot=_provider_health_snapshot() if args.runtime == "command" else None,
+            async_run=False,
         )
+        run = orchestrator.poll_run(result.run_id) if result.run_id else result.payload
         _print_run_summary(run)
-        print(json.dumps(run.to_dict(), ensure_ascii=False, indent=2))
+        print(json.dumps(result.payload, ensure_ascii=False, indent=2))
 
 
 def _build_orchestrator(runtime: str, provider: str | None) -> Orchestrator:
@@ -674,6 +686,107 @@ def _build_team_orchestrator(runtime: str, provider: str | None, plans_root: str
         project_root=project_root,
         agent_config=AgentConfigStore().read(),
     )
+
+
+def _execute_cli_request(
+    *,
+    orchestrator: Orchestrator,
+    requirement: str,
+    mode: OrchestrationMode | None,
+    reroute: bool,
+    agent_enabled: bool | None,
+    depth: int | None,
+    review_policy_override: str | None,
+    provider_health_snapshot: dict[str, object] | None,
+    async_run: bool,
+):
+    router = TaskRouter()
+    route = router.route(requirement)
+
+    if route.execution_mode == ExecutionMode.NO_EXECUTION:
+        payload = {
+            "requirement": requirement,
+            "route": route.to_dict(),
+            "status": "not_executed",
+            "message": "Task router classified this request as non-executable in Phase 1.",
+        }
+        return type("NoExecutionResult", (), {"payload": payload, "run_id": None})()
+
+    policy = get_policy(mode or OrchestrationMode.SUCCESS_FIRST, agent_enabled=agent_enabled, depth=depth)
+    intake = IntentIntake(orchestrator.planner)
+    intake_result = intake.intake(requirement, route, policy)
+    task_contract = TaskContract.from_dict(intake_result.task_contract) if isinstance(intake_result.task_contract, dict) else None
+    strategy_planner = orchestrator.strategy_planner or CompatibilityStrategyPlanner(orchestrator.decomposer)
+    strategy_plan = strategy_planner.plan(task_contract, policy, route=route) if task_contract is not None else None
+    session_runtime = SessionRuntime()
+    session = session_runtime.start_session(
+        origin="cli_direct",
+        metadata={
+            "requirement": requirement,
+            "runtime_name": route.execution_mode.value,
+            "execution_mode": route.execution_mode.value,
+        },
+    )
+    clarify_summary = intake_result.to_dict()
+    if isinstance(task_contract, TaskContract):
+        clarify_summary["task_contract"] = task_contract.to_dict()
+    strategy_summary = strategy_plan.summary() if strategy_plan is not None else {}
+    session, turn, snapshot = session_runtime.start_turn(
+        session_id=session.session_id,
+        requirement=requirement,
+        route=route.to_dict(),
+        clarify_summary=clarify_summary,
+        strategy_summary=strategy_summary,
+        task_contract=task_contract.to_dict() if task_contract is not None else {},
+        compatibility_metadata=strategy_plan.compatibility_metadata if strategy_plan is not None else {},
+        selected_execution_strategy=strategy_plan.strategy.value if strategy_plan is not None else "unknown",
+        metadata={
+            "runtime_name": route.execution_mode.value,
+            "async_requested": async_run,
+        },
+    )
+
+    runtime = _select_execution_runtime(orchestrator, route.execution_mode)
+    request = ExecutionRequest(
+        requirement=requirement,
+        route=route,
+        runtime_name=runtime.name,
+        mode=mode,
+        reroute=reroute,
+        agent_enabled=agent_enabled,
+        depth=depth,
+        review_policy_override=review_policy_override,
+        provider_health_snapshot=provider_health_snapshot,
+        task_contract=intake_result.task_contract,
+        session_id=session.session_id,
+        turn_id=turn.turn_id,
+        context_snapshot=snapshot.to_dict(),
+        resume_kind=snapshot.resume_kind,
+        session_metadata={
+            "origin": session.origin,
+            "current_turn_id": session.current_turn_id,
+        },
+    )
+    result = runtime.start(request) if async_run else runtime.run(request)
+    session_runtime.attach_run_result(
+        session_id=session.session_id,
+        turn_id=turn.turn_id,
+        linked_run_id=result.run_id,
+        status=result.status or "unknown",
+        accepted=result.accepted,
+        runtime_name=result.runtime_name,
+        payload=result.payload,
+    )
+    result.payload.setdefault("agent_session", session.to_dict())
+    result.payload.setdefault("agent_turn", turn.to_dict())
+    result.payload.setdefault("context_snapshot", snapshot.to_dict())
+    return result
+
+
+def _select_execution_runtime(orchestrator: Orchestrator, execution_mode: ExecutionMode):
+    if execution_mode == ExecutionMode.CODING_AGENT:
+        return CodingAgentExecutionRuntime(orchestrator)
+    return LegacyExecutionRuntime(orchestrator)
 
 
 def _team_command_handlers() -> TeamCommandHandlers:

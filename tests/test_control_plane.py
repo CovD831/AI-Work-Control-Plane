@@ -19,6 +19,8 @@ from agent_orchestrator.control_plane import (
     inspect_governance_bundle,
     resolve_approval_item,
 )
+from agent_orchestrator.execution import CodingAgentExecutionRuntime, ExecutionRequest
+from agent_orchestrator.intake import ClarifyPolicy, ExecutionMode, TaskKind, TaskRouterResult
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.memory import MemoryRecord, MemoryStore
 from agent_orchestrator.orchestrator import Orchestrator
@@ -27,6 +29,20 @@ from test_support import start_approved_session, start_reviewed_session, write_m
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "control_plane"
+
+
+def _coding_route() -> TaskRouterResult:
+    return TaskRouterResult(
+        task_kind=TaskKind.DIRECT_FIX,
+        clarify_policy=ClarifyPolicy.LIGHT,
+        execution_mode=ExecutionMode.CODING_AGENT,
+        ambiguity_level="low",
+        risk_level="medium",
+        scope_confidence="high",
+        needs_repo_context=True,
+        requires_human_confirmation=False,
+        reasons=["control-plane artifact visibility test"],
+    )
 
 
 def test_control_plane_golden_fixtures_pin_minimum_contracts() -> None:
@@ -696,3 +712,92 @@ def test_recovery_recommendation_exposes_ranked_recovery_branches(tmp_path) -> N
     assert all("rationale" in branch for branch in branches)
     assert payload["recovery_search"]["selected_command"] == payload["safest_next_operator_command"]
     assert payload["recovery_search"]["disagreement_level"] in {"low", "medium", "high"}
+
+
+def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    target = tmp_path / "note.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+
+    runtime = CodingAgentExecutionRuntime(orchestrator=Orchestrator())
+    runtime.repo_explorer.workspace_root = tmp_path
+    runtime.edit_executor.workspace_root = tmp_path
+    runtime.edit_executor.action_executor.workspace_root = tmp_path
+    runtime.verify_loop.verifier.workspace_root = tmp_path
+    runtime.verify_loop.verifier.action_executor.workspace_root = tmp_path
+    runtime.verify_loop.verifier.action_executor.artifact_store.root = tmp_path / "execution-artifacts"
+    runtime.verify_loop.verifier.action_executor.artifact_store.__post_init__()
+
+    runtime.run(
+        ExecutionRequest(
+            requirement='Append "print(\'bye\')" to note.py',
+            route=_coding_route(),
+            runtime_name="coding_agent",
+            mode=OrchestrationMode.SUCCESS_FIRST,
+            session_id="agent-session-cp-1",
+            turn_id="turn-cp-1",
+            context_snapshot={"snapshot_id": "snapshot-cp-1"},
+            task_contract={
+                "id": "task-cp-1",
+                "goal": "Append a line",
+                "non_goals": [],
+                "context": "Use repository context.",
+                "inputs": ["Append a line"],
+                "outputs": ["artifact summary"],
+                "acceptance_criteria": ["No syntax errors"],
+                "risk_level": "medium",
+                "parallelizable": False,
+                "owner_type": "single_worker",
+                "max_depth": 1,
+                "failure_policy": "retry",
+            },
+        )
+    )
+
+    index = build_workspace_index(
+        tmp_path,
+        plans_root=tmp_path / "plans",
+        runs_root=tmp_path / "runs",
+        jobs_root=tmp_path / "jobs",
+        approvals_root=tmp_path / "approvals",
+    )
+    assert index["artifacts"]["execution_artifacts"]["format"] == "agent_orchestrator.execution_artifact_summary.v1"
+    assert index["execution_artifact_summary"]["recent_execution_artifacts"]
+    assert index["execution_artifact_summary"]["compressed_context"]["objective"] == 'Append "print(\'bye\')" to note.py'
+
+
+def test_runtime_event_stream_includes_execution_artifact_refs(tmp_path) -> None:
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
+    run_payload = {
+        "id": "run-artifact-1",
+        "initial_mode": "coding_agent",
+        "final_mode": "coding_agent",
+        "accepted": True,
+        "path": str(runs_root / "run-artifact-1.json"),
+        "payload": {
+            "artifact_summary": {
+                "artifact_count": 1,
+                "artifacts": [
+                    {
+                        "artifact_id": "exec-artifact-123",
+                        "path": str(tmp_path / "execution-artifacts" / "exec-artifact-123.json"),
+                        "ref": {"format": "agent_orchestrator.execution_command_artifact.v1"},
+                    }
+                ],
+            }
+        },
+    }
+    (runs_root / "run-artifact-1.json").write_text(json.dumps(run_payload, ensure_ascii=False), encoding="utf-8")
+
+    payload = build_runtime_event_stream(
+        tmp_path,
+        runs_root=runs_root,
+        plans_root=tmp_path / "plans",
+        jobs_root=tmp_path / "jobs",
+        approvals_root=tmp_path / "approvals",
+    )
+
+    execution_run = next(event for event in payload["events"] if event.get("kind") == "execution_run")
+    assert "exec-artifact-123" in execution_run["artifact_refs"]
+    assert execution_run["artifact_summary"]["artifact_count"] == 1

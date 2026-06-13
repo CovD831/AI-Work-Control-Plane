@@ -82,6 +82,15 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
         }
     if artifact_format == CONTROL_PLANE_FORMATS["evidence_bundle"]:
         return {"status": payload.get("status")}
+    if artifact_format == "agent_orchestrator.execution_artifact_summary.v1":
+        compressed_context = payload.get("compressed_context", {})
+        return {
+            "artifact_count": payload.get("artifact_count", 0),
+            "run_id": payload.get("run_id"),
+            "session_id": payload.get("session_id"),
+            "turn_id": payload.get("turn_id"),
+            "compressed_context": dict(compressed_context) if isinstance(compressed_context, dict) else None,
+        }
     return {}
 
 

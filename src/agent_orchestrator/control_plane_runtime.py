@@ -206,6 +206,14 @@ def _runtime_events_for_session(session: PlanSession) -> list[dict[str, object]]
 def _runtime_event_for_run(run: dict[str, object]) -> dict[str, object]:
     accepted = run.get("accepted")
     status = "completed" if accepted is True else "failed" if accepted is False else "interrupted"
+    payload = run.get("payload", {}) if isinstance(run.get("payload"), dict) else {}
+    artifact_summary = payload.get("artifact_summary", {}) if isinstance(payload.get("artifact_summary"), dict) else {}
+    artifact_refs = [str(run.get("path"))] if run.get("path") else []
+    artifact_refs.extend(
+        str(item.get("artifact_id"))
+        for item in artifact_summary.get("artifacts", [])
+        if isinstance(item, dict) and item.get("artifact_id")
+    )
     return {
         "id": _stable_id("runtime-event", "run", str(run.get("id"))),
         "kind": "execution_run",
@@ -215,7 +223,8 @@ def _runtime_event_for_run(run: dict[str, object]) -> dict[str, object]:
         "tool_intent": "team execute",
         "result_status": status,
         "failure_reason": "execution rejected or failed" if accepted is False else None,
-        "artifact_refs": [str(run.get("path"))] if run.get("path") else [],
+        "artifact_refs": artifact_refs,
+        "artifact_summary": artifact_summary,
         "usage_cost": _usage_cost_placeholder(),
         "records_only": True,
         "created_at": now_iso(),

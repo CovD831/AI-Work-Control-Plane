@@ -168,11 +168,28 @@ At the current repository state:
 - Phase 5 is complete in bounded repair-loop form,
 - Phase 6 is complete for first-pass governance/runtime summary integration.
 
+The repository has now also moved beyond the earlier report-first checkpoint that originally motivated the execution-closure phase.
+
+The `coding_agent` runtime can now:
+
+- apply bounded direct edits inside workspace-root guardrails,
+- route edit and verification side effects through a unified `ActionExecutor`,
+- classify action risk and block boundary violations before side effects occur,
+- interrupt on approval gates and resume from persisted execution state,
+- externalize large verification and repository-exploration outputs as execution artifacts,
+- emit step-level runtime events and structured execution-history summaries for governance surfaces,
+- advance through an explicit stage-cursor execution kernel with persisted resume contracts,
+- restore continuation state such as applied changes, recent observations, verification summaries, repair summaries, and planned verification commands,
+- let continuation state influence verification command reuse, remaining retry budget, and blocked-versus-rerun selection for resumed verification.
+
+This means the repository already contains an early governed coding runtime rather than only a planning-and-reporting backend.
+
 However, one important gap still remains before clarify-value measurement is meaningful:
 
-- the `coding_agent` runtime still operates as a report-first execution backend,
-- it can explore, summarize, verify, retry, and emit governed artifacts,
-- but it does not yet complete a true edit-apply-verify-fix task loop for real coding work.
+- the runtime now has explicit stage planning/dispatch seams plus persisted planner-context traces, approval-aware pause/block selection, and candidate-based next-stage proposals that begin to use continuation history and verify/edit/explore evidence ranking through shared generation/ranking strategy entrypoints, registry-like ranking dispatch, shared proposal-level builders, registry-like stage generators, and emerging per-stage strategy objects that now also build proposals, stage plans, execution dispatch, selected-candidate ranking flow, and stage-level outcome dispatch through a more stable strategy-map structure, with simpler explore/terminal execution semantics plus shared continue-stage semantics, edit pause/block/apply, and verify pause/blocked-resume/terminal outcomes beginning to collapse into shared executor meanings, while verify terminal acceptance/completion decisions also begin to collapse into shared semantic helpers, and those shared execution helpers now begin to route through a lower-level shared stage-outcome builder and stage-owned outcome-semantics namespaces now used by both edit and verify, with stage plans now explicitly carrying stage-strategy context and proposal/candidate/ranking construction now also accepting explicit strategy context so planning/execution paths reuse the same stage contract instead of re-looking it up, while edit/verify strategies now directly binding the core stage execution functions instead of going through transitional wrappers, plus shared candidate/template helpers, including path-vs-terminal, advance-vs-complete, complete-vs-retry, block-vs-retry, and approval/history semantic builders, with initial context-driven candidate synthesis now appearing in verify plus low-risk edit/explore terminal paths, but is still primarily shaped as a bounded staged kernel rather than a richer dynamic step loop,
+- context compression and prompt-facing long-horizon state management are still limited,
+- the execution abstraction has not yet fully converged on a unified resumable runtime contract across future runtime variants,
+- broader long-horizon task behavior and tool-ecosystem expansion remain incomplete.
 
 That means the architectural numbering alone would misleadingly suggest that only evaluation and packaging remain.
 
@@ -412,26 +429,28 @@ pytest tests/test_control_plane.py tests/test_ui_service.py tests/test_docs_proc
 
 ### Goal
 
-Upgrade the current report-first `coding_agent` runtime into a task-completing execution runtime that can actually apply edits, validate them, and continue iterating until the bounded task is done or explicitly blocked.
+Upgrade the current early governed `coding_agent` runtime into a fuller task-completing execution runtime that can continue iterating until the bounded task is done or explicitly blocked.
 
 ### Scope
 
-- convert `EditExecutor` from intent-only output into real file-edit application,
-- support patch application and post-edit verification,
+- deepen the current edit/apply/verify path into a more explicit step-loop kernel,
+- strengthen post-edit verification and recovery behavior,
 - add bounded completion-loop state that distinguishes:
   - planned edits
   - applied edits
   - verification after edits
   - blocked completion states
-- ensure runtime results can prove whether code was actually changed,
+- improve context compression and execution-state reuse across longer tasks,
+- unify resume-oriented runtime contracts so future runtime variants share the same interruption model,
 - preserve the governance/control-plane truth while exposing stronger execution provenance.
 
 ### Acceptance Criteria
 
-- the `coding_agent` runtime can perform real code edits for at least one bounded task class,
-- execution results distinguish simulated intent from actual applied change,
-- verification runs after applied edits rather than only after planning,
+- the `coding_agent` runtime can continue from its current governed edit path into a clearer step-oriented completion loop,
+- execution results continue to distinguish proposed, applied, verified, and blocked work,
+- verification and recovery behavior remain explicit after applied edits,
 - blocked states explain whether failure happened before or after edit application,
+- execution state and artifact references support stronger long-horizon continuation,
 - governance/operator summaries remain consistent with the stronger execution loop.
 
 ### Suggested Tests

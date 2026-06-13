@@ -166,6 +166,7 @@ def workspace_index_optional_sections(
         "status": "not_checked",
         "degraded_reason": None,
     }
+    execution_artifact_summary = _execution_artifact_summary(artifacts)
     return {
         "program": {
             "kind": "workspace_program",
@@ -195,6 +196,7 @@ def workspace_index_optional_sections(
         ][-10:],
         "open_approvals": open_approvals,
         "recent_runs": recent_runs,
+        "execution_artifact_summary": execution_artifact_summary,
         "memory_candidates": [
             {
                 "record_type": record.get("record_type"),
@@ -207,6 +209,32 @@ def workspace_index_optional_sections(
             if isinstance(record, dict)
         ],
         "provider_runtime_health": provider_health,
+    }
+
+
+def _execution_artifact_summary(artifacts: dict[str, object]) -> dict[str, object]:
+    runtime_event_stream = artifacts.get("runtime_event_stream", {}) if isinstance(artifacts.get("runtime_event_stream"), dict) else {}
+    summary = runtime_event_stream.get("summary", {}) if isinstance(runtime_event_stream.get("summary"), dict) else {}
+    execution_artifacts = artifacts.get("execution_artifacts", {}) if isinstance(artifacts.get("execution_artifacts"), dict) else {}
+    execution_artifact_summary = (
+        execution_artifacts.get("summary", {})
+        if isinstance(execution_artifacts.get("summary"), dict)
+        else {}
+    )
+    compressed_context = (
+        execution_artifact_summary.get("compressed_context", {})
+        if isinstance(execution_artifact_summary.get("compressed_context"), dict)
+        else {}
+    )
+    recent_execution_artifacts = [
+        {"name": name, "ref": ref}
+        for name, ref in sorted(artifacts.items())
+        if isinstance(name, str) and "artifact" in name
+    ]
+    return {
+        "runtime_event_count": summary.get("event_count", 0),
+        "recent_execution_artifacts": recent_execution_artifacts[-10:],
+        "compressed_context": compressed_context or None,
     }
 
 

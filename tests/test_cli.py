@@ -11,7 +11,7 @@ import pytest
 
 from agent_orchestrator import OrchestrationMode
 from agent_orchestrator.command import CommandResult
-from agent_orchestrator.cli import _print_run_summary
+from agent_orchestrator.cli import _execute_cli_request, _print_run_summary
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.routing import PolicyRouter
@@ -193,6 +193,50 @@ def test_run_to_dict_preserves_partial_rescue_history() -> None:
 
     assert payload["attempts"][0]["dependency_rescue_results"]
     assert payload["attempts"][0]["replayed_work_unit_ids"]
+
+
+def test_execute_cli_request_skips_non_executable_question_tasks() -> None:
+    result = _execute_cli_request(
+        orchestrator=Orchestrator(),
+        requirement="How does the planning governance snapshot differ from the control plane state?",
+        mode=OrchestrationMode.SUCCESS_FIRST,
+        reroute=True,
+        agent_enabled=None,
+        depth=None,
+        review_policy_override="auto",
+        provider_health_snapshot=None,
+        async_run=False,
+    )
+
+    assert result.run_id is None
+    assert result.payload["status"] == "not_executed"
+    assert result.payload["route"]["execution_mode"] == "no_execution"
+
+
+def test_execute_cli_request_runs_legacy_runtime_for_coding_tasks() -> None:
+    result = _execute_cli_request(
+        orchestrator=Orchestrator(),
+        requirement="Fix the login button click handler in src/ui/login.tsx.",
+        mode=OrchestrationMode.SUCCESS_FIRST,
+        reroute=True,
+        agent_enabled=None,
+        depth=None,
+        review_policy_override="auto",
+        provider_health_snapshot=None,
+        async_run=False,
+    )
+
+    assert result.execution_mode.value == "coding_agent"
+    assert result.runtime_name == "coding_agent"
+    assert result.payload["runtime_name"] == "coding_agent"
+    assert result.session_id
+    assert result.turn_id
+    assert result.payload["session_id"] == result.session_id
+    assert result.payload["turn_id"] == result.turn_id
+    assert result.payload["agent_session"]["session_id"] == result.session_id
+    assert result.payload["agent_turn"]["turn_id"] == result.turn_id
+    assert result.payload["context_snapshot"]["turn_id"] == result.turn_id
+    assert "repo_report" in result.payload
 
 
 def test_job_status_and_result_commands_round_trip(tmp_path, capsys) -> None:

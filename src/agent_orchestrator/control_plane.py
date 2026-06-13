@@ -37,6 +37,7 @@ from agent_orchestrator.control_plane_workspace import WorkspaceIndexStore, Work
 from agent_orchestrator.control_plane_workspace import workspace_index_payload as _workspace_index_payload
 from agent_orchestrator.control_plane_workspace import workspace_recovery_dashboard as _workspace_recovery_dashboard
 from agent_orchestrator.events import EventStore
+from agent_orchestrator.execution.state_store import ExecutionStateStore
 from agent_orchestrator.jobs import AgentJob, FileJobRuntime, now_iso
 from agent_orchestrator.memory import MemoryRecord, MemoryStore
 from agent_orchestrator.planning import PlanSession
@@ -461,6 +462,21 @@ def resolve_approval_item(
         confidence=1.0,
         external_cache_status=_external_cache_status(root),
     )
+    if resolved.run_id:
+        state_store = ExecutionStateStore(root / ".agent_orchestrator" / "execution_state")
+        state = state_store.read(resolved.run_id)
+        if state:
+            resume_contract = state.get("resume_contract", {}) if isinstance(state.get("resume_contract"), dict) else {}
+            state_store.write(
+                resolved.run_id,
+                {
+                    **state,
+                    "resume_contract": {
+                        **resume_contract,
+                        "approved_approval_id": resolved.id if status == "approved" else resume_contract.get("approved_approval_id"),
+                    },
+                },
+            )
     return {
         "format": CONTROL_PLANE_FORMATS["approval_queue"],
         "resolved_item": resolved.to_dict(),
@@ -594,6 +610,7 @@ def _read_run_entries(runs_root: Path) -> list[dict[str, object]]:
                 "initial_mode": payload.get("initial_mode"),
                 "final_mode": payload.get("final_mode"),
                 "accepted": payload.get("accepted"),
+                "payload": payload.get("payload") if isinstance(payload.get("payload"), dict) else {},
                 "path": str(path),
             }
         )

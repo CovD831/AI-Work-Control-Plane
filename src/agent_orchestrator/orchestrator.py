@@ -25,6 +25,7 @@ from agent_orchestrator.routing import PolicyRouter, RoutingDecision
 from agent_orchestrator.state_machine import StateMachine
 from agent_orchestrator.failure import FailureRouter
 from agent_orchestrator.run_store import RunStore
+from agent_orchestrator.strategy import CompatibilityStrategyPlanner, StrategyPlanner
 from agent_orchestrator.topology import build_execution_topology
 from agent_orchestrator.tasks import (
     DecisionArtifact,
@@ -51,11 +52,14 @@ class Orchestrator:
     router: PolicyRouter = field(default_factory=PolicyRouter)
     failure_router: FailureRouter = field(default_factory=FailureRouter)
     run_store: RunStore = field(default_factory=RunStore)
+    strategy_planner: StrategyPlanner | None = None
     restore_pending_on_init: bool = False
     _run_threads: dict[str, threading.Thread] = field(default_factory=dict, init=False, repr=False)
     _run_locks: dict[str, threading.Lock] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.strategy_planner is None:
+            self.strategy_planner = CompatibilityStrategyPlanner(self.decomposer)
         if self.restore_pending_on_init:
             self.restore_pending_runs()
 
@@ -343,12 +347,9 @@ class Orchestrator:
             attempt_events.record("contract_created", task_id=contract.id, risk=contract.risk_level)
             state.transition("clarified")
 
-            work_units = self.decomposer.decompose(contract, policy)
-            decomposition_candidates = [
-                candidate.to_dict()
-                for candidate in getattr(self.decomposer, "last_candidates", [])
-                if hasattr(candidate, "to_dict")
-            ]
+            strategy_plan = self.strategy_planner.plan(contract, policy)
+            work_units = strategy_plan.work_units
+            decomposition_candidates = [candidate.to_dict() for candidate in strategy_plan.candidates]
             attempt_events.record("work_units_created", count=len(work_units), parallelism=policy.parallelism)
             state.transition("decomposed")
 
@@ -1051,12 +1052,20 @@ def _decomposition_summary_payload(candidates: list[dict[str, object]] | None) -
         return {}
     selected = next((candidate for candidate in candidates if candidate.get("selected")), None)
     rejected = [candidate for candidate in candidates if not candidate.get("selected")]
+    selected_metadata = selected.get("metadata", {}) if isinstance(selected, dict) and isinstance(selected.get("metadata"), dict) else {}
     return {
-        "selected_strategy": selected.get("strategy") if isinstance(selected, dict) else None,
+        "selected_execution_strategy": selected.get("strategy") if isinstance(selected, dict) else None,
+        "selected_strategy": selected_metadata.get("legacy_strategy") if selected_metadata else selected.get("strategy") if isinstance(selected, dict) else None,
         "selected_score": selected.get("score") if isinstance(selected, dict) else None,
-        "selected_shape": selected.get("graph_metadata", {}).get("shape") if isinstance(selected, dict) and isinstance(selected.get("graph_metadata"), dict) else None,
+        "selected_shape": selected_metadata.get("shape") if selected_metadata else None,
         "candidate_count": len(candidates),
-        "rejected_strategies": [candidate.get("strategy") for candidate in rejected if isinstance(candidate, dict)],
+        "rejected_strategies": [
+            candidate.get("metadata", {}).get("legacy_strategy")
+            if isinstance(candidate, dict) and isinstance(candidate.get("metadata"), dict)
+            else candidate.get("strategy")
+            for candidate in rejected
+            if isinstance(candidate, dict)
+        ],
     }
 
 
