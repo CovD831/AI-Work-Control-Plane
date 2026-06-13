@@ -26,6 +26,7 @@ from agent_orchestrator.jobs import FileJobRuntime
 from agent_orchestrator.memory import MemoryStore
 from agent_orchestrator.messages import MessageStore
 from agent_orchestrator.planning import TeamOrchestrator, build_operator_runbook
+from agent_orchestrator.planning_governance import get_governance_status
 from agent_orchestrator.policies import OrchestrationMode
 from agent_orchestrator.roles import DEFAULT_AGENT_ROLES, get_agent_role, role_for_job_kind
 from agent_orchestrator.run_store import RunStore
@@ -350,7 +351,7 @@ def _work_graph_payload(graph: WorkUnitGraph) -> dict[str, object]:
 
 
 def _session_list_item(payload: dict[str, object], path: Path) -> dict[str, object]:
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     resume = payload.get("resume", {}) if isinstance(payload.get("resume"), dict) else {}
     brief = payload.get("structured_brief", {}) if isinstance(payload.get("structured_brief"), dict) else {}
     return {
@@ -506,7 +507,7 @@ def _extract_job_id(summary: str) -> str | None:
 
 
 def _build_agent_cards(payload: dict[str, object]) -> list[dict[str, object]]:
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     jobs = summary.get("delegated_jobs", []) if isinstance(summary.get("delegated_jobs"), list) else []
     cards = [_session_lead_card(payload)]
     cards.extend(_delegated_job_card(job) for job in jobs if isinstance(job, dict))
@@ -537,7 +538,7 @@ def _delegated_job_card(job: dict[str, object]) -> dict[str, object]:
 
 
 def _session_lead_card(payload: dict[str, object]) -> dict[str, object]:
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     return {
         "id": payload.get("id"),
         "provider": "decision_core",
@@ -740,7 +741,7 @@ def _dominant_status(current: str, incoming: str) -> str:
 
 
 def _build_governance_summary(payload: dict[str, object]) -> dict[str, object]:
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     verdict = payload.get("decision_verdict", {}) if isinstance(payload.get("decision_verdict"), dict) else {}
     compliance = payload.get("compliance", {}) if isinstance(payload.get("compliance"), dict) else {}
     provider_runtime = (
@@ -798,7 +799,7 @@ def _build_evidence_summary(
 ) -> dict[str, object]:
     rounds = payload.get("review_rounds", []) if isinstance(payload.get("review_rounds"), list) else []
     gaps = payload.get("gaps", []) if isinstance(payload.get("gaps"), list) else []
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     jobs = summary.get("delegated_jobs", []) if isinstance(summary.get("delegated_jobs"), list) else []
     providers = sorted({str(job.get("provider")) for job in jobs if isinstance(job, dict) and job.get("provider")})
     findings = [
@@ -840,7 +841,7 @@ def _build_operator_summary(
     graph: WorkUnitGraph | None,
     messages: list[dict[str, object]],
 ) -> dict[str, object]:
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     verdict = payload.get("decision_verdict", {}) if isinstance(payload.get("decision_verdict"), dict) else {}
     compliance = payload.get("compliance", {}) if isinstance(payload.get("compliance"), dict) else {}
     approved_plan = payload.get("approved_plan", {}) if isinstance(payload.get("approved_plan"), dict) else {}

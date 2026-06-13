@@ -34,6 +34,7 @@
 - `observability.py`: Lightweight event recording for orchestration runs.
 - `orchestrator.py`: End-to-end adaptive orchestration pipeline.
 - `planning.py`: Planning governance models and team orchestration helpers.
+- `planning_governance.py`: Governance snapshot helpers derived from planning-session state.
 - `planning_support.py`: Compliance and session-guidance helpers for planning workflows.
 - `policies.py`: Policy profiles for deriving modes from the success-first parent architecture.
 - `review.py`: Structured review result models.

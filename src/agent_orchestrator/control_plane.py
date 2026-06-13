@@ -40,6 +40,7 @@ from agent_orchestrator.events import EventStore
 from agent_orchestrator.jobs import AgentJob, FileJobRuntime, now_iso
 from agent_orchestrator.memory import MemoryRecord, MemoryStore
 from agent_orchestrator.planning import PlanSession
+from agent_orchestrator.planning_governance import get_governance_status
 from agent_orchestrator.planning_support import build_document_context_package
 
 
@@ -211,8 +212,8 @@ def build_context_packet(
 
 
 def build_strategy_decision(session: PlanSession, workspace_state: dict[str, object] | None = None) -> dict[str, object]:
-    summary = session.to_dict().get("status_summary", {})
-    status = summary if isinstance(summary, dict) else {}
+    payload = session.to_dict()
+    status = get_governance_status(payload)
     decision = session.decision_verdict.to_dict() if session.decision_verdict else {}
     next_task = status.get("next_executable_task") if isinstance(status.get("next_executable_task"), dict) else None
     current_checkpoint_objective = (
@@ -563,8 +564,7 @@ def _read_plan_sessions(plans_root: Path) -> list[PlanSession]:
 
 
 def _session_index_entry(session: PlanSession) -> dict[str, object]:
-    summary = session.to_dict().get("status_summary", {})
-    status = summary if isinstance(summary, dict) else {}
+    status = get_governance_status(session.to_dict())
     return {
         "id": session.id,
         "status": session.status,
@@ -985,7 +985,7 @@ def _generated_approval_items(sessions: list[PlanSession]) -> list[ApprovalItem]
     items: list[ApprovalItem] = []
     for session in sessions:
         payload = session.to_dict()
-        summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+        summary = get_governance_status(payload)
         if session.status in {"blocked", "awaiting_human", "awaiting_human_confirmation"}:
             reason = str(summary.get("primary_reason") or summary.get("block_detail") or f"Session {session.status} needs human decision.")
             items.append(

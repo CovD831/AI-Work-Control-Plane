@@ -11,6 +11,7 @@ from pathlib import Path
 from agent_orchestrator.control_plane_artifacts import resolve_root as _resolve_root
 from agent_orchestrator.control_plane_constants import CONTROL_PLANE_FORMATS
 from agent_orchestrator.jobs import now_iso
+from agent_orchestrator.planning_governance import get_governance_status
 from agent_orchestrator.planning import PlanSession
 
 
@@ -72,7 +73,7 @@ def build_run_ledger(
 
 def _run_ledger_plan_entry(session: PlanSession, approval_items: list[object]) -> dict[str, object]:
     payload = session.to_dict()
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     approval_count = sum(
         1
         for item in approval_items

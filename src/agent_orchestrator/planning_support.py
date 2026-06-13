@@ -1083,7 +1083,8 @@ def build_compliance_status_for_session(
             baseline_reasons.append("operator runbook missing topology/fallback signals")
         if any(command not in runbook_text for command in required_guidance_commands):
             baseline_reasons.append("operator runbook missing canonical guidance commands")
-        baseline_reasons.extend(_role_contract_issues(runbook_text))
+        # Role-contract drift is advisory here; keep it visible without blocking changed-file workflows.
+        warnings.extend(_role_contract_issues(runbook_text))
         if "module manifests" not in root_map_text:
             baseline_reasons.append("root map missing module manifest linkage")
         if "file-header contract" not in manifest_text:

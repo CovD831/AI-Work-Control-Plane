@@ -14,6 +14,7 @@ from agent_orchestrator.control_plane_artifacts import stable_id as _stable_id
 from agent_orchestrator.control_plane_constants import CONTROL_PLANE_FORMATS, RECOVERY_TIMELINE_STATUSES
 from agent_orchestrator.jobs import now_iso
 from agent_orchestrator.planning import PlanSession
+from agent_orchestrator.planning_governance import get_governance_status
 
 
 def build_recovery_timeline(
@@ -98,7 +99,7 @@ def build_recovery_recommendation(
     evidence_bundle: dict[str, object] | None = None,
 ) -> dict[str, object]:
     payload = session.to_dict()
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     timeline_summary = (
         recovery_timeline.get("summary", {})
         if isinstance(recovery_timeline, dict) and isinstance(recovery_timeline.get("summary"), dict)
@@ -123,6 +124,7 @@ def build_recovery_recommendation(
     current_status = str(timeline_summary.get("current_status") or summary.get("primary_action") or session.status)
     required = _recovery_required_approval_or_evidence(
         current_status,
+        session_status=session.status,
         compliance=compliance,
         approval_state=approval_state,
         evidence_bundle=evidence_bundle,
@@ -135,7 +137,10 @@ def build_recovery_recommendation(
     if evidence_bundle is not None:
         artifact_refs.append("agent_orchestrator.evidence_bundle.v1")
     compliance_first = bool(compliance.get("blocking")) or current_status == "compliance_blocked"
-    human_required = bool(approval_state.get("human_required")) or current_status in {"awaiting_human", "approval_blocked"}
+    human_required = bool(approval_state.get("human_required")) or session.status in {
+        "awaiting_human",
+        "awaiting_human_confirmation",
+    } or current_status in {"awaiting_human", "approval_blocked", "awaiting_human_confirmation"}
     may_resume = (
         not compliance_first
         and not human_required
@@ -318,7 +323,7 @@ def _recovery_timeline_session_entries(
     evidence_bundle: dict[str, object],
 ) -> list[dict[str, object]]:
     payload = session.to_dict()
-    summary = payload.get("status_summary", {}) if isinstance(payload.get("status_summary"), dict) else {}
+    summary = get_governance_status(payload)
     entries = [
         {
             "id": f"timeline:{session.id}:started",
@@ -534,6 +539,7 @@ def _command_for_action(session: PlanSession, action: str) -> str:
 def _recovery_required_approval_or_evidence(
     current_status: str,
     *,
+    session_status: str,
     compliance: dict[str, object],
     approval_state: dict[str, object],
     evidence_bundle: dict[str, object] | None,
@@ -541,7 +547,8 @@ def _recovery_required_approval_or_evidence(
     evidence_status = evidence_bundle.get("status") if isinstance(evidence_bundle, dict) else None
     return {
         "approval_required": bool(approval_state.get("human_required"))
-        or current_status in {"awaiting_human", "approval_blocked"},
+        or session_status in {"awaiting_human", "awaiting_human_confirmation"}
+        or current_status in {"awaiting_human", "approval_blocked", "awaiting_human_confirmation"},
         "evidence_required": current_status == "evidence_blocked" or evidence_status == "blocked",
         "compliance_required": bool(compliance.get("blocking")) or current_status == "compliance_blocked",
         "reason": current_status,

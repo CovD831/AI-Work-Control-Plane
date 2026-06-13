@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 # DEPS: __future__, agent_orchestrator, dataclasses, json, pathlib, tempfile, typing, uuid
-# RESPONSIBILITY: Coordinate planning governance sessions, compliance gating, and approved-plan execution handoff.
+# RESPONSIBILITY: Own planning-session state, approval gating, and approved-plan execution handoff.
+# Governed audit/compliance summaries are derived from session state rather than treated as a separate planner.
 # MODULE: decision_core
 # ---
 
@@ -28,6 +29,7 @@ from agent_orchestrator.memory import KnowledgeStore, MemoryStore
 from agent_orchestrator.messages import MessageRouter, MessageStore
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode, get_policy
+from agent_orchestrator.planning_governance import build_governance_snapshot as _build_governance_snapshot
 from agent_orchestrator.planning_support import (
     ProcessDocumentSpec as ProcessDocumentSpec,
     build_docs_index,
@@ -545,6 +547,8 @@ class RoundController:
 
 @dataclass(slots=True)
 class PlanSession:
+    """Mutable control-plane session state for drafting, review, approval, and execution handoff."""
+
     id: str
     requirement: str
     stage_target: str
@@ -562,6 +566,7 @@ class PlanSession:
     doc_sync: dict[str, object] | None = None
     docs_context_snapshot: dict[str, object] | None = None
     compliance: dict[str, object] | None = None
+    governance_snapshot: dict[str, object] | None = None
 
     @classmethod
     def new(cls, *, requirement: str, stage_target: str) -> "PlanSession":
@@ -591,6 +596,7 @@ class PlanSession:
             doc_sync=None,
             docs_context_snapshot=None,
             compliance=None,
+            governance_snapshot=None,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -609,11 +615,13 @@ class PlanSession:
             "resume": self.resume.to_dict(),
             "gate_verdict": self.gate_verdict,
             "decision_verdict": self.decision_verdict.to_dict() if self.decision_verdict else None,
+            # Compatibility summary for existing CLI/UI consumers only; prefer governance_snapshot.governance_status for new code.
             "status_summary": _build_status_summary(self),
             "doc_sync": self.doc_sync,
             "docs_context_snapshot": self.docs_context_snapshot,
             "docs_context_snapshot_summary": summarize_document_context_snapshot(self.docs_context_snapshot),
             "compliance": self.compliance,
+            "governance_snapshot": self.governance_snapshot,
         }
 
     @classmethod
@@ -646,6 +654,9 @@ class PlanSession:
             if isinstance(data.get("docs_context_snapshot"), dict)
             else None,
             compliance=data.get("compliance"),
+            governance_snapshot=data.get("governance_snapshot")
+            if isinstance(data.get("governance_snapshot"), dict)
+            else None,
         )
 
 
@@ -696,6 +707,8 @@ def _dedupe_preserve_order(items: list[str] | Any) -> list[str]:
 
 @dataclass(slots=True)
 class PlanStore:
+    """Persistence boundary for control-plane session state and derived summaries."""
+
     root: Path | str = ".agent_orchestrator/plans"
 
     def __post_init__(self) -> None:
@@ -748,6 +761,7 @@ class PlanStore:
             },
         )
         if session.status in {"blocked", "awaiting_human"}:
+            blocking_reasons, _warnings = _session_blocking_signals(session)
             memory_store.append(
                 namespace="postmortem",
                 session_id=session.id,
@@ -755,7 +769,10 @@ class PlanStore:
                 role="lead",
                 provider="decision_core",
                 summary=f"Session {session.id} blocked with status {session.status}.",
-                payload={"status": session.status, "blocking_reasons": session.to_dict()["status_summary"]["blocking_reasons"]},
+                payload={
+                    "status": session.status,
+                    "blocking_reasons": blocking_reasons,
+                },
             )
 
     def read_session(self, session_id: str) -> PlanSession:
@@ -901,6 +918,7 @@ class TeamOrchestrator:
             session.structured_brief.review_policy,
             review_policy_override,
         )
+        session.governance_snapshot = _build_governance_snapshot(session)
         message_router = MessageRouter(self.store.message_store())
 
         lead_job = self._start_job(
@@ -976,6 +994,7 @@ class TeamOrchestrator:
         session.structured_brief.decision_rationale = _build_decision_rationale(requirement, session, policy)
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime)
+        session.governance_snapshot = _build_governance_snapshot(session)
 
         self.store.write_session(session)
         self.store.knowledge_store().append(
@@ -1522,6 +1541,7 @@ class TeamOrchestrator:
             ),
         )
         session = _reconcile_linked_execution_state(session, self.orchestrator.run_store)
+        session.governance_snapshot = _build_governance_snapshot(session)
         normalized = self.round_controller.normalize_resume(session)
         normalized.structured_brief.checklist_summary = _build_checklist_summary(normalized.checklist)
         if apply:
@@ -1567,6 +1587,7 @@ class TeamOrchestrator:
                 run_store=self.orchestrator.run_store,
                 plans_root=self.store.root,
             )
+        session.governance_snapshot = _build_governance_snapshot(session)
         self.store.knowledge_store().append(
             session_id=session.id,
             artifact_type="decisions",
@@ -1621,6 +1642,7 @@ class TeamOrchestrator:
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         session.doc_sync = self.refresh_documentation_sync()
         session.docs_context_snapshot = self._build_docs_context_snapshot(session, query=summary)
+        session.governance_snapshot = _build_governance_snapshot(session)
         self.store.write_session(session)
         MessageRouter(self.store.message_store()).build_handoff(
             session_id=session.id,
@@ -1680,6 +1702,7 @@ class TeamOrchestrator:
                 session.structured_brief.provider_recommendation["provider_health_snapshot"] = provider_health_snapshot
             session.decision_verdict = _build_decision_verdict(session, runtime=self.runtime, approval_status="approved")
             session.approved_plan = _build_approved_plan(session)
+        session.governance_snapshot = _build_governance_snapshot(session)
 
         self.orchestrator.run_store.__post_init__()
         session.status = "executing"
@@ -1748,6 +1771,7 @@ class TeamOrchestrator:
         )
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         session.doc_sync = self.refresh_documentation_sync()
+        session.governance_snapshot = _build_governance_snapshot(session)
         session.docs_context_snapshot = self._build_docs_context_snapshot(session, query=execution_requirement)
         self.store.write_session(session)
         MessageRouter(self.store.message_store()).build_handoff(
@@ -2338,14 +2362,16 @@ def _execution_context_policy_payload(
 
 
 def _build_blocker_session_summary(session: PlanSession) -> BlockerSessionSummary:
-    status_summary = _build_status_summary(session)
     guidance = build_session_guidance(session)
+    blocking_reasons, warnings = _session_blocking_signals(session)
+    required_open = [gap for gap in session.gaps if gap.required and gap.status != "closed"]
+    optional_open = [gap for gap in session.gaps if not gap.required and gap.status != "closed"]
+    delegated_jobs, _delegated_job_failed, _delegated_job_provider = _collect_delegated_jobs_support(session)
 
     evidence: dict[str, object] = {
-        "required_open_gaps": int(status_summary.get("open_required_gaps", 0)),
-        "optional_open_followups": int(status_summary.get("open_optional_followups", 0)),
+        "required_open_gaps": len(required_open),
+        "optional_open_followups": len(optional_open),
     }
-    delegated_jobs = status_summary.get("delegated_jobs", [])
     failed_jobs = [
         job for job in delegated_jobs if isinstance(job, dict) and str(job.get("status")) == "failed"
     ]
@@ -2373,8 +2399,8 @@ def _build_blocker_session_summary(session: PlanSession) -> BlockerSessionSummar
         "primary_reason": guidance.primary_reason,
         "resume_action": guidance.resume_action,
         "resume_reason": guidance.resume_reason,
-        "blocking_reasons": [str(item) for item in status_summary.get("blocking_reasons", [])],
-        "warnings": [str(item) for item in status_summary.get("warnings", [])],
+        "blocking_reasons": blocking_reasons,
+        "warnings": warnings,
         "recommended_commands": guidance.recommended_commands,
         "recovery_actions": guidance.recovery_actions,
         "evidence": evidence,
@@ -2692,7 +2718,34 @@ def _next_executable_checklist_item(checklist: list[PlanChecklistItem]) -> PlanC
     return None
 
 
+def _session_blocking_signals(session: PlanSession) -> tuple[list[str], list[str]]:
+    required_open = [gap for gap in session.gaps if gap.required and gap.status != "closed"]
+    blocking_reasons: list[str] = []
+    compliance_blocking_reasons = _compliance_blocking_reasons_support(session)
+    compliance_warnings = _compliance_warnings_support(session)
+    baseline_warnings = [
+        str(item) for item in session.compliance.get("baseline_warnings", [])
+    ] if isinstance(session.compliance, dict) else []
+    delegated_jobs, delegated_job_failed, _delegated_job_provider = _collect_delegated_jobs_support(session)
+
+    if compliance_blocking_reasons:
+        blocking_reasons.extend(compliance_blocking_reasons)
+    elif delegated_job_failed:
+        blocking_reasons.append("at least one delegated job failed")
+    elif session.status == "needs_revision" and required_open:
+        blocking_reasons.append(f"{len(required_open)} required gaps remain open")
+    elif compliance_warnings:
+        if baseline_warnings:
+            blocking_reasons.extend(baseline_warnings)
+        else:
+            blocking_reasons.append(f"{len(compliance_warnings)} non-blocking compliance warning(s) remain")
+
+    return [str(item) for item in blocking_reasons], [str(item) for item in compliance_warnings]
+
+
 def _task_pool_for_session(session: PlanSession) -> list[dict[str, object]]:
+    """Expose session checklist items as executable control-plane tasks."""
+
     completed_labels = {item.label for item in session.checklist if item.completed}
     tasks: list[dict[str, object]] = []
     for item in session.checklist:
@@ -2772,6 +2825,8 @@ def _set_checklist_completed(session: PlanSession, label: str, completed: bool) 
 
 
 def _build_plan_execution_contract(session: PlanSession) -> dict[str, object]:
+    """Convert an approved session into the execution-plane contract."""
+
     decision_verdict = session.decision_verdict.to_dict() if session.decision_verdict else {}
     provider_recommendation = dict(decision_verdict.get("selected_provider_runtime", {}))
     contract = ExecutionContract(
@@ -2847,6 +2902,8 @@ def _execution_contract_compliance_snapshot(compliance: dict[str, object] | None
 
 
 def _recommend_topology(policy: Any, requirement: str, subtasks: list[PlanSubtask]) -> dict[str, object]:
+    """Derive planning topology from policy and session-level task shape."""
+
     lowered = requirement.lower()
     dependency_heavy = len(subtasks) >= 3
     high_parallelism = _requirement_or_subtasks_look_parallel(lowered, subtasks)
@@ -2892,6 +2949,8 @@ def _requirement_or_subtasks_look_parallel(requirement: str, subtasks: list[Plan
 
 
 def _recommend_review_policy(requirement: str, topology_recommendation: dict[str, object]) -> dict[str, object]:
+    """Select the review loop for the current session and topology."""
+
     lowered = requirement.lower()
     recommended_topology = str(topology_recommendation.get("recommended_topology", "team"))
     signals = dict(topology_recommendation.get("signals", {}))
@@ -3012,6 +3071,8 @@ def _recommend_provider_runtime(
     reviewer_fallback_reason: str | None = None,
     reviewer_fallback_detail: str | None = None,
 ) -> dict[str, object]:
+    """Map the session's planning/review roles to provider/runtime recommendations."""
+
     recommendation = {
         "author": author_provider,
         "reviewer": reviewer_provider,
@@ -3053,6 +3114,8 @@ def _summarize_review_disputes(review_rounds: list[PlanReviewRound]) -> list[str
 
 
 def _build_decision_rationale(requirement: str, session: PlanSession, policy: Any) -> list[str]:
+    """Summarize why the planner is holding or releasing the session."""
+
     rationale = [
         "Decision core keeps the approved plan as the execution entrypoint.",
         f"Selected mode preference is {policy.mode.value}.",
@@ -3118,6 +3181,8 @@ def _build_decision_verdict(
 
 
 def _build_review_summary(session: PlanSession) -> dict[str, object]:
+    """Aggregate review outcomes for governance and audit consumers."""
+
     reviewed_rounds = [round_ for round_ in session.review_rounds if round_.review_result is not None]
     severity_counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
     role_reviews: list[dict[str, object]] = []
@@ -3179,14 +3244,14 @@ def _top_review_severity(findings: list[Finding]) -> str | None:
 
 
 def build_operator_runbook(session: PlanSession) -> list[str]:
-    status_summary = _build_status_summary(session)
     guidance = build_session_guidance(session)
-    required_open = int(status_summary.get("open_required_gaps", 0))
-    optional_open = int(status_summary.get("open_optional_followups", 0))
-    delegated_jobs = status_summary.get("delegated_jobs", [])
+    required_open = len([gap for gap in session.gaps if gap.required and gap.status != "closed"])
+    optional_open = len([gap for gap in session.gaps if not gap.required and gap.status != "closed"])
+    delegated_jobs, _delegated_job_failed, _delegated_job_provider = _collect_delegated_jobs_support(session)
     failed_jobs = [job for job in delegated_jobs if job.get("status") == "failed"]
     compliance_blocking_reasons = _compliance_blocking_reasons_support(session)
     compliance_warnings = _compliance_warnings_support(session)
+    execution_context_policy = _session_execution_context_policy(session)
 
     if guidance.block_source == "compliance":
         detail = compliance_blocking_reasons[0]
@@ -3247,7 +3312,7 @@ def build_operator_runbook(session: PlanSession) -> list[str]:
     if session.status == "approved_for_execution":
         return [
             f"Run `{guidance.recommended_commands[0]}` to start execution from the approved plan.",
-            f"Use execution context policy `{status_summary.get('execution_context_policy', {}).get('policy', 'resume_if_same_task')}` unless the operator overrides it.",
+            f"Use execution context policy `{execution_context_policy.get('policy', 'resume_if_same_task')}` unless the operator overrides it.",
             "Use `team status` or `team summary` if you need to confirm the session is still in the approved phase.",
             "Inspect the linked execution run after execution starts if you need deeper provenance or result details.",
         ]
@@ -3605,6 +3670,28 @@ def _approval_state_for_session(session: PlanSession, guidance: SessionGuidance)
         "gate_verdict": session.gate_verdict,
         "primary_action": guidance.primary_action,
         "human_required": state == "awaiting_human" or guidance.primary_action in {"approve", "human_decision"},
+    }
+
+
+def _runtime_health_for_session(session: PlanSession) -> dict[str, object]:
+    delegated_jobs, delegated_job_failed, delegated_job_in_progress = _collect_delegated_jobs_support(session)
+    return {
+        "job_count": len(delegated_jobs),
+        "failed_job_count": sum(1 for job in delegated_jobs if job.get("status") == "failed"),
+        "in_progress_job_count": sum(1 for job in delegated_jobs if job.get("status") == "in_progress"),
+        "linked_execution_run_id": session.resume.linked_execution_run_id,
+        "delegated_job_failed": delegated_job_failed,
+        "delegated_job_in_progress": delegated_job_in_progress,
+    }
+
+
+def _usage_cost_placeholder() -> dict[str, object]:
+    return {
+        "available": False,
+        "input_tokens": None,
+        "output_tokens": None,
+        "estimated_cost_usd": None,
+        "source": "placeholder",
     }
 
 
