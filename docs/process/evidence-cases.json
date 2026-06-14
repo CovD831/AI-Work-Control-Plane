@@ -88,5 +88,65 @@
     "operator_goal": "confirm interrupted work can be resumed from external artifacts",
     "expected_signals": ["recovery_guidance", "interruption_recovery", "doc_sync", "runtime_fidelity"],
     "runtime_expectation": "resume guidance is recommendation-only and stays gated by approved execution"
+  },
+  {
+    "label": "repair_resume_success",
+    "requirement": "Resume a failed native verification attempt, apply remaining repair budget, and prove re-verify success through runtime, workspace, and UI evidence surfaces",
+    "scenario_type": "repair_resume_success",
+    "mode": "success_first",
+    "risk_profile": "high",
+    "operator_goal": "prove the native runtime can close a verify failure through repair and governed resume without external coding-agent help",
+    "expected_signals": ["recovery_guidance", "interruption_recovery", "doc_sync", "cost_latency"],
+    "runtime_expectation": "persisted verify failure resumes through remaining retry budget and ends with native verification artifact evidence"
+  },
+  {
+    "label": "multi_milestone_program_execution",
+    "requirement": "Advance a multi-milestone native workstream through explore, edit, verify, checkpoint, and governed continue while keeping delegation and recovery boundaries visible",
+    "scenario_type": "program_execution",
+    "mode": "success_first",
+    "risk_profile": "high",
+    "operator_goal": "prove the native path can express and recover a multi-milestone program workstream instead of only closing a single bounded task",
+    "expected_signals": ["recovery_guidance", "interruption_recovery", "doc_sync", "cost_latency"],
+    "runtime_expectation": "program-level posture remains visible across checkpoint, continue, and recovery-oriented operator surfaces"
+  },
+  {
+    "label": "repo_task_acceptance",
+    "requirement": "Replace \"VALUE = 1\" with \"VALUE = 2\" in src/agent_orchestrator/stub.py and replace \"FLAG = 0\" with \"FLAG = 1\" in src/agent_orchestrator/compliance_signal.py and append \"team runbook updated\" to docs/process/agent-team-operator-runbook.md",
+    "scenario_type": "repo_task_acceptance",
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "prove at least one native run can satisfy a stronger multi-file native repository task acceptance contract",
+    "expected_signals": ["recovery_guidance", "doc_sync", "cost_latency"],
+    "runtime_expectation": "bounded native multi-file code edits plus docs surface update with verification on verifiable code targets only"
+  },
+  {
+    "label": "repo_task_acceptance_compliance",
+    "requirement": "Replace \"FLAG = 0\" with \"FLAG = 1\" in src/agent_orchestrator/compliance_signal.py and replace \"return {\\\"status\\\": \\\"stub\\\"}\" with \"return {\\\"status\\\": \\\"implemented\\\", \\\"checks\\\": 1}\" in src/agent_orchestrator/summary_helper.py and append \"hook-based compliance checks updated\" to docs/process/agent-orchestrator-implementation-process.md",
+    "scenario_type": "repo_task_acceptance",
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "prove the stronger native repo-task acceptance contract holds for a second multi-file compliance-facing task shape",
+    "expected_signals": ["recovery_guidance", "doc_sync", "cost_latency"],
+    "runtime_expectation": "bounded native multi-file code edits plus compliance-process surface update with verification on verifiable code targets only"
+  },
+  {
+    "label": "repo_task_acceptance_helper_impl",
+    "requirement": "Replace \"VALUE = 1\" with \"VALUE = 2\" in src/agent_orchestrator/stub.py and replace \"return {\\\"status\\\": \\\"stub\\\"}\" with \"return {\\\"status\\\": \\\"implemented\\\", \\\"checks\\\": 1}\" in src/agent_orchestrator/summary_helper.py and append \"module manifest updated\" to docs/process/module-manifest.md",
+    "scenario_type": "repo_task_acceptance",
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "prove the stronger native repo-task acceptance contract holds for a multi-file helper implementation task",
+    "expected_signals": ["recovery_guidance", "doc_sync", "cost_latency"],
+    "runtime_expectation": "bounded helper implementation updates plus process-surface update with verification on verifiable code targets only"
+  },
+  {
+    "label": "repo_task_acceptance_long_chain_native_first",
+    "requirement": "Replace \"VALUE = 1\" with \"VALUE = 2\" in src/agent_orchestrator/stub.py and replace \"FLAG = 0\" with \"FLAG = 1\" in src/agent_orchestrator/compliance_signal.py and replace \"return {\\\"status\\\": \\\"stub\\\"}\" with \"return {\\\"status\\\": \\\"implemented\\\", \\\"checks\\\": 1}\" in src/agent_orchestrator/summary_helper.py and append \"team runbook updated\" to docs/process/agent-team-operator-runbook.md and append \"module manifest updated\" to docs/process/module-manifest.md and append \"hook-based compliance checks updated\" to docs/process/agent-orchestrator-implementation-process.md",
+    "scenario_type": "repo_task_acceptance",
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "prove a longer native-first repository task can close through exploration, multi-file editing, verification, and docs synchronization without external help",
+    "expected_signals": ["recovery_guidance", "doc_sync", "cost_latency"],
+    "runtime_expectation": "native exploration, multi-file mutation, verification, and repo-facing surface updates stay on the native path"
   }
 ]

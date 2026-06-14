@@ -71,6 +71,15 @@ Runtime Bridge Fidelity Track 继续补齐 provider/runtime 会话保真度：
 
 Runtime Bridge dogfood 以 `docs/process/ai-work-control-plane-runtime-bridge-dogfood-evidence.md` 为当前运行时保真度证据基准。
 
+Native Coding Agent dogfood 以 `docs/process/native-coding-agent-dogfood-evidence.md` 为当前 native-only 任务类证据基准，覆盖 approval pause/resume success、verify failure exhausted-recovery block、verify failure repair-resume success 三类链路。
+
+当前 native coding agent 主路径形态见 `docs/process/native-coding-agent-main-path.md`，其中说明了：
+
+- 原生工具面 `read/search/glob/structured_patch/verify`
+- native planner 主路径
+- native / external unified adapter contract
+- session / runtime / UI 已暴露的主链路证据
+
 ## Responsibility Contracts
 
 `team roles` 是职责契约的标准入口。它不是为了模拟公司组织架构，而是为了说明不同治理职责、执行职责和 artifact 职责分别有哪些 runtime mode、allowed actions、forbidden actions、required outputs、structured inputs、structured outputs、semi-autonomous collaboration capabilities 和 command refs。
@@ -315,8 +324,13 @@ Phase 5 发布候选收尾时，operator 不需要猜测“真实工作流证据
   - `followup_checklist_recovery`
   - `high_risk_auth_migration`
   - `parallel_validation_modules`
+  - `repo_task_acceptance`
 - 当前 evidence 汇总：`docs/process/v1x-evidence-report.md`
   - 检查 `case_count`、`average_benefit_score`、`team_cases_with_execution_run`、`provenance_present`、`recovery_guidance_present`。
+  - 检查 `native_runtime_closure_ready_cases` 与 `native_repo_task_acceptance_ready_cases`。
+  - 检查 `stronger_repo_task_acceptance_signal_visible_cases`，确认 stronger repo-task acceptance 已进入默认报告链，而不是仅存在于 runtime payload。
+  - 至少应有一条 `native_repo_task_acceptance: ready=True`，而不只是 runtime closure ready。
+  - UI operator summary 应暴露 `closure_strength`，区分 `runtime_closure_only` 与 `repo_task_acceptance_ready`。
 - evidence 趋势：`docs/process/v1x-evidence-trend.md`
   - 检查平均收益、execution run、direct-run limitation 和 team advantage delta 是否退化。
 - 本地 JSON 输出默认位置：`.agent_orchestrator/evidence/real-tasks.json`
@@ -339,6 +353,9 @@ PYTHONPATH=src python -m agent_orchestrator.cli team check-compliance
 
 - runbook 只指向可提交文档和可再生成的 local evidence，不要求外部服务。
 - evidence cases 覆盖 standard、followup、high_risk、parallel 四类场景。
+- benchmark/report 默认样本已扩展到 `standard`、`followup`、`high_risk`、`parallel`、`ui_workflow`、`compliance_blocking`、`runtime_fidelity`、`interruption_recovery`，避免只用单一 happy-path 证明 native 闭环。
+- benchmark/report 默认样本现在还包含 `repo_task_acceptance`，用于证明至少一条真实 repo task shape 已能通过更强验收。
+- native closure acceptance 目前以六项检查为准：`native_only_execution`、`stable_step_loop`、`explicit_context_select_and_observation`、`verify_repair_resume_closure`、`control_plane_authority`、`auditable_artifacts_and_surfaces`。
 - `v1x-hardening-workflow-report.md` 记录真实 friction 和修复，不只记录 happy path。
 - 发布候选判断以 `team setup` 的 release_readiness、candidate checklist、evidence report、targeted tests 和 compliance 共同为准。
 - 发布候选还要检查 `team setup --runtime command --format json` 中的 `release_readiness.runtime_measurement` 和 `release_readiness.checklist.runtime_measurement`；token/cost placeholder 本身不阻塞 RC，除非 provider runtime 声称可上报却缺失。

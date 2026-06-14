@@ -8,22 +8,26 @@ AI-Work-Control-Plane 是一个**面向长周期本地 coding agent 的可靠性
 
 ## 先读什么
 
-如果你想最快跟上当前仓库的最新叙事，建议先按这个顺序看：
+如果你想最快跟上当前仓库的当前状态，建议只看这组“当前有效”的入口：
 
 1. [Project Index](docs/process/project-index.md)
 2. [README.md](README.md)
 3. [Root Map](docs/process/root-map.md)
 4. [Context Map](docs/process/context-map.md)
-5. [AI Work Control Plane Master Plan](docs/process/ai-work-control-plane-master-plan.md)
-6. [Agent Evolution Master Plan](docs/process/agent-evolution-master-plan.md)
+5. [Module Manifest](docs/process/module-manifest.md)
+6. [Agent Orchestrator Implementation Process](docs/process/agent-orchestrator-implementation-process.md)
+7. [Agent Team Operator Runbook](docs/process/agent-team-operator-runbook.md)
 
-今天新增或显著更新的说明材料主要是：
+下面这些是补充阅读，不再作为第一优先级入口：
 
+- [docs/process/ai-work-control-plane-master-plan.md](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/ai-work-control-plane-master-plan.md)
+- [docs/process/agent-evolution-master-plan.md](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/agent-evolution-master-plan.md)
 - [PROJECT_BREAKDOWN.md](/Users/abab/Desktop/AI-Work-Control-Plane/PROJECT_BREAKDOWN.md)
 - [PROJECT_BREAKDOWN_V2.md](/Users/abab/Desktop/AI-Work-Control-Plane/PROJECT_BREAKDOWN_V2.md)
 - [EXECUTION_PLANE_DEEP_DIVE.md](/Users/abab/Desktop/AI-Work-Control-Plane/EXECUTION_PLANE_DEEP_DIVE.md)
 - [INTERVIEW_PREP.md](/Users/abab/Desktop/AI-Work-Control-Plane/INTERVIEW_PREP.md)
-- [docs/process/agent-evolution-master-plan.md](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/agent-evolution-master-plan.md)
+
+历史叙事和阶段材料请优先当作“演化记录”而不是当前产品定义来读。
 
 ## 为什么这是一个 Agent 项目
 
@@ -41,6 +45,16 @@ AI-Work-Control-Plane 是一个**面向长周期本地 coding agent 的可靠性
 这个仓库并不试图成为 provider 原生桥接层、持久 provider session 持有者、tmux 替代品，也不试图和 `Codex` / `Claude Code` 竞争“谁更会规划和写代码”。它的产品核心，是这些 runtime 之上的外部治理层。
 
 随着模型能力增强，显式编排本身未来可能会变得不那么重要；但状态、证据、审批、记忆和恢复仍然应该留在模型之外，作为可审计的系统职责。也就是说，**session 可以属于 provider，program state 应该属于 control plane**。
+
+## 文档分层
+
+为了减少叙事重叠，这个仓库现在把文档分成三层：
+
+1. **Canonical**: 当前有效、应优先遵循的文档。
+2. **Supplementary**: 对现状有帮助，但不是第一阅读顺序的材料。
+3. **Historical**: 阶段报告、讲解稿、面试稿、旧叙事和演化记录。
+
+如果某份文档和 README、Project Index、Context Map 的说法冲突，优先以这三份入口和实现代码为准。
 
 ## 它具体做什么
 
@@ -148,6 +162,7 @@ PYTHONPATH=src python -m agent_orchestrator.cli team governance-bundle inspect .
 - [决策核心 / 执行拓扑 / 运行时分层说明](docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
 - [上下文地图](docs/process/context-map.md)
 - [项目索引](docs/process/project-index.md)
+- [Native Coding Agent Main Path](docs/process/native-coding-agent-main-path.md)
 - [长周期主执行计划](docs/process/长周期主执行计划.md)
 - [操作手册](docs/process/agent-team-operator-runbook.md)
 - [架构决策记录](docs/decisions/)
