@@ -17,6 +17,10 @@ def write_minimal_process_docs(root: Path) -> None:
         '"""Stub module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Provide a compliant module for minimal process-doc test fixtures.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
         encoding="utf-8",
     )
+    (root / "src" / "agent_orchestrator" / "compliance_signal.py").write_text(
+        '"""Compliance-visible stub module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Provide a compliance-visible Python surface for native repo-task acceptance fixtures.\n# MODULE: tests\n# ---\n\nFLAG = 0\n',
+        encoding="utf-8",
+    )
     (root / "README.md").write_text(
         "# temp\n\n- 长周期主执行计划\n- agent-team-operator-runbook.md\n- docs/decisions/\n",
         encoding="utf-8",
@@ -25,15 +29,90 @@ def write_minimal_process_docs(root: Path) -> None:
         "# 长周期主执行计划\n\n- 文档同步 / compliance / hook blocking\n",
         encoding="utf-8",
     )
+    (root / "docs" / "process" / "root-map.md").write_text(
+        "# Root Map\n\n"
+        "- module manifests\n"
+        "- file-header contract\n"
+        "- compliance checks\n"
+        "- context map\n"
+        "- `src/agent_orchestrator/`: primary Python package\n"
+        "- `docs/process/project-index.md`: canonical reading order and recent update index\n"
+        "- `docs/process/context-map.md`: canonical docs and artifact map\n"
+        "- `docs/process/agent-orchestrator-implementation-process.md`: implementation supervision source of truth\n"
+        "- `docs/process/agent-team-operator-runbook.md`: operator workflow recovery guide\n"
+        "- `docs/process/agent-evolution-master-plan.md`: future evolution source of truth\n"
+        "- `docs/architecture/native-coding-agent-upgrade-plan.md`: native coding-agent closure target and phase roadmap\n"
+        "- `docs/process/native-coding-agent-phase-0-baseline.md`: native closure baseline and first proof contract\n"
+        "- `docs/process/native-coding-agent-phase-1-kernel-boundary.md`: native governed kernel boundary hardening\n"
+        "- `docs/process/native-coding-agent-phase-2-step-loop-convergence.md`: native step-loop convergence phase\n"
+        "- `docs/process/native-coding-agent-phase-4-verify-repair-resume.md`: native verify-repair-resume closure phase\n"
+        "- `docs/process/native-coding-agent-phase-5-native-dogfood-track.md`: native dogfood evidence phase\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "context-map.md").write_text(
+        "# Context Map\n\n"
+        "- CODEBASE_MAP-style orientation for the Agent Orchestrator repository\n"
+        "- root map\n"
+        "- project index\n"
+        "- module manifest\n"
+        "- file-header contract\n"
+        "- compliance checks\n"
+        "- `docs/process/root-map.md`: compact repository entry map\n"
+        "- `docs/process/project-index.md`: canonical reading order and recent update index\n"
+        "- `docs/process/module-manifest.md`: module responsibility and dependency map\n"
+        "- `docs/architecture/coding-agent-goal-spec.md`: governed coding-agent runtime goal spec\n"
+        "- `docs/architecture/native-coding-agent-upgrade-plan.md`: native coding-agent closure target and phase contract\n"
+        "- `docs/process/native-coding-agent-phase-0-baseline.md`: closure baseline and proof-bundle contract\n"
+        "- `docs/process/native-coding-agent-phase-1-kernel-boundary.md`: governed kernel boundary hardening\n"
+        "- `docs/process/native-coding-agent-phase-2-step-loop-convergence.md`: step-loop convergence contract\n"
+        "- `docs/process/native-coding-agent-phase-4-verify-repair-resume.md`: verify-repair-resume closure contract\n"
+        "- `docs/process/native-coding-agent-phase-5-native-dogfood-track.md`: native dogfood evidence track\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "module-manifest.md").write_text(
+        "# Module Manifest\n\n- src/agent_orchestrator/\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "project-index.md").write_text(
+        "# Project Index\n\n"
+        "- docs/process/root-map.md\n"
+        "- docs/process/context-map.md\n"
+        "- docs/architecture/native-coding-agent-upgrade-plan.md\n"
+        "- docs/process/native-coding-agent-phase-0-baseline.md\n"
+        "- docs/process/native-coding-agent-phase-1-kernel-boundary.md\n"
+        "- docs/process/native-coding-agent-phase-2-step-loop-convergence.md\n"
+        "- docs/process/native-coding-agent-phase-4-verify-repair-resume.md\n"
+        "- docs/process/native-coding-agent-phase-5-native-dogfood-track.md\n",
+        encoding="utf-8",
+    )
     (root / "docs" / "process" / "agent-orchestrator-implementation-process.md").write_text(
         "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n- docs/decisions/\n",
         encoding="utf-8",
     )
     (root / "docs" / "architecture").mkdir(parents=True, exist_ok=True)
+    (root / "docs" / "architecture" / "coding-agent-goal-spec.md").write_text(
+        "# Coding Agent Goal Spec\n\n- governed execution runtime\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "architecture" / "native-coding-agent-upgrade-plan.md").write_text(
+        "# Native Coding Agent Upgrade Plan\n\n- native closure\n",
+        encoding="utf-8",
+    )
     (root / "docs" / "architecture" / "决策核心-执行拓扑-运行时分层说明.md").write_text(
         "# 决策核心-执行拓扑-运行时分层说明\n\n- 决策核心\n",
         encoding="utf-8",
     )
+    for name in [
+        "native-coding-agent-phase-0-baseline.md",
+        "native-coding-agent-phase-1-kernel-boundary.md",
+        "native-coding-agent-phase-2-step-loop-convergence.md",
+        "native-coding-agent-phase-4-verify-repair-resume.md",
+        "native-coding-agent-phase-5-native-dogfood-track.md",
+    ]:
+        (root / "docs" / "process" / name).write_text(
+            f"# {name}\n\n- native phase fixture\n",
+            encoding="utf-8",
+        )
     (root / "docs" / "process" / "agent-team-operator-runbook.md").write_text(
         "# 治理控制台操作手册\n\n"
         "- team summary\n"

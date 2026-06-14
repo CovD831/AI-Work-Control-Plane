@@ -35,6 +35,13 @@ def test_legacy_execution_runtime_runs_sync_requests() -> None:
     assert result.runtime_name == "legacy"
     assert result.execution_mode == ExecutionMode.LEGACY
     assert result.task_kind == TaskKind.DIRECT_FIX
+    assert result.kernel_contract is not None
+    assert result.kernel_contract.kernel_role == "compatibility_execution_runtime"
+    assert result.payload["kernel_contract"]["provider_runtime_role"] == "execution_backend"
+    assert result.payload["adapter_contract"]["adapter_family"] == "external_hot_plug"
+    assert result.payload["adapter_contract"]["agent_kind"] == "legacy_provider_runtime"
+    assert result.payload["adapter_contract"]["capability_surface"]["format"] == "agent_orchestrator.adapter_capability_surface.v1"
+    assert result.payload["adapter_contract"]["capability_surface"]["comparability"]["comparison_mode"] == "same_contract_two_executors"
     assert result.run_id
     assert result.status in {"completed", "failed", "blocked"}
     assert "run_id" in result.payload
@@ -60,6 +67,8 @@ def test_legacy_execution_runtime_starts_async_requests() -> None:
     assert result.runtime_name == "legacy"
     assert result.run_id
     assert result.status in {"queued", "running", "completed", "failed", "blocked"}
+    assert result.payload["adapter_contract"]["adapter_family"] == "external_hot_plug"
+    assert result.payload["adapter_contract"]["capability_surface"]["governance"]["hot_plug_supported"] is True
     assert "run_id" in result.payload
     assert result.payload["turn_id"] == "turn-2"
 

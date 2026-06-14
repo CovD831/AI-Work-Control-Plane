@@ -11,6 +11,8 @@ import json
 from agent_orchestrator.evidence import (
     EVIDENCE_SCHEMA_VERSION,
     WorkflowEvidenceCase,
+    _build_summary,
+    _postmortem_signals,
     benchmark_evidence_cases,
     compare_workflow_evidence,
     capture_workflow_evidence,
@@ -129,10 +131,42 @@ def test_benchmark_evidence_cases_are_stable_and_reportable(tmp_path) -> None:
         "followup_checklist",
         "auth_migration",
         "parallel_validation",
+        "cli_workflow_hardening",
+        "ui_operator_console_flow",
+        "compliance_blocking_recovery",
+        "runtime_fidelity_inspection",
+        "investigation_to_edit",
+        "multi_file_helper_repair",
+        "interrupted_task_resume",
+        "repair_resume_success",
+        "multi_milestone_program_execution",
+        "repo_task_acceptance",
+        "repo_task_acceptance_compliance",
+        "repo_task_acceptance_helper_impl",
+        "repo_task_acceptance_long_chain_native_first",
     ]
-    assert [case.scenario_type for case in cases] == ["standard", "followup", "high_risk", "parallel"]
+    assert [case.scenario_type for case in cases] == [
+        "standard",
+        "followup",
+        "high_risk",
+        "parallel",
+        "standard",
+        "ui_workflow",
+        "compliance_blocking",
+        "runtime_fidelity",
+        "native_coverage_expansion",
+        "native_coverage_expansion",
+        "interruption_recovery",
+        "repair_resume_success",
+        "program_execution",
+        "repo_task_acceptance",
+        "repo_task_acceptance",
+        "repo_task_acceptance",
+        "repo_task_acceptance",
+    ]
     assert payload["report"]["format"] == "agent_orchestrator.workflow_evidence.v1"
     assert sorted(payload["report"]["scenario_aggregates"]) == ["followup", "standard"]
+    assert payload["summary"]["comparative_benchmark"]["case_count"] == 2
 
 
 def test_load_workflow_evidence_cases_accepts_real_task_case_file(tmp_path) -> None:
@@ -187,13 +221,348 @@ def test_capture_workflow_evidence_records_real_task_postmortem_signals(tmp_path
     case = payload["cases"][0]
     assert case["real_task"]["risk_profile"] == "medium"
     assert case["real_task"]["operator_goal"] == "prove recovery recommendation quality"
+    assert case["team_workflow"]["native_task_proof"]["native_runtime_only"] is True
+    assert case["team_workflow"]["native_task_proof"]["external_coding_agent_required"] is False
+    assert case["team_workflow"]["native_task_proof"]["task_class"] == "bounded_internal_repo_task"
+    assert case["team_workflow"]["status"] == "awaiting_human"
     assert case["postmortem"]["recovery_recommendation_actionable"] is True
     assert case["postmortem"]["cost_latency_ready"] is True
+    assert case["postmortem"]["native_task_proof_present"] is True
+    assert case["postmortem"]["native_task_class"] == "bounded_internal_repo_task"
+    assert case["postmortem"]["native_task_scenario"] == "verify_failure_exhausted_recovery_block"
+    assert case["native_runtime_closure"]["format"] == "agent_orchestrator.native_runtime_closure.v1"
+    assert case["native_runtime_closure"]["task_class"] == "bounded_internal_repo_task"
+    assert case["native_runtime_closure"]["checks"]["native_only_execution"]["passed"] is True
+    assert case["native_runtime_closure"]["checks"]["stable_step_loop"]["passed"] is True
+    assert case["native_runtime_closure"]["checks"]["explicit_context_select_and_observation"]["passed"] is True
+    assert case["native_runtime_closure"]["checks"]["context_engineering_main_path_visible"]["passed"] is True
+    assert case["native_runtime_closure"]["checks"]["context_engineering_main_path_visible"]["evidence"]["isolation_reinjection_mode"] in {"full_inline_context", "digest_focus_subset"}
+    assert case["native_runtime_closure"]["checks"]["verify_repair_resume_closure"]["passed"] is True
+    assert case["native_runtime_closure"]["checks"]["control_plane_authority"]["passed"] is True
+    assert case["native_runtime_closure"]["checks"]["auditable_artifacts_and_surfaces"]["passed"] is True
+    assert case["native_runtime_closure"]["runtime_closure_ready"] is True
+    assert case["native_repo_task_acceptance"]["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
+    assert case["native_repo_task_acceptance"]["real_repo_task_acceptance_ready"] is False
+    assert case["native_complex_repo_task_acceptance"]["format"] == "agent_orchestrator.native_complex_repo_task_acceptance.v1"
+    assert case["native_complex_repo_task_acceptance"]["complex_repo_task_ready"] is False
+    assert case["native_dogfood_surfaces"]["format"] == "agent_orchestrator.native_dogfood_surfaces.v1"
+    assert case["native_dogfood_surfaces"]["surface_projection_ready"] is True
+    assert case["native_dogfood_surfaces"]["proof_scenario"] == "verify_failure_exhausted_recovery_block"
+    assert case["native_dogfood_surfaces"]["surface_checks"]["ui_context_engineering_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["ui_context_engineering_visible"]["evidence"]["context_isolation_reinjection_mode"] in {"full_inline_context", "digest_focus_subset", None}
     assert case["runtime_measurement"]["measurement_status"] == "measured"
     assert case["runtime_measurement"]["command_duration_available"] is True
     assert "recovery_guidance" in case["postmortem"]["matched_expected_signals"]
     assert payload["summary"]["real_task_metrics"]["postmortem_ready_cases"] == 1
     assert payload["summary"]["real_task_metrics"]["cost_latency_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_task_proof_coverage"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_runtime_closure_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_repo_task_acceptance_ready_cases"] == 0
+    assert payload["summary"]["real_task_metrics"]["native_complex_repo_task_acceptance_ready_cases"] == 0
+    assert payload["summary"]["real_task_metrics"]["native_dogfood_surface_ready_cases"] == 1
+
+
+def test_capture_workflow_evidence_can_prove_real_repo_task_acceptance_with_explicit_repo_mutations(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    payload = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(
+                requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and append "team runbook updated" to docs/process/agent-team-operator-runbook.md',
+                label="repo-task-acceptance",
+                scenario_type="repo_task_acceptance",
+                risk_profile="medium",
+                operator_goal="prove one native run can satisfy the stronger multi-file repo-task acceptance contract",
+                expected_signals=("recovery_guidance", "doc_sync", "cost_latency"),
+                runtime_expectation="bounded native multi-file edits with verification on code targets and docs surface updates",
+            )
+        ],
+        project_root=tmp_path,
+    )
+
+    case = payload["cases"][0]
+    runtime_closure = case["native_runtime_closure"]
+    repo_acceptance = case["native_repo_task_acceptance"]
+    complex_repo_acceptance = case["native_complex_repo_task_acceptance"]
+
+    assert runtime_closure["runtime_closure_ready"] is True
+    assert repo_acceptance["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
+    assert repo_acceptance["task_shape_checks"]["repository_exploration_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["verification_command_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["operator_visible_artifacts_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["repo_facing_surface_updated"]["passed"] is True
+    assert repo_acceptance["real_repo_task_acceptance_ready"] is True
+    assert complex_repo_acceptance["format"] == "agent_orchestrator.native_complex_repo_task_acceptance.v1"
+    assert complex_repo_acceptance["complex_repo_task_ready"] is True
+    assert case["native_dogfood_surfaces"]["format"] == "agent_orchestrator.native_dogfood_surfaces.v1"
+    assert case["native_dogfood_surfaces"]["surface_checks"]["runtime_event_stream_repo_task_acceptance_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["workspace_index_repo_task_acceptance_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["ui_repo_task_acceptance_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["runtime_event_stream_complex_repo_task_acceptance_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["workspace_index_complex_repo_task_acceptance_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["ui_complex_repo_task_acceptance_visible"]["passed"] is True
+    assert "src/agent_orchestrator/stub.py" in repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["evidence"]["changed_code_paths"]
+    assert "src/agent_orchestrator/compliance_signal.py" in repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["evidence"]["changed_code_paths"]
+    assert complex_repo_acceptance["complex_task_checks"]["multi_target_exploration_present"]["passed"] is True
+    assert complex_repo_acceptance["complex_task_checks"]["multi_file_mutation_present"]["passed"] is True
+    assert complex_repo_acceptance["complex_task_checks"]["native_exploration_trace_visible"]["passed"] is True
+    assert any(
+        "agent-team-operator-runbook.md" in path
+        for path in repo_acceptance["task_shape_checks"]["repo_facing_surface_updated"]["evidence"]["changed_surface_paths"]
+    )
+    assert payload["summary"]["real_task_metrics"]["native_runtime_closure_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_repo_task_acceptance_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_complex_repo_task_acceptance_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_dogfood_surface_ready_cases"] == 1
+
+
+def test_capture_workflow_evidence_can_prove_second_repo_task_acceptance_shape(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    payload = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(
+                requirement='Replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "hook-based compliance checks updated" to docs/process/agent-orchestrator-implementation-process.md',
+                label="repo-task-acceptance-compliance",
+                scenario_type="repo_task_acceptance",
+                risk_profile="medium",
+                operator_goal="prove a second native run can satisfy the stronger multi-file repo-task acceptance contract",
+                expected_signals=("recovery_guidance", "doc_sync", "cost_latency"),
+                runtime_expectation="bounded native multi-file edits with verification on code targets and process surface updates",
+            )
+        ],
+        project_root=tmp_path,
+    )
+
+    case = payload["cases"][0]
+    repo_acceptance = case["native_repo_task_acceptance"]
+    complex_repo_acceptance = case["native_complex_repo_task_acceptance"]
+
+    assert repo_acceptance["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
+    assert repo_acceptance["task_shape_checks"]["repository_exploration_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["verification_command_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["operator_visible_artifacts_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["repo_facing_surface_updated"]["passed"] is True
+    assert repo_acceptance["real_repo_task_acceptance_ready"] is True
+    assert "src/agent_orchestrator/compliance_signal.py" in repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["evidence"]["changed_code_paths"]
+    assert "src/agent_orchestrator/summary_helper.py" in repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["evidence"]["changed_code_paths"]
+    assert complex_repo_acceptance["complex_repo_task_ready"] is True
+    assert any(
+        "agent-orchestrator-implementation-process.md" in path
+        for path in repo_acceptance["task_shape_checks"]["repo_facing_surface_updated"]["evidence"]["changed_surface_paths"]
+    )
+    assert payload["summary"]["real_task_metrics"]["native_repo_task_acceptance_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_complex_repo_task_acceptance_ready_cases"] == 1
+
+
+def test_capture_workflow_evidence_can_prove_third_repo_task_acceptance_helper_shape(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    payload = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(
+                requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "module manifest updated" to docs/process/module-manifest.md',
+                label="repo-task-acceptance-helper",
+                scenario_type="repo_task_acceptance",
+                risk_profile="medium",
+                operator_goal="prove a third native run can satisfy the stronger multi-file repo-task acceptance contract for a helper implementation task",
+                expected_signals=("recovery_guidance", "doc_sync", "cost_latency"),
+                runtime_expectation="bounded native helper implementation edits with verification on code targets and process surface updates",
+            )
+        ],
+        project_root=tmp_path,
+    )
+
+    case = payload["cases"][0]
+    repo_acceptance = case["native_repo_task_acceptance"]
+    complex_repo_acceptance = case["native_complex_repo_task_acceptance"]
+
+    assert repo_acceptance["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
+    assert repo_acceptance["task_shape_checks"]["repository_exploration_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["verification_command_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["operator_visible_artifacts_present"]["passed"] is True
+    assert repo_acceptance["task_shape_checks"]["repo_facing_surface_updated"]["passed"] is True
+    assert repo_acceptance["real_repo_task_acceptance_ready"] is True
+    assert complex_repo_acceptance["complex_repo_task_ready"] is True
+    assert "src/agent_orchestrator/stub.py" in repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["evidence"]["changed_code_paths"]
+    assert "src/agent_orchestrator/summary_helper.py" in repo_acceptance["task_shape_checks"]["code_edit_under_repo_surface"]["evidence"]["changed_code_paths"]
+    assert any(
+        "module-manifest.md" in path
+        for path in repo_acceptance["task_shape_checks"]["repo_facing_surface_updated"]["evidence"]["changed_surface_paths"]
+    )
+    assert payload["summary"]["real_task_metrics"]["native_repo_task_acceptance_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_complex_repo_task_acceptance_ready_cases"] == 1
+
+
+def test_capture_workflow_evidence_can_prove_long_chain_native_first_repo_task_acceptance(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    payload = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(
+                requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "team runbook updated" to docs/process/agent-team-operator-runbook.md and append "module manifest updated" to docs/process/module-manifest.md and append "hook-based compliance checks updated" to docs/process/agent-orchestrator-implementation-process.md',
+                label="repo-task-acceptance-long-chain-native-first",
+                scenario_type="repo_task_acceptance",
+                risk_profile="medium",
+                operator_goal="prove a longer native-first repository task can close through exploration, multi-file editing, verification, and docs synchronization without external help",
+                expected_signals=("recovery_guidance", "doc_sync", "cost_latency"),
+                runtime_expectation="native exploration, multi-file mutation, verification, and repo-facing surface updates stay on the native path",
+            )
+        ],
+        project_root=tmp_path,
+    )
+
+    case = payload["cases"][0]
+    assert case["native_repo_task_acceptance"]["real_repo_task_acceptance_ready"] is True
+    assert case["native_complex_repo_task_acceptance"]["complex_repo_task_ready"] is True
+    assert case["native_dogfood_surfaces"]["surface_projection_ready"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["workspace_adapter_shared_contract_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["workspace_native_exploration_visible"]["passed"] is True
+    assert payload["summary"]["real_task_metrics"]["native_repo_task_acceptance_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_complex_repo_task_acceptance_ready_cases"] == 1
+
+
+def test_capture_workflow_evidence_records_native_repair_resume_success_chain(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    payload = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(
+                requirement="Resume a failed native verification attempt, apply remaining repair budget, and prove re-verify success through runtime, workspace, and UI evidence surfaces",
+                label="repair-resume-success",
+                scenario_type="repair_resume_success",
+                risk_profile="high",
+                operator_goal="prove repair and governed resume can close natively",
+                expected_signals=("recovery_guidance", "interruption_recovery", "doc_sync", "cost_latency"),
+                runtime_expectation="remaining retry budget is consumed and ends in successful re-verification",
+            )
+        ],
+        project_root=tmp_path,
+    )
+
+    case = payload["cases"][0]
+    assert case["team_workflow"]["native_task_proof"]["native_runtime_only"] is True
+    assert case["team_workflow"]["native_task_proof"]["external_coding_agent_required"] is False
+    assert case["team_workflow"]["status"] == "completed"
+    assert case["postmortem"]["native_task_proof_present"] is True
+    assert case["postmortem"]["native_task_scenario"] == "verify_failure_repair_resume_success"
+    assert case["native_runtime_closure"]["runtime_closure_ready"] is True
+    assert case["native_runtime_closure"]["proof_scenario"] == "verify_failure_repair_resume_success"
+    assert case["native_runtime_closure"]["closure_status"] == "completed"
+    assert case["native_runtime_closure"]["checks"]["context_engineering_main_path_visible"]["passed"] is True
+    assert case["native_runtime_closure"]["checks"]["context_engineering_main_path_visible"]["evidence"]["isolation_reinjection_mode"] in {"full_inline_context", "digest_focus_subset"}
+    assert case["native_runtime_closure"]["checks"]["verify_repair_resume_closure"]["passed"] is True
+    assert case["native_runtime_closure"]["checks"]["auditable_artifacts_and_surfaces"]["passed"] is True
+    assert case["planner_continuity_proof"]["format"] == "agent_orchestrator.planner_continuity_proof.v1"
+    assert case["planner_continuity_proof"]["planner_continuity_ready"] is True
+    assert case["planner_continuity_proof"]["checks"]["planner_shared_contract_visible"]["passed"] is True
+    assert case["planner_continuity_proof"]["checks"]["planner_actions_visible"]["passed"] is True
+    assert case["planner_continuity_proof"]["checks"]["planner_owner_boundary_visible"]["passed"] is True
+    assert case["planner_continuity_proof"]["checks"]["workspace_session_continuity_visible"]["passed"] is True
+    assert case["planner_continuity_proof"]["checks"]["ui_planner_and_session_visible"]["passed"] is True
+    assert case["planner_continuity_proof"]["checks"]["resume_chain_scenario_visible"]["passed"] is True
+    assert case["program_execution_proof"]["format"] == "agent_orchestrator.program_execution_proof.v1"
+    assert case["program_execution_proof"]["program_execution_ready"] is True
+    assert case["program_execution_proof"]["checks"]["runtime_program_posture_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["workspace_program_posture_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["ui_program_posture_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["recovery_program_contract_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["topology_program_contract_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["resume_recovery_chain_visible"]["passed"] is True
+    assert case["native_repo_task_acceptance"]["real_repo_task_acceptance_ready"] is False
+    assert case["native_complex_repo_task_acceptance"]["complex_repo_task_ready"] is False
+    assert case["native_dogfood_surfaces"]["surface_projection_ready"] is True
+    assert case["native_dogfood_surfaces"]["proof_scenario"] == "verify_failure_repair_resume_success"
+    assert case["native_dogfood_surfaces"]["surface_checks"]["runtime_event_stream_repo_task_acceptance_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["workspace_index_repo_task_acceptance_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["ui_repo_task_acceptance_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["ui_context_engineering_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["ui_context_engineering_visible"]["evidence"]["context_isolation_reinjection_mode"] in {"full_inline_context", "digest_focus_subset", None}
+    assert case["native_dogfood_surfaces"]["surface_checks"]["workspace_session_continuity_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["workspace_runtime_cost_visible"]["passed"] is True
+    assert case["native_dogfood_surfaces"]["surface_checks"]["ui_session_continuity_visible"]["passed"] is True
+    assert case["runtime_measurement"]["measurement_status"] == "measured"
+    assert case["runtime_measurement"]["command_duration_available"] is True
+    assert payload["summary"]["real_task_metrics"]["native_task_proof_coverage"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_runtime_closure_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["planner_continuity_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["program_execution_ready_cases"] == 1
+    assert payload["summary"]["real_task_metrics"]["native_repo_task_acceptance_ready_cases"] == 0
+    assert payload["summary"]["real_task_metrics"]["native_complex_repo_task_acceptance_ready_cases"] == 0
+    assert payload["summary"]["real_task_metrics"]["native_dogfood_surface_ready_cases"] == 1
+    assert payload["summary"]["comparative_benchmark"]["same_program_contract_cases"] == 1
+    assert "topology_snapshot" in payload["summary"]["comparative_benchmark"]["shared_evidence_surface"]
+
+
+def test_capture_workflow_evidence_records_multi_milestone_program_execution_chain(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    payload = capture_workflow_evidence(
+        [
+            WorkflowEvidenceCase(
+                requirement="Advance a multi-milestone native workstream through explore, edit, verify, checkpoint, and governed continue while keeping delegation and recovery boundaries visible",
+                label="multi-milestone-program",
+                scenario_type="program_execution",
+                risk_profile="high",
+                operator_goal="prove native long-horizon program execution posture",
+                expected_signals=("recovery_guidance", "interruption_recovery", "doc_sync", "cost_latency"),
+                runtime_expectation="program checkpoint and continue remain operator-visible",
+            )
+        ],
+        project_root=tmp_path,
+    )
+
+    case = payload["cases"][0]
+    assert case["team_workflow"]["status"] == "completed"
+    assert case["program_execution_proof"]["format"] == "agent_orchestrator.program_execution_proof.v1"
+    assert case["program_execution_proof"]["program_execution_ready"] is True
+    assert case["program_execution_proof"]["checks"]["runtime_program_posture_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["workspace_program_posture_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["ui_program_posture_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["recovery_program_contract_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["topology_program_contract_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["resume_recovery_chain_visible"]["passed"] is True
+    assert case["program_execution_proof"]["checks"]["runtime_program_posture_visible"]["evidence"]["active_milestone"]
+    assert payload["summary"]["real_task_metrics"]["program_execution_ready_cases"] == 1
+    assert payload["summary"]["comparative_benchmark"]["same_program_contract_cases"] == 1
+
+
+def test_postmortem_signals_and_summary_capture_native_task_proof_when_present() -> None:
+    case = WorkflowEvidenceCase(
+        requirement="Complete a bounded internal repository task",
+        label="native-proof",
+        expected_signals=("recovery_guidance", "cost_latency"),
+    )
+    signals = {
+        "recovery": {"has_guidance": True},
+        "doc_sync": {"status": "passed"},
+        "fallback": {"present": False},
+    }
+    status_summary = {
+        "usage_cost": {"source": "placeholder"},
+        "approval_state": {"state": "completed"},
+        "runtime_health": {"job_count": 1},
+    }
+    execution_payload = {
+        "native_task_proof": {
+            "format": "agent_orchestrator.native_task_proof.v1",
+            "native_runtime_only": True,
+            "external_coding_agent_required": False,
+            "task_class": "bounded_internal_repo_task",
+            "proof_scenario": "verify_failure_repair_resume_success",
+        }
+    }
+
+    postmortem = _postmortem_signals(case, signals, status_summary, execution_payload)
+    summary = _build_summary([{"postmortem": postmortem}])
+
+    assert postmortem["native_task_proof_present"] is True
+    assert postmortem["native_task_class"] == "bounded_internal_repo_task"
+    assert postmortem["native_task_scenario"] == "verify_failure_repair_resume_success"
+    assert summary["real_task_metrics"]["native_task_proof_coverage"] == 1
 
 
 def test_repository_evidence_cases_are_loadable() -> None:
@@ -208,8 +577,12 @@ def test_repository_evidence_cases_are_loadable() -> None:
         "compliance_blocking",
         "runtime_fidelity",
         "interruption_recovery",
+        "repair_resume_success",
+        "program_execution",
+        "repo_task_acceptance",
     }
     assert "cli_workflow_hardening" in {case.label for case in cases}
+    assert "repo_task_acceptance_long_chain_native_first" in {case.label for case in cases}
     assert len(cases) >= 8
     assert all(case.label for case in cases)
     assert all(case.requirement for case in cases)
@@ -240,6 +613,25 @@ def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path)
     assert "## Runtime Measurement Metrics" in markdown
     assert "measured_runtime_cases" in markdown
     assert "postmortem_ready_cases" in markdown
+    assert "native_task_proof_coverage" in markdown
+    assert "native_runtime_closure_ready_cases" in markdown
+    assert "planner_continuity_ready_cases" in markdown
+    assert "native_repo_task_acceptance_ready_cases" in markdown
+    assert "native_complex_repo_task_acceptance_ready_cases" in markdown
+    assert "native_dogfood_surface_ready_cases" in markdown
+    assert "## Native Runtime Closure" in markdown
+    assert "## Native Repo Task Acceptance" in markdown
+    assert "## Comparative Benchmark" in markdown
+    assert "complex_repo_task_checks" in markdown
+    assert "## Native Dogfood Surfaces" in markdown
+    assert "context_engineering_main_path_visible" in markdown
+    assert "ui_context_engineering_visible" in markdown
+    assert "native_runtime_closure: ready=True" in markdown
+    assert "planner_continuity_proof: ready=" in markdown
+    assert "context_engineering: surfaces=" in markdown
+    assert "native_repo_task_acceptance: ready=False" in markdown or "native_repo_task_acceptance: ready=True" in markdown
+    assert "native_complex_repo_task_acceptance: ready=False" in markdown or "native_complex_repo_task_acceptance: ready=True" in markdown
+    assert "native_dogfood_surfaces: ready=" in markdown
     assert "## Takeaways" in markdown
 
 

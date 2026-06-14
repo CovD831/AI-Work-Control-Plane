@@ -8,6 +8,7 @@ import argparse
 from agent_orchestrator.cli_presenters import (
     pick_primary_action,
     print_blocker_session_summary,
+    print_workspace_state_summary,
     print_handoff_summary,
     print_execution_session_summary,
     print_team_next,
@@ -323,6 +324,123 @@ def test_print_team_runbook_includes_recommended_command_and_steps(capsys) -> No
     assert "2. Inspect the execution record after completion" in out
 
 
+def test_print_workspace_state_summary_reports_comparative_benchmark_and_learning_consumption(capsys) -> None:
+    print_workspace_state_summary(
+        {
+            "format": "agent_orchestrator.workspace_index.v1",
+            "workspace_state": {
+                "format": "agent_orchestrator.workspace_state.v1",
+                "project_root": "/tmp/demo",
+                "plans": [],
+                "runs": [],
+                "jobs": [],
+                "approvals": [],
+                "dirty_state": {"dirty": False, "count": 0},
+                "external_cache": {"status": "disabled"},
+            },
+            "program": {"name": "demo", "active_plan_count": 1, "open_approval_count": 0},
+            "comparative_benchmark": {
+                "format": "agent_orchestrator.comparative_benchmark_summary.v1",
+                "native_default_path": True,
+                "native_repo_task_acceptance_ready": False,
+                "native_complex_repo_task_acceptance_ready": False,
+                "native_task_class": "bounded_internal_repo_task",
+                "shared_evidence_surface": [
+                    "runtime_event_stream",
+                    "workspace_index",
+                    "ui_execution_summary",
+                    "cli_execution_summary",
+                    "evidence_report",
+                ],
+            },
+            "native_exploration": {
+                "existing_path_count": 1,
+                "candidate_path_count": 3,
+                "file_count": 12,
+                "repo_map_directory_count": 4,
+                "candidate_reason": "search_matches",
+                "selected_candidates": ["src/app.py", "README.md"],
+            },
+            "execution_artifact_summary": {
+                "session_continuity": {
+                    "resume_supported": True,
+                    "compaction_stage": "light_compaction",
+                    "summarization_triggered": False,
+                    "long_horizon_posture": {
+                        "resume_ready": True,
+                        "recovery_active": False,
+                        "verification_resume_ready": False,
+                        "context_pressure": True,
+                        "summarization_ready": False,
+                    },
+                    "program_posture": {
+                        "program_goal": "Ship dashboard",
+                        "active_milestone": "verify",
+                        "completed_milestones": ["explore", "edit"],
+                        "ready_next_units": ["checkpoint", "continue"],
+                        "blocked_units": [],
+                    },
+                    "delegation_contract": {
+                        "selected_executor": "native",
+                        "ownership_boundary": "native_preferred",
+                        "handoff_reason_code": None,
+                        "fallback_reason_code": None,
+                        "required_handoff_artifacts": ["execution_result", "structured_observations"],
+                    },
+                    "milestone_verification": {
+                        "verification_status": "pending",
+                        "checkpoint_ready": False,
+                        "remaining_checks": ["pytest -q"],
+                    },
+                    "operator_control": {
+                        "next_recommended_action": "verify",
+                        "runbook_recovery_lane": "rerun_verify",
+                        "approval_pause_state": True,
+                        "clarify_pause_state": False,
+                    },
+                },
+                "runtime_cost": {
+                    "duration_seconds": 0.8,
+                    "usage_cost_measurement_status": "placeholder",
+                },
+                "native_tool_usage": {
+                    "tool_count": 7,
+                    "trace_count": 4,
+                    "recent_tools": ["glob", "repo_map", "verify"],
+                },
+                "adapter_shared_contract": {
+                    "adapter_family": "native_first_party",
+                    "agent_kind": "coding_agent",
+                    "default_path": "native",
+                    "operating_boundary": "native_preferred",
+                    "comparison_mode": "same_contract_two_executors",
+                    "hot_plug_supported": True,
+                    "approval_required": True,
+                    "evidence_outputs": ["execution_result", "structured_observations"],
+                    "recovery_surfaces": ["state_store", "resume_contract"],
+                },
+            },
+            "learning_consumption_ready": True,
+        }
+    )
+
+    out = capsys.readouterr().out
+
+    assert "workspace_index: agent_orchestrator.workspace_index.v1" in out
+    assert "comparative_benchmark: native_default=True acceptance_ready=False complex_acceptance_ready=False task_class=bounded_internal_repo_task shared_surface=runtime_event_stream,workspace_index,ui_execution_summary,cli_execution_summary,evidence_report" in out
+    assert "native_exploration: existing=1 candidates=3 files=12 repo_map_dirs=4 reason=search_matches selected=src/app.py,README.md" in out
+    assert "session_continuity: resume_supported=True compaction_stage=light_compaction summarization_triggered=False resume_kind=None" in out
+    assert "long_horizon_posture: resume_ready=True recovery_active=False verification_resume_ready=False context_pressure=True summarization_ready=False" in out
+    assert "program_posture: goal=Ship dashboard active_milestone=verify completed=explore,edit ready=checkpoint,continue blocked=none" in out
+    assert "delegation_contract: executor=native boundary=native_preferred handoff_reason=None fallback_reason=None artifacts=execution_result,structured_observations" in out
+    assert "milestone_verification: status=pending checkpoint_ready=False remaining=pytest -q" in out
+    assert "operator_control: next_action=verify recovery_lane=rerun_verify approval_pause=True clarify_pause=False" in out
+    assert "runtime_cost: duration_seconds=0.8 usage_cost_status=placeholder" in out
+    assert "native_tool_usage: tool_count=7 trace_count=4 recent=glob,repo_map,verify" in out
+    assert "adapter_shared_contract: family=native_first_party kind=coding_agent default_path=native boundary=native_preferred comparison_mode=same_contract_two_executors hot_plug_supported=True approval_required=True evidence_outputs=execution_result,structured_observations recovery_surfaces=state_store,resume_contract" in out
+    assert "learning_consumption: yes" in out
+
+
 def test_print_execution_session_summary_reports_structured_fields(capsys) -> None:
     print_execution_session_summary(
         {
@@ -351,6 +469,36 @@ def test_print_execution_session_summary_reports_structured_fields(capsys) -> No
                     "resume_target": "run-456",
                     "stop_reason": "execution_completed",
                 },
+                "session_continuity": {
+                    "resume_supported": True,
+                    "resume_kind": "fresh",
+                    "compaction_stage": "light_compaction",
+                    "runtime_duration_seconds": 1.25,
+                    "usage_cost_measurement_status": "placeholder",
+                },
+                "native_tool_usage": {
+                    "tool_count": 7,
+                    "trace_count": 5,
+                    "recent_tools": ["read", "search", "verify"],
+                },
+                "adapter_capability": {
+                    "format": "agent_orchestrator.adapter_capability_surface.v1",
+                    "comparison_mode": "same_contract_two_executors",
+                    "hot_plug_supported": True,
+                    "evidence_outputs": ["execution_result", "runtime_event_stream"],
+                    "recovery_surfaces": ["state_store", "resume_contract"],
+                },
+                "adapter_shared_contract": {
+                    "adapter_family": "native_first_party",
+                    "agent_kind": "coding_agent",
+                    "default_path": "native",
+                    "operating_boundary": "native_preferred",
+                    "comparison_mode": "same_contract_two_executors",
+                    "hot_plug_supported": True,
+                    "approval_required": True,
+                    "evidence_outputs": ["execution_result", "runtime_event_stream"],
+                    "recovery_surfaces": ["state_store", "resume_contract"],
+                },
                 "blocking_reasons": ["migration check pending"],
                 "warnings": ["header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value"],
                 "primary_action": "inspect_execution",
@@ -374,6 +522,10 @@ def test_print_execution_session_summary_reports_structured_fields(capsys) -> No
     assert "clarify: task_type=investigation slot_sources=goal=rule,task_type=llm unknown_slots=target_scope,risk_signals warnings=slot_fill_response_partial" in out
     assert "decompose: selected=migration_pipeline shape=migration_pipeline score=42 candidate_count=2 rejected=risk_trimmed_pipeline" in out
     assert "execution_context_policy: policy=resume_if_same_task resume_target=run-456 stop_reason=execution_completed" in out
+    assert "session_continuity: resume_supported=True resume_kind=fresh compaction_stage=light_compaction runtime_duration_seconds=1.25 usage_cost_status=placeholder" in out
+    assert "native_tool_usage: tool_count=7 trace_count=5 recent=read,search,verify" in out
+    assert "adapter_capability: format=agent_orchestrator.adapter_capability_surface.v1 comparison_mode=same_contract_two_executors hot_plug_supported=True evidence_outputs=execution_result,runtime_event_stream recovery_surfaces=state_store,resume_contract" in out
+    assert "adapter_shared_contract: family=native_first_party kind=coding_agent default_path=native boundary=native_preferred comparison_mode=same_contract_two_executors hot_plug_supported=True approval_required=True evidence_outputs=execution_result,runtime_event_stream recovery_surfaces=state_store,resume_contract" in out
     assert "blocking: migration check pending" in out
     assert "warnings: header contract warning: src/agent_orchestrator/legacy.py has placeholder `RESPONSIBILITY` value" in out
     assert "primary_action: inspect_execution" in out

@@ -1,7 +1,7 @@
 from agent_orchestrator import Orchestrator
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 from agent_orchestrator.roles import DEFAULT_AGENT_ROLES, role_for_job_kind, role_for_work_unit_kind
-from agent_orchestrator.work_graph import WorkGraphStore, graph_to_plan_tree, node_actions, next_executable_node, schedulable_nodes
+from agent_orchestrator.work_graph import WorkGraphStore, graph_program_posture, graph_to_plan_tree, node_actions, next_executable_node, schedulable_nodes
 from test_support import start_approved_session, start_executed_session, start_reviewed_session
 
 
@@ -72,6 +72,8 @@ def test_graph_to_plan_tree_preserves_related_jobs(tmp_path) -> None:
     assert all("owner_role_contract" in node for node in review_nodes)
     assert all(node["owner_role_contract"]["role"] == node["owner_role"] for node in review_nodes)
     assert any(node["message_count"] >= 1 for node in review_nodes)
+    assert "program_posture" in tree
+    assert tree["program_posture"]["program_goal"]
 
 
 def test_graph_to_plan_tree_exposes_semi_autonomous_role_contracts(tmp_path) -> None:
@@ -110,3 +112,20 @@ def test_work_graph_exposes_schedulable_nodes_and_node_actions(tmp_path) -> None
     assert next_executable_node(graph) is not None
     assert "execute" in node_actions(root)
     assert all("blocked_by" in node for node in nodes)
+
+
+def test_work_graph_program_posture_summarizes_ready_and_blocked_nodes(tmp_path) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    session = start_reviewed_session(team, "Build a persisted plan artifact")
+    graph = WorkGraphStore(tmp_path / "plans").read(session.id)
+
+    posture = graph_program_posture(graph)
+
+    assert posture["program_goal"]
+    assert "active_milestone" in posture
+    assert isinstance(posture["ready_next_units"], list)
+    assert isinstance(posture["blocked_units"], list)

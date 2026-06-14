@@ -1,18 +1,109 @@
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _repo_text(path: str) -> str:
+    return (REPO_ROOT / path).read_text(encoding="utf-8")
+
 
 def test_context_map_doc_exists_and_mentions_codebase_map_style_orientation() -> None:
-    text = Path("docs/process/context-map.md").read_text(encoding="utf-8")
+    text = _repo_text("docs/process/context-map.md")
 
-    assert "CODEBASE_MAP-style orientation" in text
-    assert "root map" in text
-    assert "module manifest" in text
-    assert "file-header contract" in text
+    assert "docs/process/project-index.md" in text
+    assert "docs/process/root-map.md" in text
+    assert "docs/process/module-manifest.md" in text
+    assert "docs/architecture/coding-agent-goal-spec.md" in text
+    assert "docs/architecture/native-coding-agent-upgrade-plan.md" in text
+    assert "docs/process/native-coding-agent-phase-0-baseline.md" in text
     assert "cli_inherit" in text
     assert "direct_api" in text
     assert "agent_orchestrator.docs_context.v1" in text
     assert "AI Work Control Plane artifact pipeline" in text
     assert "team workspace-status" in text
+
+
+def test_native_closure_docs_are_canonical_and_define_baseline_contract() -> None:
+    project_index = _repo_text("docs/process/project-index.md")
+    root_map = _repo_text("docs/process/root-map.md")
+    context_map = _repo_text("docs/process/context-map.md")
+    upgrade_plan = _repo_text("docs/architecture/native-coding-agent-upgrade-plan.md")
+    phase0 = _repo_text("docs/process/native-coding-agent-phase-0-baseline.md")
+    phase1 = _repo_text("docs/process/native-coding-agent-phase-1-kernel-boundary.md")
+    phase2 = _repo_text("docs/process/native-coding-agent-phase-2-step-loop-convergence.md")
+    phase3 = _repo_text("docs/process/native-coding-agent-phase-3-context-engineering-main-path.md")
+    phase4 = _repo_text("docs/process/native-coding-agent-phase-4-verify-repair-resume.md")
+    phase5 = _repo_text("docs/process/native-coding-agent-phase-5-native-dogfood-track.md")
+    closure_audit = _repo_text("docs/process/native-coding-agent-closure-audit.md")
+
+    assert "docs/architecture/native-coding-agent-upgrade-plan.md" in project_index
+    assert "docs/process/native-coding-agent-phase-0-baseline.md" in project_index
+    assert "docs/process/native-coding-agent-phase-1-kernel-boundary.md" in project_index
+    assert "docs/process/native-coding-agent-phase-2-step-loop-convergence.md" in project_index
+    assert "docs/process/native-coding-agent-phase-3-context-engineering-main-path.md" in project_index
+    assert "docs/process/native-coding-agent-phase-4-verify-repair-resume.md" in project_index
+    assert "docs/process/native-coding-agent-phase-5-native-dogfood-track.md" in project_index
+    assert "docs/process/native-coding-agent-closure-audit.md" in project_index
+    assert "docs/architecture/native-coding-agent-upgrade-plan.md" in root_map
+    assert "docs/process/native-coding-agent-phase-0-baseline.md" in root_map
+    assert "docs/process/native-coding-agent-phase-1-kernel-boundary.md" in root_map
+    assert "docs/process/native-coding-agent-phase-2-step-loop-convergence.md" in root_map
+    assert "docs/process/native-coding-agent-phase-4-verify-repair-resume.md" in root_map
+    assert "docs/process/native-coding-agent-phase-5-native-dogfood-track.md" in root_map
+    assert "docs/process/native-coding-agent-phase-1-kernel-boundary.md" in context_map
+    assert "docs/process/native-coding-agent-phase-2-step-loop-convergence.md" in context_map
+    assert "docs/process/native-coding-agent-phase-4-verify-repair-resume.md" in context_map
+    assert "docs/process/native-coding-agent-phase-5-native-dogfood-track.md" in context_map
+
+    assert "goal mode" in upgrade_plan
+    assert "Goal-Mode Acceptance Guardrail" in upgrade_plan
+    assert "governed native-only closure" in upgrade_plan
+
+    assert "native-only closure" in phase0
+    assert "one or more code edits under `src/agent_orchestrator/` or `ui_frontend/`" in phase0
+    assert "canonical docs or compliance-visible surfaces" in phase0
+    assert "no external coding agent executed the core implementation loop" in phase0
+    assert "approval_pause_resume_complete" in phase0
+    assert "verify_failure_exhausted_recovery_block" in phase0
+    assert "verify_failure_repair_resume_success" in phase0
+
+    assert "native coding agent kernel" in phase1
+    assert "`src/agent_orchestrator/execution/runtime.py`" in phase1
+    assert "Kernel Input Contract" in phase1
+    assert "Kernel Output Contract" in phase1
+    assert "What Must Stay Outside The Kernel" in phase1
+
+    assert "step_loop_contract" in phase2
+    assert "loop semantics" in phase2
+    assert "`planner_context_trace`" in phase2
+    assert "`next_step_contract`" in phase2
+
+    assert "context_engineering_contract" in phase3
+    assert "Write`, `Select`, `Structured Observation`, `Compact`, and `Isolate`" in phase3
+    assert "scratchpad_entries" in phase3
+    assert "structured_observations" in phase3
+    assert "resume_context" in phase3
+
+    assert "real verification failure" in phase4
+    assert "repair summary output with attempt history and retry budget" in phase4
+    assert "governed resume path" in phase4
+    assert "control-plane projection" in phase4
+    assert "UI execution summary visibility" in phase4
+
+    assert "native-only repository task chain" in phase5
+    assert "approval pause" in phase5
+    assert "`approval_resume` continuation" in phase5
+    assert "workspace index visibility" in phase5
+    assert "UI execution summary visibility" in phase5
+    assert "verify_failure_exhausted_recovery_block" in phase5
+    assert "verify_failure_repair_resume_success" in phase5
+    assert "three-chain bundle" in phase5
+
+    assert "not yet complete for the full upgrade objective" in closure_audit
+    assert "strongly evidenced" in closure_audit
+    assert "medium to strong" in closure_audit
+    assert "yes, for at least one bounded internal repository task class, with strong evidence" in closure_audit
+    assert "no, not yet" in closure_audit
 
 
 def test_long_cycle_plan_declares_auto_continue_protocol() -> None:
@@ -66,6 +157,31 @@ def test_control_plane_dogfood_evidence_records_real_chain() -> None:
     assert "agent_orchestrator.execution_topology_snapshot.v1" in text
     assert "control_plane_focus=state_context_strategy_topology_approval_evidence_memory_recovery" in text
     assert "auto_write=false" in text
+
+
+def test_native_coding_agent_dogfood_evidence_records_task_class_and_three_proof_scenarios() -> None:
+    text = Path("docs/process/native-coding-agent-dogfood-evidence.md").read_text(encoding="utf-8")
+    runbook = Path("docs/process/agent-team-operator-runbook.md").read_text(encoding="utf-8")
+    process = Path("docs/process/agent-orchestrator-implementation-process.md").read_text(encoding="utf-8")
+
+    assert "bounded_internal_repo_task" in text
+    assert "approval_pause_resume_complete" in text
+    assert "verify_failure_exhausted_recovery_block" in text
+    assert "verify_failure_repair_resume_success" in text
+    assert "multi_milestone_program_execution" in text
+    assert "agent_orchestrator.native_task_proof.v1" in text
+    assert "agent_orchestrator.native_runtime_closure.v1" in text
+    assert "agent_orchestrator.native_repo_task_acceptance.v1" in text
+    assert "agent_orchestrator.program_execution_proof.v1" in text
+    assert "agent_orchestrator.runtime_event_stream.v1" in text
+    assert "agent_orchestrator.workspace_index.v1" in text
+    assert "agent_orchestrator.recovery_recommendation.v1" in text
+    assert "agent_orchestrator.execution_topology_snapshot.v1" in text
+    assert "stable step-loop" in text
+    assert "explicit context select plus structured observation" in text
+    assert "multi-milestone native program-execution evidence chain" in text
+    assert "native-coding-agent-dogfood-evidence.md" in runbook
+    assert "native coding-agent dogfood baseline" in process
 
 
 def test_control_plane_reference_rescreen_maps_research_repos_to_new_direction() -> None:

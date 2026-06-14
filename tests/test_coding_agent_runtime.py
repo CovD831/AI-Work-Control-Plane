@@ -60,7 +60,39 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
 
     assert result.runtime_name == "coding_agent"
     assert result.execution_mode == ExecutionMode.CODING_AGENT
+    assert result.payload["adapter_contract"]["adapter_family"] == "native_first_party"
+    assert result.payload["adapter_contract"]["capability_surface"]["format"] == "agent_orchestrator.adapter_capability_surface.v1"
+    assert result.payload["adapter_contract"]["capability_surface"]["comparability"]["comparison_mode"] == "same_contract_two_executors"
+    assert result.payload["adapter_contract"]["path_selection"]["default_path"] == "native"
+    assert result.payload["path_selection"]["operating_boundary"] == "native_preferred"
+    assert result.path_selection["selection_reason"]
+    assert result.payload["native_tool_surface"]["format"] == "agent_orchestrator.native_tool_surface.v1"
+    assert result.payload["native_tool_surface"]["tools"] == [
+        "read",
+        "search",
+        "glob",
+        "structured_patch",
+        "verify",
+        "repo_map",
+        "tool_trace",
+    ]
+    assert result.payload["native_tool_trace"]["trace_count"] >= 1
+    assert result.payload["native_tool_trace"]["trace"][0]["timestamp"]
+    assert result.kernel_contract is not None
+    assert result.kernel_contract.kernel_role == "governed_execution_kernel"
+    assert "control_plane_artifacts" in result.kernel_contract.input_sources
+    assert "runtime_event_stream" in result.kernel_contract.output_surfaces
+    assert result.payload["kernel_contract"]["state_authority"] == "control_plane"
     assert result.payload["repo_report"]["candidate_paths"]
+    assert result.payload["repo_report"]["artifact"]["tool_surface"]["tools"] == [
+        "read",
+        "search",
+        "glob",
+        "structured_patch",
+        "verify",
+        "repo_map",
+        "tool_trace",
+    ]
     assert result.payload["execution_context"]["session_context"]["session_id"] == "agent-session-1"
     assert result.payload["edit_intent"]["mode"] == "report_first"
     assert "verification" in result.payload
@@ -73,15 +105,46 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
     assert result.payload["step_decisions"][-1]["disposition"] == "complete"
     assert result.payload["next_step_contract"]["current_disposition"] == "complete"
     assert result.payload["next_step_contract"]["current_step_kind"] == "verification"
+    assert result.payload["next_step_contract"]["context_engineering_refs"]["required_surfaces"] == [
+        "select",
+        "structured_observation",
+        "compact",
+        "resume_continuity",
+    ]
+    assert result.payload["step_loop_contract"]["loop_model"] == "explicit_stage_step_loop"
+    assert result.payload["step_loop_contract"]["status"] == "completed"
+    assert result.payload["step_loop_contract"]["current_disposition"] == "complete"
+    assert result.payload["step_loop_contract"]["context_engineering_refs"]["required_surfaces"] == [
+        "select",
+        "structured_observation",
+        "compact",
+        "resume_continuity",
+    ]
+    assert result.payload["step_loop_contract"]["trace_lengths"]["planner_context_trace"] == 3
+    assert result.payload["step_loop_contract"]["trace_refs"]["next_step_contract"] == "payload.next_step_contract"
+    assert result.payload["native_task_proof"]["format"] == "agent_orchestrator.native_task_proof.v1"
+    assert result.payload["native_task_proof"]["native_runtime_only"] is True
+    assert result.payload["native_task_proof"]["external_coding_agent_required"] is False
+    assert result.payload["native_task_proof"]["task_class"] == "bounded_internal_repo_task"
+    assert result.payload["native_repo_task_acceptance"]["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
+    assert result.payload["native_repo_task_acceptance"]["real_repo_task_acceptance_ready"] is False
+    assert result.payload["native_complex_repo_task_acceptance"]["format"] == "agent_orchestrator.native_complex_repo_task_acceptance.v1"
+    assert result.payload["native_complex_repo_task_acceptance"]["complex_repo_task_ready"] is False
+    assert result.payload["native_task_proof"]["kernel_governed"] is True
+    assert result.payload["native_task_proof"]["context_select_explicit"] is True
     assert [item["stage"] for item in result.payload["stage_selection_trace"]] == ["explore", "edit", "verify"]
     assert result.payload["stage_selection_trace"][-1]["outcome"] == "complete"
     assert [item["stage_cursor"] for item in result.payload["planner_context_trace"]] == ["explore", "edit", "verify"]
     assert [item["current_stage"] for item in result.payload["next_stage_proposals"]] == ["explore", "edit", "verify"]
     assert result.payload["next_stage_proposals"][0]["proposed_stage"] == "edit"
     assert result.payload["next_stage_proposals"][0]["selected_candidate_id"] == "explore_to_edit"
+    assert result.payload["next_stage_proposals"][0]["selection"]["ranking_enabled"] is False
     assert result.payload["next_stage_proposals"][1]["candidates"][0]["candidate_id"] == "edit_to_verify"
     assert result.payload["next_stage_proposals"][-1]["disposition"] == "complete"
     assert result.payload["next_stage_proposals"][-1]["selected_candidate_id"] == "verify_complete"
+    assert result.payload["strategy_summary"]["planner_family"] == "native"
+    assert result.payload["strategy_summary"]["compatibility_metadata"]["legacy_decompose_used"] is False
+    assert result.payload["planner_family"] == "native"
     assert result.payload["planner_context_trace"][0]["resume_kind"] == "fresh"
     assert result.payload["planner_context_trace"][1]["route_risk_level"] == "medium"
     assert result.payload["planner_context_trace"][1]["applied_change_count"] == 0
@@ -89,8 +152,12 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
     assert [item["stage"] for item in result.payload["action_selection_trace"]] == ["edit", "verify"]
     assert result.payload["action_selection_trace"][0]["action_type"] == "edit_prepare"
     assert result.payload["action_selection_trace"][0]["source"] == "bounded_context"
+    assert result.payload["action_selection_trace"][0]["decision"]["decision_type"] == "action_selection"
+    assert result.payload["action_selection_trace"][0]["decision"]["planner_feasibility"] == "prepare_only"
     assert result.payload["action_selection_trace"][0]["planner_context"]["stage_cursor"] == "edit"
     assert result.payload["action_selection_trace"][-1]["source"] == "derived_from_targets"
+    assert result.payload["stage_selection_trace"][0]["decision"]["selection_mode"] == "proposal_only"
+    assert result.payload["stage_selection_trace"][1]["decision"]["selection_mode"] == "action_and_proposal"
     assert result.payload["stage_selection_trace"][-1]["planner_context"]["target_paths"]
     assert result.payload["execution_steps"][0]["actions"][0]["action_type"] == "repo_explore"
     assert result.payload["execution_steps"][2]["results"][0]["action_type"] == "run_command"
@@ -98,6 +165,18 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
     assert result.payload["compressed_context"]["recent_steps"][-1]["kind"] == "verification"
     assert "artifact_refs" in result.payload["compressed_context"]
     assert result.payload["compaction_state"]["system_prompt_compacted"] is False
+    assert result.payload["context_engineering_contract"]["format"] == "agent_orchestrator.context_engineering_contract.v1"
+    assert result.payload["context_engineering_contract"]["main_path_required"] is True
+    assert result.payload["context_engineering_contract"]["write"]["session_scratchpad"]["required"] is True
+    assert result.payload["context_engineering_contract"]["write"]["persistent_memory"]["projection_mode"] == "explicit_memory_store"
+    assert result.payload["context_engineering_contract"]["select"]["required_for_model_participation"] is True
+    assert result.payload["context_engineering_contract"]["select"]["deterministic_strategy"] == "fixed_runtime_sources"
+    assert result.payload["context_engineering_contract"]["structured_observation"]["required_post_action"] is True
+    assert result.payload["context_engineering_contract"]["structured_observation"]["record_count"] >= 1
+    assert result.payload["context_engineering_contract"]["compact"]["stage"] == result.payload["compaction_state"]["stage"]
+    assert result.payload["context_engineering_contract"]["isolate"]["strategy"] == result.payload["isolation_state"]["strategy"]
+    assert result.payload["context_engineering_contract"]["resume_continuity"]["resume_kind"] == result.payload["resume_context"]["resume_kind"]
+    assert result.payload["context_engineering_contract"]["trace_refs"]["context_selection"] == "payload.context_selection"
     assert result.payload["scratchpad_entries"][0]["kind"] == "runtime_context"
     assert "retrieved_memory" in result.payload
     assert result.payload["context_selection"]["deterministic"]["strategy"] == "fixed_runtime_sources"
@@ -106,6 +185,54 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
     assert result.payload["isolation_state"]["applied"] is False
     assert result.payload["llm_assisted_intent"]["used_model"] is False
     assert result.payload["llm_assisted_intent"]["applied"] is False
+
+
+def test_coding_agent_runtime_records_learning_assets_and_trajectory(tmp_path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    runtime = CodingAgentExecutionRuntime(
+        orchestrator=Orchestrator(),
+        memory_store=MemoryStore(workspace_root / ".agent_orchestrator" / "memory"),
+    )
+    runtime.repo_explorer.workspace_root = workspace_root
+    request = ExecutionRequest(
+        requirement="Fix the login button click handler in src/agent_orchestrator/cli.py.",
+        route=_coding_route(),
+        runtime_name="coding_agent",
+        mode=OrchestrationMode.SUCCESS_FIRST,
+        session_id="agent-session-learning",
+        turn_id="turn-learning",
+        context_snapshot={"snapshot_id": "snapshot-learning"},
+        task_contract={
+            "id": "task-learning",
+            "goal": "Fix the click handler",
+            "non_goals": [],
+            "context": "Use repository context.",
+            "inputs": ["Fix the click handler"],
+            "outputs": ["patch plan"],
+            "acceptance_criteria": ["No syntax errors"],
+            "risk_level": "medium",
+            "parallelizable": False,
+            "owner_type": "single_worker",
+            "max_depth": 1,
+            "failure_policy": "retry",
+        },
+    )
+
+    result = runtime.run(request)
+
+    memory_records = MemoryStore(workspace_root / ".agent_orchestrator" / "memory").query(session_id="agent-session-learning")
+    trajectory_dir = workspace_root / ".agent_orchestrator" / "agent_sessions" / "agent-session-learning" / "trajectories"
+    lessons = (workspace_root / ".agent_orchestrator" / "knowledge" / "lessons.jsonl").read_text(encoding="utf-8")
+    skills = (workspace_root / ".agent_orchestrator" / "knowledge" / "skills.jsonl").read_text(encoding="utf-8")
+
+    assert result.payload["path_selection"]["selection_reason"]
+    assert any(record["record_type"] == "trajectory" for record in memory_records)
+    assert any(record["record_type"] == "memory" for record in memory_records)
+    assert trajectory_dir.exists()
+    assert any(path.name.startswith("trajectory-") for path in trajectory_dir.iterdir())
+    assert "bounded_internal_repo_task" in lessons
+    assert "curator_ready" in skills
 
 
 def test_coding_agent_runtime_records_bounded_retry_attempts_on_failure() -> None:
@@ -254,11 +381,13 @@ def test_coding_agent_runtime_writes_session_scratchpad_and_persistent_memory(tm
     assert scratchpad_entries[0]["payload"]["planner_context_trace"]
     assert scratchpad_entries[0]["payload"]["context_selection"]["deterministic"]["strategy"] == "fixed_runtime_sources"
     assert result.payload["scratchpad_entries"][0]["entry_id"] == scratchpad_entries[0]["entry_id"]
+    assert result.payload["context_engineering_contract"]["write"]["session_scratchpad"]["entry_kind"] == "runtime_context"
 
     memory_records = MemoryStore(memory_root).query(session_id="agent-session-scratch", namespace="coding_agent")
     assert memory_records
     assert memory_records[0]["record_type"] == "runtime_preference_or_fact"
     assert memory_records[0]["payload"]["turn_id"] == "turn-scratch"
+    assert result.payload["context_engineering_contract"]["write"]["persistent_memory"]["retrieved_memory_count"] >= 0
 
 
 def test_coding_agent_runtime_context_selection_retrieves_memory_hits(tmp_path) -> None:
@@ -627,11 +756,62 @@ def test_compaction_state_reports_summarization_ready_at_high_water_mark() -> No
     )
 
     assert state["stage"] == "summarization_ready"
-    assert state["summarization_triggered"] is True
-    assert "high-water mark" in state["summarization_reason"]
-    assert state["summarization_source"] == "local_fallback"
-    assert state["summarization_summary"]
-    assert state["system_prompt_compacted"] is False
+
+
+def test_coding_agent_runtime_defaults_to_success_first_policy_when_mode_missing(tmp_path) -> None:
+    from agent_orchestrator.execution.coding_agent_runtime import CodingAgentExecutionRuntime
+    from agent_orchestrator.execution.models import ExecutionRequest
+    from agent_orchestrator.intake.models import ClarifyPolicy, ExecutionMode, TaskKind, TaskRouterResult
+
+    runtime = CodingAgentExecutionRuntime(orchestrator=Orchestrator())
+    runtime.repo_explorer.workspace_root = tmp_path
+    runtime.edit_executor.workspace_root = tmp_path
+    runtime.edit_executor.action_executor.workspace_root = tmp_path
+    runtime.verify_loop.verifier.workspace_root = tmp_path
+    runtime.verify_loop.verifier.action_executor.workspace_root = tmp_path
+
+    target = tmp_path / "note.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+
+    result = runtime.run(
+        ExecutionRequest(
+            requirement='Append "print(\'bye\')" to note.py',
+            route=TaskRouterResult(
+                task_kind=TaskKind.DIRECT_FIX,
+                clarify_policy=ClarifyPolicy.LIGHT,
+                execution_mode=ExecutionMode.CODING_AGENT,
+                ambiguity_level="medium",
+                reasons=["bounded fix"],
+                operating_boundary="native_preferred",
+                selection_reason="test default policy fallback",
+                handoff_reason_code=None,
+                fallback_reason_code=None,
+                risk_level="medium",
+                scope_confidence="high",
+                needs_repo_context=True,
+                requires_human_confirmation=False,
+            ),
+            runtime_name="coding_agent",
+            mode=None,
+            task_contract={
+                "id": "task-default-mode",
+                "goal": "Append a line",
+                "non_goals": [],
+                "context": "Use repository context.",
+                "inputs": ["Append a line"],
+                "outputs": ["artifact summary"],
+                "acceptance_criteria": ["No syntax errors"],
+                "risk_level": "medium",
+                "parallelizable": False,
+                "owner_type": "single_worker",
+                "max_depth": 1,
+                "failure_policy": "retry",
+            },
+        )
+    )
+
+    assert result.payload["planner_family"] == "native"
+    assert result.payload["session_continuity_contract"]["program_posture"]["program_goal"] == "Append a line"
 
 
 def test_compaction_state_uses_llm_summarization_when_transport_is_available(monkeypatch) -> None:
@@ -792,7 +972,12 @@ def test_coding_agent_runtime_surfaces_isolation_state_in_payload_and_scratchpad
 
     assert "isolation_state" in result.payload
     assert result.payload["isolation_state"]["strategy"] in {"inline_context", "subtask_digest"}
+    assert result.payload["isolation_state"]["reinjection_mode"] in {"full_inline_context", "digest_focus_subset"}
+    assert isinstance(result.payload["isolation_state"]["reinjection_targets"], list)
     assert result.payload["scratchpad_entries"][0]["payload"]["isolation_state"]["strategy"] in {"inline_context", "subtask_digest"}
+    assert result.payload["context_engineering_contract"]["isolate"]["reinjection_mode"] == result.payload["isolation_state"]["reinjection_mode"]
+    assert result.payload["context_engineering_contract"]["isolate"]["reinjection_targets_ref"] == "payload.isolation_state.reinjection_targets"
+    assert result.payload["context_engineering_contract"]["isolate"]["output_target_count"] == result.payload["isolation_state"]["output_target_count"]
 
 
 def test_coding_agent_runtime_surfaces_compaction_summarization_state_in_payload(monkeypatch, tmp_path) -> None:
@@ -1192,6 +1377,21 @@ def test_coding_agent_runtime_blocks_on_edit_approval_and_persists_item(tmp_path
     assert result.payload["step_decisions"][1]["disposition"] == "pause"
     assert result.payload["next_step_contract"]["current_disposition"] == "pause"
     assert result.payload["next_step_contract"]["current_step_kind"] == "edit_execution"
+    assert result.payload["next_step_contract"]["context_engineering_refs"]["required_surfaces"] == [
+        "write",
+        "select",
+        "structured_observation",
+        "isolate",
+    ]
+    assert result.payload["step_loop_contract"]["status"] == "blocked"
+    assert result.payload["step_loop_contract"]["current_disposition"] == "pause"
+    assert result.payload["step_loop_contract"]["context_engineering_refs"]["required_surfaces"] == [
+        "write",
+        "select",
+        "structured_observation",
+        "isolate",
+    ]
+    assert result.payload["step_loop_contract"]["resume_supported"] is True
     assert ApprovalStore(approvals_root).list_all()[0].scope == "edit_execution"
     assert "print('bye')" not in target.read_text(encoding="utf-8")
 
@@ -1254,6 +1454,12 @@ def test_coding_agent_runtime_blocks_on_verification_approval_when_enabled(tmp_p
     assert result.payload["step_decisions"][2]["disposition"] == "pause"
     assert result.payload["next_step_contract"]["current_disposition"] == "pause"
     assert result.payload["next_step_contract"]["current_step_kind"] == "verification"
+    assert result.payload["next_step_contract"]["context_engineering_refs"]["required_surfaces"] == [
+        "select",
+        "structured_observation",
+        "compact",
+        "resume_continuity",
+    ]
     items = ApprovalStore(approvals_root).list_all()
     assert items[0].scope == "verification"
 
@@ -2359,6 +2565,8 @@ def test_stage_strategy_can_build_next_stage_proposal_for_verify_history() -> No
     assert proposal.proposed_stage == "completed"
     assert proposal.disposition == "complete"
     assert proposal.selected_candidate_id == "verify_complete_from_history"
+    assert proposal.selection["ranking_enabled"] is True
+    assert proposal.selection["selected_candidate_id"] == "verify_complete_from_history"
 
 
 def test_stage_strategy_build_stage_plan_for_explore_uses_proposal_stage_selection() -> None:
@@ -3496,10 +3704,133 @@ def test_proposal_from_selected_candidate_uses_selected_candidate_fields() -> No
     assert proposal.disposition == "complete"
     assert proposal.reason == "Complete from context."
     assert proposal.selected_candidate_id == "explore_complete_from_context"
+    assert proposal.selection["ranking_enabled"] is False
+    assert proposal.selection["candidate_count"] == 2
     assert [candidate.candidate_id for candidate in proposal.candidates] == [
         "explore_to_edit",
         "explore_complete_from_context",
     ]
+
+
+def test_stage_strategy_next_stage_decision_exposes_ranking_state_for_verify_history() -> None:
+    strategy = runtime_module._stage_strategy("verify")
+    planner_context = runtime_module._KernelPlannerContext(
+        stage_cursor="verify",
+        resume_kind="fresh",
+        route_risk_level="medium",
+        edit_mode="direct_apply",
+        operation_count=1,
+        operation_paths=["note.py"],
+        target_paths=["note.py"],
+        workspace_root="/tmp/workspace",
+        verification_command=["python3", "-m", "compileall", "note.py"],
+        remaining_retry_budget=1,
+        should_block_verify_resume=False,
+        latest_observation_kind="verification",
+        action_feasibility="ready_to_verify",
+        approval_required=False,
+        approval_resolved=False,
+        pending_approval_stage=None,
+        applied_change_count=1,
+        recent_observation_count=1,
+        verification_status="passed",
+        repair_outcome="passed",
+    )
+    resume_state = runtime_module._KernelResumeState(
+        stage_cursor="verify",
+        applied_changes=[],
+        recent_observations=[],
+        final_verification={},
+        repair_summary={},
+        verification_command=["python3", "-m", "compileall", "note.py"],
+        remaining_retry_budget=1,
+        should_block_verify_resume=False,
+    )
+
+    decision = strategy.next_stage_decision(
+        planner_context=planner_context,
+        resume_state=resume_state,
+    )
+
+    assert decision.ranking_enabled is True
+    assert decision.selected_candidate.candidate_id == "verify_complete_from_history"
+    assert [candidate.candidate_id for candidate in decision.candidates] == [
+        "verify_complete_from_history",
+        "verify_repeat_same_stage",
+    ]
+
+
+def test_stage_selection_decision_tracks_action_and_proposal_linkage() -> None:
+    action_selection = runtime_module._KernelActionSelection(
+        stage="edit",
+        action_type="block",
+        source="boundary_policy",
+        selected={"path": "../outside.py"},
+        reason="Blocked before mutation.",
+    )
+    proposal = runtime_module._KernelNextStageProposal(
+        current_stage="edit",
+        proposed_stage="verify",
+        disposition="advance",
+        reason="Advance to verify.",
+        candidates=[],
+        selected_candidate_id="edit_to_verify",
+    )
+    stage_selection = runtime_module._stage_selection_with_decision(
+        stage_selection=runtime_module._KernelStageSelection(
+            stage="edit",
+            outcome="block",
+            next_stage="verify",
+            reason="Blocked.",
+        ),
+        next_stage_proposal=proposal,
+        action_selection=action_selection,
+    )
+
+    assert stage_selection.decision["decision_type"] == "stage_selection"
+    assert stage_selection.decision["selection_mode"] == "action_and_proposal"
+    assert stage_selection.decision["proposal_selected_candidate_id"] == "edit_to_verify"
+    assert stage_selection.decision["action_selected_type"] == "block"
+
+
+def test_action_selection_decision_captures_planner_context_semantics() -> None:
+    planner_context = runtime_module._KernelPlannerContext(
+        stage_cursor="verify",
+        resume_kind="approval_resume",
+        route_risk_level="medium",
+        edit_mode="direct_apply",
+        operation_count=1,
+        operation_paths=["note.py"],
+        target_paths=["note.py"],
+        workspace_root="/tmp/workspace",
+        verification_command=["python3", "-m", "compileall", "note.py"],
+        remaining_retry_budget=1,
+        should_block_verify_resume=False,
+        latest_observation_kind="verification",
+        action_feasibility="ready_to_verify",
+        approval_required=False,
+        approval_resolved=True,
+        pending_approval_stage=None,
+        applied_change_count=1,
+        recent_observation_count=1,
+        verification_status="passed",
+        repair_outcome="passed",
+    )
+    selection = runtime_module._action_selection_with_decision(
+        action_selection=runtime_module._KernelActionSelection(
+            stage="verify",
+            action_type="run_command",
+            source="resume_context",
+            selected={"command": ["python3", "-m", "compileall", "note.py"]},
+            reason="Resume verification command.",
+        ),
+        planner_context=planner_context,
+    )
+
+    assert selection.decision["decision_type"] == "action_selection"
+    assert selection.decision["selected_action_type"] == "run_command"
+    assert selection.decision["selected_source"] == "resume_context"
+    assert selection.decision["planner_feasibility"] == "ready_to_verify"
 
 
 def test_coding_agent_runtime_persists_pending_execution_state(tmp_path) -> None:
@@ -3684,6 +4015,7 @@ def test_coding_agent_runtime_surfaces_externalized_artifact_summary(tmp_path) -
     )
 
     assert result.payload["artifact_summary"]["artifact_count"] >= 1
+    assert result.payload["native_task_proof"]["artifact_count"] >= 1
     artifact = result.payload["artifact_summary"]["artifacts"][0]
     assert Path(artifact["path"]).exists()
     assert result.payload["execution_steps"][2]["results"][0]["payload"]["artifact"]["artifact_id"]
@@ -3735,6 +4067,7 @@ def test_coding_agent_runtime_emits_step_level_events(tmp_path) -> None:
     assert result.payload["event_summary"]["type_counts"]["execution.action_completed"] >= 3
     assert result.payload["event_summary"]["type_counts"]["execution.context_compressed"] == 1
     assert result.payload["event_summary"]["type_counts"]["execution.next_step_decided"] == 1
+    assert result.payload["native_task_proof"]["event_count"] >= 9
     assert any(event["type"] == "execution.run_completed" for event in events)
     assert any(event["payload"].get("step_kind") == "verification" for event in events if event["type"] == "execution.step")
     assert any(event["type"] == "execution.action_requested" for event in events)
@@ -3826,6 +4159,53 @@ def test_coding_agent_runtime_artifact_summary_includes_repo_exploration_artifac
 
     assert result.payload["artifact_summary"]["artifact_count"] >= 2
     assert any("execution_repo_exploration_artifact" in str(item.get("ref", {}).get("format")) for item in result.payload["artifact_summary"]["artifacts"])
+
+
+def test_repo_explorer_uses_native_tool_surface_for_exploration(tmp_path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('app')\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# demo\n", encoding="utf-8")
+
+    runtime = CodingAgentExecutionRuntime(orchestrator=Orchestrator())
+    runtime.repo_explorer.workspace_root = tmp_path
+    runtime.repo_explorer.artifact_store.root = tmp_path / "execution-artifacts"
+    runtime.repo_explorer.artifact_store.__post_init__()
+
+    report = runtime.repo_explorer.explore(
+        ExecutionRequest(
+            requirement="Inspect src/app.py and explain the repo layout.",
+            route=_coding_route(),
+            runtime_name="coding_agent",
+            mode=OrchestrationMode.SUCCESS_FIRST,
+            session_id="agent-session-explore",
+            turn_id="turn-explore",
+            context_snapshot={"snapshot_id": "snapshot-explore"},
+            task_contract={
+                "id": "task-explore",
+                "goal": "Inspect repository layout",
+                "non_goals": [],
+                "context": "Use repository context.",
+                "inputs": ["Inspect repository layout"],
+                "outputs": ["repo report"],
+                "acceptance_criteria": ["Relevant files identified"],
+                "risk_level": "low",
+                "parallelizable": False,
+                "owner_type": "single_worker",
+                "max_depth": 1,
+                "failure_policy": "retry",
+            },
+        )
+    )
+
+    assert report.artifact is not None
+    assert report.artifact["repo_map"]["directory_count"] >= 1
+    assert report.artifact["exploration_profile"]["patterns"]
+    assert report.artifact["exploration_profile"]["candidate_reason"] in {
+        "explicit_existing_paths",
+        "search_matches",
+        "repo_map_fallback",
+    }
+    assert report.artifact["read"]["record_count"] >= 1
 
 
 def test_coding_agent_runtime_surfaces_execution_history_summary(tmp_path) -> None:

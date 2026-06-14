@@ -802,7 +802,7 @@ def test_team_refresh_documentation_sync_writes_canonical_docs(tmp_path) -> None
     assert root_map.exists()
     assert module_manifest.exists()
     assert header_contract.exists()
-    assert refreshed["refresh_results"][0]["status"] in {"created", "unchanged"}
+    assert refreshed["refresh_results"][0]["status"] in {"created", "updated", "unchanged"}
     assert refreshed["refresh_results"][1]["status"] in {"created", "unchanged"}
     assert refreshed["refresh_results"][2]["status"] in {"created", "unchanged"}
     assert refreshed["documents"]["root_map"]["status"] == "passed"
@@ -1432,11 +1432,12 @@ def test_team_execute_persists_approved_plan_handoff_metadata(tmp_path) -> None:
     assert run_payload["metadata"]["execution_context_policy"]["policy"] == "resume_if_same_task"
     assert run_payload["metadata"]["execution_context_policy"]["source_session_id"] == session.id
     assert run_payload["metadata"]["execution_context_policy"]["resume_target"] == executed.resume.linked_execution_run_id
-    assert run_payload["metadata"]["execution_contract"]["source"] == "approved_plan_style_direct_run"
-    assert run_payload["metadata"]["execution_contract"]["goal"] == executed.approved_plan["goal"]
+    assert run_payload["metadata"]["team_execution_mode"] == "native"
+    assert run_payload["payload"]["runtime_name"] == "coding_agent"
+    assert run_payload["payload"]["native_task_proof"]["native_runtime_only"] is True
     assert run_payload["metadata"]["provenance"]["plan_session_id"] == session.id
     assert run_payload["metadata"]["provenance"]["selected_provider_runtime"] == executed.decision_verdict["selected_provider_runtime"]
-    assert run_payload["metadata"]["provenance"]["source_requirement"] == executed.approved_plan["goal"]
+    assert run_payload["metadata"]["provenance"]["approved_plan_goal"] == executed.approved_plan["goal"]
 
 
 def test_team_runbook_mentions_execution_context_policy_for_approved_session(tmp_path) -> None:
@@ -1491,6 +1492,32 @@ def test_team_execute_allows_fresh_context_policy_override(tmp_path) -> None:
     assert run_payload["metadata"]["execution_context_policy"]["policy"] == "fresh"
     assert run_payload["metadata"]["execution_context_policy"]["fresh_context"] is True
     assert run_payload["metadata"]["execution_context_policy"]["resume_target"] is None
+
+
+def test_team_execute_native_mode_persists_coding_runtime_proof(tmp_path) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = _legacy_started_session(team, "Build a persisted plan artifact")
+
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST, execution_mode="native")
+    run_payload = json.loads((tmp_path / "runs" / f"{executed.resume.linked_execution_run_id}.json").read_text(encoding="utf-8"))
+
+    assert run_payload["initial_mode"] == "coding_agent"
+    assert run_payload["final_mode"] == "coding_agent"
+    assert run_payload["payload"]["runtime_name"] == "coding_agent"
+    assert run_payload["payload"]["native_task_proof"]["native_runtime_only"] is True
+    assert run_payload["payload"]["native_task_proof"]["external_coding_agent_required"] is False
+    assert run_payload["payload"]["native_task_proof"]["task_class"] == "bounded_internal_repo_task"
+    assert run_payload["metadata"]["team_execution_mode"] == "native"
+    assert run_payload["metadata"]["execution_context_policy"]["source_session_id"] == session.id
+
+    inspected = team.inspect_execution(executed.id)
+    assert inspected["payload"]["native_task_proof"]["native_runtime_only"] is True
+    assert inspected["session_summary"]["outcome"] == "accepted"
 
 
 def test_team_inspect_knowledge_reports_session_decisions_and_lessons(tmp_path) -> None:

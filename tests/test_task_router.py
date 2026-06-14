@@ -5,6 +5,7 @@ from agent_orchestrator.intake import (
     TaskKind,
     TaskRouter,
 )
+from agent_orchestrator.memory import MemoryStore
 from agent_orchestrator import OrchestrationMode, get_policy
 from agent_orchestrator.adapters import MockClaudePlanner
 
@@ -18,15 +19,42 @@ def test_task_router_routes_direct_fix_to_legacy_with_light_or_skip_clarify() ->
     assert result.execution_mode == ExecutionMode.CODING_AGENT
     assert result.clarify_policy in {ClarifyPolicy.SKIP, ClarifyPolicy.LIGHT}
     assert result.needs_repo_context is True
+    assert result.default_path == "native"
+    assert result.operating_boundary == "native_preferred"
+    assert result.selection_reason
+    assert result.fallback_reason_code == "native_runtime_unavailable"
 
 
-def test_task_router_routes_investigation_requests() -> None:
+def test_task_router_routes_investigation_requests_to_native_when_learning_assets_exist(tmp_path) -> None:
     router = TaskRouter()
+    store = MemoryStore(tmp_path / "memory")
+    store.append(
+        namespace="native_trajectory",
+        session_id="session-1",
+        record_type="trajectory",
+        summary="investigation_to_edit_verify",
+        payload={"task_class": "bounded_internal_repo_task"},
+    )
+    router.native_learning_store = store
 
     result = router.route("Investigate why the planning session stalls and summarize the root cause.")
 
     assert result.task_kind == TaskKind.INVESTIGATION
     assert result.execution_mode == ExecutionMode.LEGACY
+    assert result.default_path == "native"
+    assert result.operating_boundary == "native_preferred"
+    assert result.fallback_reason_code == "native_runtime_unavailable"
+    assert result.clarify_policy in {ClarifyPolicy.SKIP, ClarifyPolicy.LIGHT, ClarifyPolicy.DEEP}
+
+
+def test_task_router_routes_investigation_requests_to_governed_fallback_without_learning_assets() -> None:
+    router = TaskRouter()
+
+    result = router.route("Investigate why the planning session stalls and summarize the root cause.")
+
+    assert result.task_kind == TaskKind.INVESTIGATION
+    assert result.default_path == "native"
+    assert result.operating_boundary == "native_preferred"
     assert result.clarify_policy in {ClarifyPolicy.LIGHT, ClarifyPolicy.DEEP}
 
 
@@ -40,6 +68,9 @@ def test_task_router_routes_migration_to_deep_clarify_and_confirmation() -> None
     assert result.clarify_policy == ClarifyPolicy.DEEP
     assert result.requires_human_confirmation is True
     assert result.risk_level == "high"
+    assert result.default_path == "external"
+    assert result.operating_boundary == "external_preferred"
+    assert result.handoff_reason_code == "risk_exceeds_native_bounded_path"
 
 
 def test_task_router_routes_docs_tasks() -> None:

@@ -236,6 +236,18 @@ def test_execute_cli_request_runs_legacy_runtime_for_coding_tasks() -> None:
     assert result.payload["agent_session"]["session_id"] == result.session_id
     assert result.payload["agent_turn"]["turn_id"] == result.turn_id
     assert result.payload["context_snapshot"]["turn_id"] == result.turn_id
+    assert result.payload["context_snapshot"]["planner_family"] == "native"
+    assert result.payload["planner_family"] == "native"
+    assert result.payload["adapter_contract"]["adapter_family"] == "native_first_party"
+    assert result.payload["native_tool_surface"]["tools"] == [
+        "read",
+        "search",
+        "glob",
+        "structured_patch",
+        "verify",
+        "repo_map",
+        "tool_trace",
+    ]
     assert "repo_report" in result.payload
 
 
@@ -1155,6 +1167,8 @@ def test_team_next_json_outputs_recovery_recommendation(tmp_path, capsys) -> Non
         assert payload["recovery_recommendation"]["format"] == "agent_orchestrator.recovery_recommendation.v1"
         assert payload["recovery_recommendation"]["read_only"] is True
         assert payload["recovery_recommendation"]["safest_next_operator_command"]
+        assert payload["recovery_recommendation"]["program_posture"]["program_goal"]
+        assert "selected_executor" in payload["recovery_recommendation"]["delegation_contract"]
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -2826,6 +2840,68 @@ def test_team_execute_command_rejects_unapproved_session(tmp_path) -> None:
         cli.argparse.ArgumentParser.parse_args = original
 
 
+def test_team_execute_command_defaults_to_native_execution_mode(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+
+    captured: dict[str, object] = {}
+
+    class _FakeSession:
+        def to_dict(self) -> dict[str, object]:
+            return {
+                "id": "session-1",
+                "status": "accepted",
+                "resume": {"linked_execution_run_id": "run-1"},
+            }
+
+    class _FakeTeam:
+        def execute(
+            self,
+            session_id,
+            mode,
+            *,
+            review_policy_override=None,
+            provider_health_snapshot=None,
+            context_policy="resume_if_same_task",
+            execution_mode="legacy",
+        ):
+            captured["session_id"] = session_id
+            captured["mode"] = mode.value if mode else None
+            captured["review_policy_override"] = review_policy_override
+            captured["provider_health_snapshot"] = provider_health_snapshot
+            captured["context_policy"] = context_policy
+            captured["execution_mode"] = execution_mode
+            return _FakeSession()
+
+    original_build_team = cli._build_team_orchestrator
+    original = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: _FakeTeam()
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="execute",
+            session_id="session-1",
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+            review_policy="auto",
+            context_policy="resume_if_same_task",
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["id"] == "session-1"
+        assert captured["execution_mode"] == "native"
+        assert captured["context_policy"] == "resume_if_same_task"
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original
+
+
 def test_team_inspect_knowledge_command_reports_records(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -3075,6 +3151,7 @@ def test_team_workspace_status_json_outputs_control_plane_snapshot(tmp_path, cap
         assert payload["format"] == "agent_orchestrator.workspace_index.v1"
         assert payload["workspace_state"]["format"] == "agent_orchestrator.workspace_state.v1"
         assert payload["program"]["kind"] == "workspace_program"
+        assert payload["comparative_benchmark"]["format"] == "agent_orchestrator.comparative_benchmark_summary.v1"
         assert "active_artifacts" in payload
         assert payload["recovery_timeline"]["format"] == "agent_orchestrator.recovery_timeline.v1"
         assert payload["runtime_events"]["format"] == "agent_orchestrator.runtime_event_stream.v1"

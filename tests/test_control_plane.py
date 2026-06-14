@@ -295,6 +295,10 @@ def test_topology_snapshot_is_read_only_and_links_approval_evidence(tmp_path) ->
     assert payload["strategy_decision"]["runtime_health"]["records_only"] is True
     assert payload["strategy_decision"]["tool_inventory"]["mutation_policy"].startswith("inventory only")
     assert payload["strategy_decision"]["usage_cost"]["source"] == "placeholder"
+    assert payload["program_posture"]["program_goal"]
+    assert "selected_executor" in payload["delegation_contract"]
+    assert "verification_status" in payload["milestone_verification"]
+    assert "next_recommended_action" in payload["operator_control"]
     assert payload["evidence_bundle"]["format"] == "agent_orchestrator.evidence_bundle.v1"
 
 
@@ -688,6 +692,10 @@ def test_recovery_recommendation_is_read_only_and_explains_next_step(tmp_path) -
     assert payload["required_approval_or_evidence"]["approval_required"] is True
     assert payload["safest_next_operator_command"]
     assert "agent_orchestrator.recovery_timeline.v1" in payload["recoverable_artifact_refs"]
+    assert payload["program_posture"]["program_goal"] == "Need a recovery recommendation"
+    assert payload["delegation_contract"]["selected_executor"] == "human"
+    assert payload["milestone_verification"]["verification_status"] == "blocked"
+    assert payload["operator_control"]["approval_pause_state"] is True
     assert payload["branch_candidates"]
     assert payload["recovery_search"]["selected_branch"]
     assert payload["recovery_search"]["candidate_count"] >= 1
@@ -764,6 +772,46 @@ def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(
     assert index["artifacts"]["execution_artifacts"]["format"] == "agent_orchestrator.execution_artifact_summary.v1"
     assert index["execution_artifact_summary"]["recent_execution_artifacts"]
     assert index["execution_artifact_summary"]["compressed_context"]["objective"] == 'Append "print(\'bye\')" to note.py'
+    assert index["execution_artifact_summary"]["context_engineering_contract"]["format"] == "agent_orchestrator.context_engineering_contract.v1"
+    assert index["execution_artifact_summary"]["native_tool_surface"]["format"] == "agent_orchestrator.native_tool_surface.v1"
+    assert index["execution_artifact_summary"]["native_tool_usage"]["trace_count"] >= 1
+    assert index["execution_artifact_summary"]["native_exploration"]["candidate_path_count"] >= 1
+    assert index["execution_artifact_summary"]["native_exploration"]["exploration_profile"]["candidate_reason"] in {
+        "explicit_existing_paths",
+        "search_matches",
+        "repo_map_fallback",
+    }
+    assert index["execution_artifact_summary"]["adapter_shared_contract"]["comparison_mode"] == "same_contract_two_executors"
+    assert index["execution_artifact_summary"]["adapter_shared_contract"]["hot_plug_supported"] is True
+    assert index["execution_artifact_summary"]["adapter_shared_contract"]["default_path"] == "native"
+    assert index["execution_artifact_summary"]["session_continuity"]["resume_supported"] is True
+    assert index["execution_artifact_summary"]["session_continuity"]["resume_kind"] in {None, "fresh", "approval_resume"}
+    assert index["execution_artifact_summary"]["session_continuity"]["long_horizon_posture"]["resume_ready"] is True
+    assert index["execution_artifact_summary"]["session_continuity"]["program_posture"]["program_goal"]
+    assert "active_milestone" in index["execution_artifact_summary"]["session_continuity"]["program_posture"]
+    assert "selected_executor" in index["execution_artifact_summary"]["session_continuity"]["delegation_contract"]
+    assert "verification_status" in index["execution_artifact_summary"]["session_continuity"]["milestone_verification"]
+    assert "next_recommended_action" in index["execution_artifact_summary"]["session_continuity"]["operator_control"]
+    assert index["execution_artifact_summary"]["runtime_cost"]["usage_cost_measurement_status"] == "placeholder"
+    assert index["execution_artifact_summary"]["context_isolation_strategy"] in {"inline_context", "subtask_digest"}
+    assert index["execution_artifact_summary"]["context_isolation_reinjection_mode"] in {"full_inline_context", "digest_focus_subset"}
+    assert index["execution_artifact_summary"]["step_loop_context_surfaces"] == [
+        "select",
+        "structured_observation",
+        "compact",
+        "resume_continuity",
+    ]
+    assert index["execution_artifact_summary"]["native_task_proof"]["format"] == "agent_orchestrator.native_task_proof.v1"
+    assert index["execution_artifact_summary"]["native_task_proof"]["native_runtime_only"] is True
+    assert index["execution_artifact_summary"]["native_repo_task_acceptance"]["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
+    assert index["execution_artifact_summary"]["native_repo_task_acceptance"]["real_repo_task_acceptance_ready"] is False
+    assert index["execution_artifact_summary"]["native_complex_repo_task_acceptance"]["format"] == "agent_orchestrator.native_complex_repo_task_acceptance.v1"
+    assert index["execution_artifact_summary"]["native_complex_repo_task_acceptance"]["complex_repo_task_ready"] is False
+    assert index["comparative_benchmark"]["format"] == "agent_orchestrator.comparative_benchmark_summary.v1"
+    assert index["comparative_benchmark"]["native_default_path"] is True
+    assert index["comparative_benchmark"]["native_complex_repo_task_acceptance_ready"] is False
+    assert "workspace_index" in index["comparative_benchmark"]["shared_evidence_surface"]
+    assert "cli_execution_summary" in index["comparative_benchmark"]["shared_evidence_surface"]
 
 
 def test_runtime_event_stream_includes_execution_artifact_refs(tmp_path) -> None:
@@ -776,6 +824,19 @@ def test_runtime_event_stream_includes_execution_artifact_refs(tmp_path) -> None
         "accepted": True,
         "path": str(runs_root / "run-artifact-1.json"),
         "payload": {
+            "kernel_contract": {
+                "kernel_name": "coding_agent",
+                "kernel_role": "governed_execution_kernel",
+                "state_authority": "control_plane",
+                "output_surfaces": ["execution_result", "runtime_event_stream"],
+            },
+            "step_loop_contract": {
+                "loop_model": "explicit_stage_step_loop",
+                "status": "completed",
+                "current_stage": "verify",
+                "current_disposition": "complete",
+                "resume_supported": True,
+            },
             "artifact_summary": {
                 "artifact_count": 1,
                 "artifacts": [
@@ -785,9 +846,27 @@ def test_runtime_event_stream_includes_execution_artifact_refs(tmp_path) -> None
                         "ref": {"format": "agent_orchestrator.execution_command_artifact.v1"},
                     }
                 ],
-            }
-        },
-    }
+            },
+                "native_task_proof": {
+                    "format": "agent_orchestrator.native_task_proof.v1",
+                    "native_runtime_only": True,
+                    "external_coding_agent_required": False,
+                    "closure_status": "completed",
+                },
+                "native_repo_task_acceptance": {
+                    "format": "agent_orchestrator.native_repo_task_acceptance.v1",
+                    "real_repo_task_acceptance_ready": False,
+                    "passed_check_count": 3,
+                    "total_check_count": 5,
+                },
+                "native_complex_repo_task_acceptance": {
+                    "format": "agent_orchestrator.native_complex_repo_task_acceptance.v1",
+                    "complex_repo_task_ready": False,
+                    "passed_check_count": 2,
+                    "total_check_count": 5,
+                },
+            },
+        }
     (runs_root / "run-artifact-1.json").write_text(json.dumps(run_payload, ensure_ascii=False), encoding="utf-8")
 
     payload = build_runtime_event_stream(
@@ -800,4 +879,12 @@ def test_runtime_event_stream_includes_execution_artifact_refs(tmp_path) -> None
 
     execution_run = next(event for event in payload["events"] if event.get("kind") == "execution_run")
     assert "exec-artifact-123" in execution_run["artifact_refs"]
+    assert execution_run["kernel_contract"]["kernel_role"] == "governed_execution_kernel"
+    assert execution_run["kernel_contract"]["state_authority"] == "control_plane"
+    assert execution_run["step_loop_contract"]["loop_model"] == "explicit_stage_step_loop"
+    assert execution_run["step_loop_contract"]["current_disposition"] == "complete"
+    assert execution_run["native_task_proof"]["native_runtime_only"] is True
+    assert execution_run["native_task_proof"]["closure_status"] == "completed"
+    assert execution_run["native_repo_task_acceptance"]["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
+    assert execution_run["native_complex_repo_task_acceptance"]["format"] == "agent_orchestrator.native_complex_repo_task_acceptance.v1"
     assert execution_run["artifact_summary"]["artifact_count"] == 1
