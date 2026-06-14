@@ -156,6 +156,13 @@ def build_recovery_recommendation(
         safest_command=safest_command,
         required=required,
     )
+    program_goal = session.structured_brief.goal or session.requirement
+    completed_milestones = []
+    if session.status in {"accepted", "completed"}:
+        completed_milestones.append("program_completed")
+    blocked_units = list(blocking_reasons)
+    if not blocked_units and current_status not in {"completed", "recovery_ready"}:
+        blocked_units.append(current_status)
     return {
         "format": "agent_orchestrator.recovery_recommendation.v1",
         "session_id": session.id,
@@ -167,6 +174,39 @@ def build_recovery_recommendation(
         "may_resume_execution": may_resume,
         "human_decision_required": human_required,
         "compliance_must_be_fixed_first": compliance_first,
+        "program_posture": {
+            "program_goal": program_goal,
+            "active_milestone": str(summary.get("primary_reason") or session.resume.current_phase or current_status),
+            "completed_milestones": completed_milestones,
+            "ready_next_units": [str(candidate.get("command")) for candidate in branch_candidates[:2]],
+            "blocked_units": blocked_units,
+        },
+        "delegation_contract": {
+            "selected_executor": "human" if human_required else "native",
+            "ownership_boundary": "recovery_operator_lane",
+            "handoff_reason_code": "awaiting_human_decision" if human_required else None,
+            "fallback_reason_code": current_status if current_status in {"provider_degraded", "runtime_failed"} else None,
+            "required_handoff_artifacts": artifact_refs,
+            "resume_expectation": summary.get("resume_action") or summary.get("primary_action"),
+        },
+        "program_continuity": {
+            "resume_supported": may_resume,
+            "resume_kind": summary.get("resume_action") or summary.get("primary_action"),
+            "compaction_stage": None,
+            "continuity_artifact_status": "recovery_ready" if may_resume else "blocked",
+            "latest_recovery_hint": current_blocking_reason,
+        },
+        "milestone_verification": {
+            "verification_status": "blocked" if not may_resume else "pending",
+            "remaining_checks": _required_labels(required),
+            "checkpoint_ready": current_status == "completed",
+        },
+        "operator_control": {
+            "next_recommended_action": safest_command,
+            "runbook_recovery_lane": current_status,
+            "approval_pause_state": human_required,
+            "clarify_pause_state": False,
+        },
         "recovery_search": _recovery_search_summary(branch_candidates),
         "branch_candidates": branch_candidates,
         "read_only": True,

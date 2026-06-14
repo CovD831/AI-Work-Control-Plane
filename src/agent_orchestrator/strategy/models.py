@@ -15,6 +15,9 @@ class ExecutionStrategy(str, Enum):
     MIGRATION_GUARDED = "migration_guarded"
     DOCS_SYNC = "docs_sync"
     NEED_HUMAN_CONFIRMATION = "need_human_confirmation"
+    CLARIFY_THEN_EDIT = "clarify_then_edit"
+    EXTERNAL_HANDOFF = "external_handoff"
+    GOVERNED_FALLBACK = "governed_fallback"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +46,13 @@ class ExecutionPlan:
     reasons: list[str] = field(default_factory=list)
     candidates: list[StrategyCandidate] = field(default_factory=list)
     compatibility_metadata: dict[str, object] = field(default_factory=dict)
+    planner_family: str = "compatibility"
+    planner_actions: list[str] = field(default_factory=list)
+    decision_evidence: dict[str, object] = field(default_factory=dict)
+    operating_boundary: str = "native_preferred"
+    selection_reason: str = ""
+    handoff_reason_code: str | None = None
+    fallback_reason_code: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -52,6 +62,13 @@ class ExecutionPlan:
             "reasons": list(self.reasons),
             "candidates": [candidate.to_dict() for candidate in self.candidates],
             "compatibility_metadata": dict(self.compatibility_metadata),
+            "planner_family": self.planner_family,
+            "planner_actions": list(self.planner_actions),
+            "decision_evidence": dict(self.decision_evidence),
+            "operating_boundary": self.operating_boundary,
+            "selection_reason": self.selection_reason,
+            "handoff_reason_code": self.handoff_reason_code,
+            "fallback_reason_code": self.fallback_reason_code,
         }
 
     def summary(self) -> dict[str, object]:
@@ -61,4 +78,11 @@ class ExecutionPlan:
             "candidate_count": len(self.candidates),
             "compatibility_metadata": dict(self.compatibility_metadata),
             "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "planner_family": self.planner_family,
+            "planner_actions": list(self.planner_actions),
+            "decision_evidence": dict(self.decision_evidence),
+            "operating_boundary": self.operating_boundary,
+            "selection_reason": self.selection_reason,
+            "handoff_reason_code": self.handoff_reason_code,
+            "fallback_reason_code": self.fallback_reason_code,
         }

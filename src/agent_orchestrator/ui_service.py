@@ -7,6 +7,7 @@ from __future__ import annotations
 # ---
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -159,7 +160,7 @@ class DashboardService:
             "agent_cards": _build_agent_cards(payload),
             "role_groups": _build_role_groups(payload, graph, messages),
             "governance_summary": _build_governance_summary(payload),
-            "operator_summary": _build_operator_summary(payload, linked_run, graph, messages),
+            "operator_summary": _build_operator_summary(payload, linked_run, graph, messages, workspace_index),
             "control_plane": {
                 "read_only": True,
                 "workspace_index": workspace_index,
@@ -219,7 +220,7 @@ class DashboardService:
     def execute_session(self, session_id: str, *, mode: str | None = None) -> dict[str, object]:
         assert_session_action_allowed(self.team.status(session_id).to_dict(), "execute", {"mode": mode} if mode else {})
         selected_mode = None if mode in {None, "auto"} else OrchestrationMode(str(mode))
-        payload = self.team.execute(session_id, selected_mode).to_dict()
+        payload = self.team.execute(session_id, selected_mode, execution_mode="native").to_dict()
         self._record_action("execute", session_id, payload)
         return payload
 
@@ -817,6 +818,10 @@ def _build_evidence_summary(
     ]
     memory_records = memory_records or []
     postmortems = [record for record in memory_records if record.get("record_type") == "postmortem"]
+    native_learning_records = [
+        record for record in memory_records
+        if record.get("namespace") in {"native_trajectory", "native_learning"}
+    ]
     execution_summary = _linked_execution_summary(linked_run)
     return {
         "review_round_count": len(rounds),
@@ -830,6 +835,8 @@ def _build_evidence_summary(
         "tool_surfaces": ["team_orchestrator", "run_store", "job_runtime"],
         "memory_record_count": len(memory_records),
         "postmortem_count": len(postmortems),
+        "learning_record_count": len(native_learning_records),
+        "learning_consumption_ready": bool(native_learning_records),
         "execution_runtime": execution_summary.get("runtime_name"),
         "verification_status": execution_summary.get("verification_status"),
         "repair_attempt_count": execution_summary.get("repair_attempt_count", 0),
@@ -851,6 +858,7 @@ def _build_operator_summary(
     linked_run: dict[str, object] | None,
     graph: WorkUnitGraph | None,
     messages: list[dict[str, object]],
+    workspace_index: dict[str, object] | None = None,
 ) -> dict[str, object]:
     summary = get_governance_status(payload)
     verdict = payload.get("decision_verdict", {}) if isinstance(payload.get("decision_verdict"), dict) else {}
@@ -866,6 +874,11 @@ def _build_operator_summary(
     review_policy = execution_contract.get("review_policy", {}) if isinstance(execution_contract.get("review_policy"), dict) else {}
     events = payload.get("events", []) if isinstance(payload.get("events"), list) else []
     execution_summary = _linked_execution_summary(linked_run)
+    workspace_benchmark = (
+        workspace_index.get("comparative_benchmark", {})
+        if isinstance(workspace_index, dict) and isinstance(workspace_index.get("comparative_benchmark"), dict)
+        else {}
+    )
     return {
         "session": {
             "id": payload.get("id"),
@@ -886,6 +899,7 @@ def _build_operator_summary(
             "linked_run_status": linked_run.get("status") if isinstance(linked_run, dict) else None,
         },
         "execution_runtime_summary": execution_summary,
+        "comparative_benchmark_summary": workspace_benchmark,
         "review_policy": review_policy or payload.get("structured_brief", {}).get("review_policy", {})
         if isinstance(payload.get("structured_brief"), dict)
         else {},
@@ -987,12 +1001,190 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
     repair_summary = payload.get("repair_summary", {}) if isinstance(payload.get("repair_summary"), dict) else {}
     recovery_summary = payload.get("recovery_summary", {}) if isinstance(payload.get("recovery_summary"), dict) else {}
     attempt_memory = payload.get("attempt_memory", []) if isinstance(payload.get("attempt_memory"), list) else []
+    kernel_contract = payload.get("kernel_contract", {}) if isinstance(payload.get("kernel_contract"), dict) else {}
+    step_loop_contract = payload.get("step_loop_contract", {}) if isinstance(payload.get("step_loop_contract"), dict) else {}
+    context_engineering_contract = (
+        payload.get("context_engineering_contract", {})
+        if isinstance(payload.get("context_engineering_contract"), dict)
+        else {}
+    )
+    context_engineering_refs = (
+        step_loop_contract.get("context_engineering_refs", {})
+        if isinstance(step_loop_contract.get("context_engineering_refs"), dict)
+        else {}
+    )
+    strategy_summary = payload.get("strategy_summary", {}) if isinstance(payload.get("strategy_summary"), dict) else {}
+    native_task_proof = payload.get("native_task_proof", {}) if isinstance(payload.get("native_task_proof"), dict) else {}
+    native_repo_task_acceptance = (
+        payload.get("native_repo_task_acceptance", {})
+        if isinstance(payload.get("native_repo_task_acceptance"), dict)
+        else {}
+    )
+    native_complex_repo_task_acceptance = (
+        payload.get("native_complex_repo_task_acceptance", {})
+        if isinstance(payload.get("native_complex_repo_task_acceptance"), dict)
+        else {}
+    )
+    repo_report = payload.get("repo_report", {}) if isinstance(payload.get("repo_report"), dict) else {}
+    continuity_contract = (
+        payload.get("session_continuity_contract", {})
+        if isinstance(payload.get("session_continuity_contract"), dict)
+        else {}
+    )
+    path_selection = payload.get("path_selection", {}) if isinstance(payload.get("path_selection"), dict) else {}
+    adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
+    adapter_shared_contract = {
+        "adapter_family": adapter_contract.get("adapter_family"),
+        "agent_kind": adapter_contract.get("agent_kind"),
+        "default_path": path_selection.get("default_path"),
+        "operating_boundary": path_selection.get("operating_boundary"),
+        "selection_reason": path_selection.get("selection_reason"),
+        "handoff_reason_code": path_selection.get("handoff_reason_code"),
+        "fallback_reason_code": path_selection.get("fallback_reason_code"),
+        "comparison_mode": (
+            adapter_contract.get("capability_surface", {}).get("comparability", {}).get("comparison_mode")
+            if isinstance(adapter_contract.get("capability_surface"), dict)
+            and isinstance(adapter_contract.get("capability_surface", {}).get("comparability"), dict)
+            else None
+        ),
+        "hot_plug_supported": (
+            adapter_contract.get("capability_surface", {}).get("governance", {}).get("hot_plug_supported")
+            if isinstance(adapter_contract.get("capability_surface"), dict)
+            and isinstance(adapter_contract.get("capability_surface", {}).get("governance"), dict)
+            else None
+        ),
+        "fallback_governed": (
+            adapter_contract.get("capability_surface", {}).get("governance", {}).get("fallback_governed")
+            if isinstance(adapter_contract.get("capability_surface"), dict)
+            and isinstance(adapter_contract.get("capability_surface", {}).get("governance"), dict)
+            else None
+        ),
+        "approval_required": adapter_contract.get("approval_semantics", {}).get("approval_required")
+        if isinstance(adapter_contract.get("approval_semantics"), dict)
+        else None,
+        "approval_pause_supported": adapter_contract.get("approval_semantics", {}).get("approval_pause_supported")
+        if isinstance(adapter_contract.get("approval_semantics"), dict)
+        else None,
+        "evidence_outputs": list(adapter_contract.get("evidence_outputs", []))
+        if isinstance(adapter_contract.get("evidence_outputs"), list)
+        else [],
+        "recovery_surfaces": list(adapter_contract.get("recovery_surfaces", []))
+        if isinstance(adapter_contract.get("recovery_surfaces"), list)
+        else [],
+    }
+    capability_surface = (
+        adapter_contract.get("capability_surface", {})
+        if isinstance(adapter_contract.get("capability_surface"), dict)
+        else {}
+    )
     runtime_name = payload.get("runtime_name")
     if runtime_name is None and linked_run.get("attempts"):
         runtime_name = "legacy"
+    step_kind = step_loop_contract.get("current_step_kind")
+    if not step_kind and step_loop_contract.get("current_stage") == "verify":
+        step_kind = "verification"
+    elif not step_kind and step_loop_contract.get("current_stage") == "edit":
+        step_kind = "edit_execution"
+    elif not step_kind and step_loop_contract.get("current_stage") == "explore":
+        step_kind = "repo_exploration"
+    required_surfaces = (
+        list(context_engineering_refs.get("required_surfaces", []))
+        if isinstance(context_engineering_refs.get("required_surfaces"), list)
+        else _default_context_surfaces_for_step_kind(str(step_kind) if step_kind else None)
+    )
+    repo_task_acceptance_ready = native_repo_task_acceptance.get("real_repo_task_acceptance_ready")
     return {
         "runtime_name": runtime_name,
         "execution_mode": payload.get("execution_mode"),
+        "planner_family": payload.get("planner_family") or strategy_summary.get("planner_family"),
+        "planner_decision_format": strategy_summary.get("decision_evidence", {}).get("format")
+        if isinstance(strategy_summary.get("decision_evidence"), dict)
+        else None,
+        "planner_selected_strategy": strategy_summary.get("decision_evidence", {}).get("selected_strategy")
+        if isinstance(strategy_summary.get("decision_evidence"), dict)
+        else strategy_summary.get("selected_execution_strategy"),
+        "planner_native_work_units": strategy_summary.get("decision_evidence", {}).get("native_work_units")
+        if isinstance(strategy_summary.get("decision_evidence"), dict)
+        else None,
+        "default_path": path_selection.get("default_path"),
+        "operating_boundary": path_selection.get("operating_boundary"),
+        "selection_reason": path_selection.get("selection_reason"),
+        "handoff_reason_code": path_selection.get("handoff_reason_code"),
+        "fallback_reason_code": path_selection.get("fallback_reason_code"),
+        "adapter_family": adapter_contract.get("adapter_family"),
+        "adapter_agent_kind": adapter_contract.get("agent_kind"),
+        "adapter_capability_surface_format": capability_surface.get("format"),
+        "adapter_capability": _adapter_capability_summary(adapter_contract),
+        "adapter_governance_shared": capability_surface.get("governance", {}).get("fallback_governed")
+        if isinstance(capability_surface.get("governance"), dict)
+        else None,
+        "adapter_hot_plug_supported": capability_surface.get("governance", {}).get("hot_plug_supported")
+        if isinstance(capability_surface.get("governance"), dict)
+        else None,
+        "adapter_comparison_mode": capability_surface.get("comparability", {}).get("comparison_mode")
+        if isinstance(capability_surface.get("comparability"), dict)
+        else None,
+        "adapter_evidence_outputs": capability_surface.get("evidence_outputs", [])
+        if isinstance(capability_surface.get("evidence_outputs"), list)
+        else [],
+        "adapter_recovery_surfaces": capability_surface.get("recovery_surfaces", [])
+        if isinstance(capability_surface.get("recovery_surfaces"), list)
+        else [],
+        "kernel_role": kernel_contract.get("kernel_role"),
+        "kernel_state_authority": kernel_contract.get("state_authority"),
+        "kernel_output_surfaces": list(kernel_contract.get("output_surfaces", []))
+        if isinstance(kernel_contract.get("output_surfaces"), list)
+        else [],
+        "step_loop_model": step_loop_contract.get("loop_model"),
+        "step_loop_status": step_loop_contract.get("status"),
+        "step_loop_stage": step_loop_contract.get("current_stage"),
+        "step_loop_disposition": step_loop_contract.get("current_disposition"),
+        "step_loop_resume_supported": step_loop_contract.get("resume_supported"),
+        "step_loop_context_surfaces": required_surfaces,
+        "session_resume_kind": continuity_contract.get("resume_kind"),
+        "session_compaction_stage": continuity_contract.get("compaction_stage"),
+        "session_masked_observation_count": continuity_contract.get("masked_observation_count"),
+        "session_long_horizon_posture": continuity_contract.get("long_horizon_posture", {}),
+        "program_posture": continuity_contract.get("program_posture", {}),
+        "delegation_contract": continuity_contract.get("delegation_contract", {}),
+        "program_continuity": continuity_contract.get("program_continuity", {}),
+        "milestone_verification": continuity_contract.get("milestone_verification", {}),
+        "operator_control": continuity_contract.get("operator_control", {}),
+        "runtime_duration_seconds": _runtime_duration_seconds(payload),
+        "runtime_cost_measurement_status": _runtime_cost_measurement_status(payload),
+        "step_loop_context_refs": context_engineering_refs.get("trace_refs", {})
+        if isinstance(context_engineering_refs.get("trace_refs"), dict)
+        else {},
+        "context_engineering_contract_format": context_engineering_contract.get("format"),
+        "context_engineering_main_path_required": context_engineering_contract.get("main_path_required"),
+        "context_select_strategy": context_engineering_contract.get("select", {}).get("deterministic_strategy")
+        if isinstance(context_engineering_contract.get("select"), dict)
+        else None,
+        "context_compaction_stage": context_engineering_contract.get("compact", {}).get("stage")
+        if isinstance(context_engineering_contract.get("compact"), dict)
+        else None,
+        "context_isolation_strategy": context_engineering_contract.get("isolate", {}).get("strategy")
+        if isinstance(context_engineering_contract.get("isolate"), dict)
+        else None,
+        "context_isolation_reinjection_mode": context_engineering_contract.get("isolate", {}).get("reinjection_mode")
+        if isinstance(context_engineering_contract.get("isolate"), dict)
+        else None,
+        "native_runtime_only": native_task_proof.get("native_runtime_only"),
+        "external_coding_agent_required": native_task_proof.get("external_coding_agent_required"),
+        "task_class": native_task_proof.get("task_class"),
+        "proof_scenario": native_task_proof.get("proof_scenario"),
+        "closure_status": native_task_proof.get("closure_status"),
+        "proof_artifact_count": native_task_proof.get("artifact_count"),
+        "proof_event_count": native_task_proof.get("event_count"),
+        "repo_task_acceptance_ready": repo_task_acceptance_ready,
+        "repo_task_acceptance_passed_checks": native_repo_task_acceptance.get("passed_check_count"),
+        "repo_task_acceptance_total_checks": native_repo_task_acceptance.get("total_check_count"),
+        "closure_strength": "repo_task_acceptance_ready"
+        if repo_task_acceptance_ready is True
+        else "runtime_closure_only",
+        "complex_repo_task_acceptance_ready": native_complex_repo_task_acceptance.get("complex_repo_task_ready"),
+        "complex_repo_task_acceptance_passed_checks": native_complex_repo_task_acceptance.get("passed_check_count"),
+        "complex_repo_task_acceptance_total_checks": native_complex_repo_task_acceptance.get("total_check_count"),
         "verification_status": verification.get("status"),
         "verification_failure_kind": verification.get("failure_kind"),
         "repair_attempt_count": repair_summary.get("attempt_count", len(attempt_memory)),
@@ -1000,6 +1192,87 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
         "recovery_action": recovery_summary.get("action"),
         "recovery_reason": recovery_summary.get("reason"),
         "human_review_recommended": recovery_summary.get("human_review_recommended"),
+        "native_tool_surface": payload.get("native_tool_surface", {}),
+        "native_tool_trace_count": len(payload.get("native_tool_trace", {}).get("trace", []))
+        if isinstance(payload.get("native_tool_trace"), dict) and isinstance(payload.get("native_tool_trace", {}).get("trace"), list)
+        else 0,
+        "native_exploration": {
+            "existing_path_count": len(repo_report.get("existing_paths", [])) if isinstance(repo_report.get("existing_paths"), list) else 0,
+            "candidate_path_count": len(repo_report.get("candidate_paths", [])) if isinstance(repo_report.get("candidate_paths"), list) else 0,
+            "file_count": repo_report.get("file_count"),
+            "candidate_reason": (
+                repo_report.get("artifact", {}).get("exploration_profile", {}).get("candidate_reason")
+                if isinstance(repo_report.get("artifact"), dict)
+                and isinstance(repo_report.get("artifact", {}).get("exploration_profile"), dict)
+                else None
+            ),
+            "selected_candidates": (
+                list(repo_report.get("artifact", {}).get("exploration_profile", {}).get("selected_candidates", []))
+                if isinstance(repo_report.get("artifact"), dict)
+                and isinstance(repo_report.get("artifact", {}).get("exploration_profile"), dict)
+                and isinstance(repo_report.get("artifact", {}).get("exploration_profile", {}).get("selected_candidates"), list)
+                else []
+            ),
+            "repo_map_directory_count": (
+                repo_report.get("artifact", {}).get("repo_map", {}).get("directory_count")
+                if isinstance(repo_report.get("artifact"), dict) and isinstance(repo_report.get("artifact", {}).get("repo_map"), dict)
+                else None
+            ),
+        },
+        "adapter_shared_contract": adapter_shared_contract,
+    }
+
+
+def _default_context_surfaces_for_step_kind(step_kind: str | None) -> list[str]:
+    if step_kind == "repo_exploration":
+        return ["write", "select", "structured_observation"]
+    if step_kind == "edit_execution":
+        return ["write", "select", "structured_observation", "isolate"]
+    if step_kind == "verification":
+        return ["select", "structured_observation", "compact", "resume_continuity"]
+    return []
+
+
+def _runtime_duration_seconds(payload: dict[str, object]) -> float | None:
+    artifact_summary = payload.get("native_tool_trace", {}) if isinstance(payload.get("native_tool_trace"), dict) else {}
+    trace = artifact_summary.get("trace", []) if isinstance(artifact_summary.get("trace"), list) else []
+    timestamps = [
+        entry.get("timestamp")
+        for entry in trace
+        if isinstance(entry, dict)
+    ]
+    valid: list[datetime] = []
+    for value in timestamps:
+        if not isinstance(value, str):
+            continue
+        try:
+            valid.append(datetime.fromisoformat(value))
+        except ValueError:
+            continue
+    if len(valid) < 2:
+        return None
+    return round((max(valid) - min(valid)).total_seconds(), 6)
+
+
+def _runtime_cost_measurement_status(payload: dict[str, object]) -> str:
+    return "placeholder"
+
+
+def _adapter_capability_summary(adapter_contract: dict[str, object]) -> dict[str, object]:
+    capability_surface = (
+        adapter_contract.get("capability_surface", {})
+        if isinstance(adapter_contract.get("capability_surface"), dict)
+        else {}
+    )
+    governance = capability_surface.get("governance", {}) if isinstance(capability_surface.get("governance"), dict) else {}
+    comparability = capability_surface.get("comparability", {}) if isinstance(capability_surface.get("comparability"), dict) else {}
+    return {
+        "format": capability_surface.get("format"),
+        "comparison_mode": comparability.get("comparison_mode"),
+        "hot_plug_supported": governance.get("hot_plug_supported"),
+        "fallback_governed": governance.get("fallback_governed"),
+        "evidence_outputs": list(capability_surface.get("evidence_outputs", [])) if isinstance(capability_surface.get("evidence_outputs"), list) else [],
+        "recovery_surfaces": list(capability_surface.get("recovery_surfaces", [])) if isinstance(capability_surface.get("recovery_surfaces"), list) else [],
     }
 
 

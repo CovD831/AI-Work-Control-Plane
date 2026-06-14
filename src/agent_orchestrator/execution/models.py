@@ -179,6 +179,56 @@ class CompressedExecutionContext:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionKernelContract:
+    kernel_name: str
+    kernel_role: str
+    input_sources: list[str] = field(default_factory=list)
+    output_surfaces: list[str] = field(default_factory=list)
+    state_authority: str = "control_plane"
+    session_owner: str = "session_runtime"
+    provider_runtime_role: str = "execution_backend"
+    topology_role: str = "upstream_execution_shape"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "kernel_name": self.kernel_name,
+            "kernel_role": self.kernel_role,
+            "input_sources": list(self.input_sources),
+            "output_surfaces": list(self.output_surfaces),
+            "state_authority": self.state_authority,
+            "session_owner": self.session_owner,
+            "provider_runtime_role": self.provider_runtime_role,
+            "topology_role": self.topology_role,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class UnifiedAgentAdapterContract:
+    adapter_family: str
+    agent_kind: str
+    execution_contract: dict[str, object] = field(default_factory=dict)
+    runtime_metadata: dict[str, object] = field(default_factory=dict)
+    capability_surface: dict[str, object] = field(default_factory=dict)
+    path_selection: dict[str, object] = field(default_factory=dict)
+    approval_semantics: dict[str, object] = field(default_factory=dict)
+    evidence_outputs: list[str] = field(default_factory=list)
+    recovery_surfaces: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "adapter_family": self.adapter_family,
+            "agent_kind": self.agent_kind,
+            "execution_contract": dict(self.execution_contract),
+            "runtime_metadata": dict(self.runtime_metadata),
+            "capability_surface": dict(self.capability_surface),
+            "path_selection": dict(self.path_selection),
+            "approval_semantics": dict(self.approval_semantics),
+            "evidence_outputs": list(self.evidence_outputs),
+            "recovery_surfaces": list(self.recovery_surfaces),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionStepDecision:
     step_id: str
     step_kind: str
@@ -274,6 +324,8 @@ class ExecutionResult:
     reasons: list[str] = field(default_factory=list)
     session_id: str | None = None
     turn_id: str | None = None
+    kernel_contract: ExecutionKernelContract | None = None
+    path_selection: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -287,4 +339,6 @@ class ExecutionResult:
             "reasons": list(self.reasons),
             "session_id": self.session_id,
             "turn_id": self.turn_id,
+            "kernel_contract": self.kernel_contract.to_dict() if self.kernel_contract is not None else None,
+            "path_selection": dict(self.path_selection),
         }

@@ -12,6 +12,7 @@ from agent_orchestrator.session.models import (
     ContextSnapshot,
     ExecutionActivity,
     SessionTurn,
+    TrajectoryRecord,
     new_activity_id,
     new_session_id,
     new_snapshot_id,
@@ -60,6 +61,7 @@ class SessionRuntime:
         task_contract: dict[str, object],
         compatibility_metadata: dict[str, object],
         selected_execution_strategy: str,
+        planner_family: str,
         resume_kind: str = "fresh",
         resume_from_turn_id: str | None = None,
         metadata: dict[str, object] | None = None,
@@ -73,6 +75,7 @@ class SessionRuntime:
             turn_id=turn_id,
             task_contract=dict(task_contract),
             selected_execution_strategy=selected_execution_strategy,
+            planner_family=planner_family,
             compatibility_metadata=dict(compatibility_metadata),
             resume_kind=resume_kind,
             metadata=dict(metadata or {}),
@@ -173,6 +176,36 @@ class SessionRuntime:
         updated_turn = replace(turn, status=status)
         self._write_json(self._session_dir(session_id) / "turns" / f"{turn_id}.json", updated_turn.to_dict())
         return updated_turn
+
+    def record_trajectory(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        task_class: str,
+        path_selection: dict[str, object],
+        stage: str,
+        outcome: str,
+        summary: str,
+        evidence_refs: list[str] | None = None,
+        asset_refs: list[str] | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> TrajectoryRecord:
+        trajectory = TrajectoryRecord(
+            trajectory_id=f"trajectory-{new_activity_id().split('-', 1)[-1]}",
+            session_id=session_id,
+            turn_id=turn_id,
+            task_class=task_class,
+            path_selection=dict(path_selection),
+            stage=stage,
+            outcome=outcome,
+            summary=summary,
+            evidence_refs=list(evidence_refs or []),
+            asset_refs=list(asset_refs or []),
+            metadata=dict(metadata or {}),
+        )
+        self._write_json(self._session_dir(session_id) / "trajectories" / f"{trajectory.trajectory_id}.json", trajectory.to_dict())
+        return trajectory
 
     def latest_turn(self, session_id: str) -> SessionTurn | None:
         session = self.get_session(session_id)

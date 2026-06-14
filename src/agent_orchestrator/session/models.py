@@ -105,6 +105,7 @@ class ContextSnapshot:
     turn_id: str
     task_contract: dict[str, object]
     selected_execution_strategy: str
+    planner_family: str
     compatibility_metadata: dict[str, object]
     resume_kind: ResumeKind
     metadata: dict[str, object] = field(default_factory=dict)
@@ -116,6 +117,7 @@ class ContextSnapshot:
             "turn_id": self.turn_id,
             "task_contract": dict(self.task_contract),
             "selected_execution_strategy": self.selected_execution_strategy,
+            "planner_family": self.planner_family,
             "compatibility_metadata": dict(self.compatibility_metadata),
             "resume_kind": self.resume_kind,
             "metadata": dict(self.metadata),
@@ -129,6 +131,7 @@ class ContextSnapshot:
             turn_id=str(data["turn_id"]),
             task_contract=dict(data.get("task_contract", {})),
             selected_execution_strategy=str(data.get("selected_execution_strategy", "unknown")),
+            planner_family=str(data.get("planner_family", "compatibility")),
             compatibility_metadata=dict(data.get("compatibility_metadata", {})),
             resume_kind=str(data.get("resume_kind", "fresh")),
             metadata=dict(data.get("metadata", {})),
@@ -160,17 +163,49 @@ class ExecutionActivity:
             "metadata": dict(self.metadata),
         }
 
+
+@dataclass(frozen=True, slots=True)
+class TrajectoryRecord:
+    trajectory_id: str
+    session_id: str
+    turn_id: str
+    task_class: str
+    path_selection: dict[str, object]
+    stage: str
+    outcome: str
+    summary: str
+    evidence_refs: list[str] = field(default_factory=list)
+    asset_refs: list[str] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "trajectory_id": self.trajectory_id,
+            "session_id": self.session_id,
+            "turn_id": self.turn_id,
+            "task_class": self.task_class,
+            "path_selection": dict(self.path_selection),
+            "stage": self.stage,
+            "outcome": self.outcome,
+            "summary": self.summary,
+            "evidence_refs": list(self.evidence_refs),
+            "asset_refs": list(self.asset_refs),
+            "metadata": dict(self.metadata),
+        }
+
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "ExecutionActivity":
+    def from_dict(cls, data: dict[str, object]) -> "TrajectoryRecord":
         return cls(
-            activity_id=str(data["activity_id"]),
+            trajectory_id=str(data["trajectory_id"]),
             session_id=str(data["session_id"]),
             turn_id=str(data["turn_id"]),
-            runtime_name=str(data.get("runtime_name", "unknown")),
-            linked_run_id=str(data["linked_run_id"]) if data.get("linked_run_id") else None,
-            status=str(data.get("status", "running")),
-            accepted=data.get("accepted"),
+            task_class=str(data.get("task_class", "unknown")),
+            path_selection=dict(data.get("path_selection", {})),
+            stage=str(data.get("stage", "unknown")),
+            outcome=str(data.get("outcome", "unknown")),
             summary=str(data.get("summary", "")),
+            evidence_refs=[str(item) for item in data.get("evidence_refs", [])],
+            asset_refs=[str(item) for item in data.get("asset_refs", [])],
             metadata=dict(data.get("metadata", {})),
         )
 

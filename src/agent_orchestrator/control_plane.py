@@ -228,6 +228,47 @@ def build_strategy_decision(session: PlanSession, workspace_state: dict[str, obj
     ]
     if isinstance(next_task, dict):
         verification_requirements.extend(str(item) for item in next_task.get("validation", []) if item)
+    program_posture = {
+        "program_goal": session.structured_brief.goal or session.requirement,
+        "active_milestone": current_checkpoint_objective,
+        "completed_milestones": [],
+        "ready_next_units": [str(next_task.get("title"))] if isinstance(next_task, dict) and next_task.get("title") else [],
+        "blocked_units": list(status.get("blocking_reasons", [])) if isinstance(status.get("blocking_reasons"), list) else [],
+    }
+    delegation_contract = {
+        "selected_executor": (
+            decision.get("selected_provider_runtime", {}).get("provider")
+            if isinstance(decision.get("selected_provider_runtime"), dict)
+            else None
+        ) or "native",
+        "ownership_boundary": status.get("topology_reason"),
+        "handoff_reason_code": decision.get("selected_provider_runtime", {}).get("handoff_reason_code")
+        if isinstance(decision.get("selected_provider_runtime"), dict)
+        else None,
+        "fallback_reason_code": decision.get("selected_provider_runtime", {}).get("fallback_reason_code")
+        if isinstance(decision.get("selected_provider_runtime"), dict)
+        else None,
+        "required_handoff_artifacts": ["strategy_decision", "workspace_index", "evidence_bundle"],
+        "resume_expectation": status.get("resume_action"),
+    }
+    program_continuity = {
+        "resume_supported": True,
+        "resume_kind": status.get("resume_action"),
+        "compaction_stage": None,
+        "continuity_artifact_status": "projected",
+        "latest_recovery_hint": status.get("next_action_message"),
+    }
+    milestone_verification = {
+        "verification_status": "pending",
+        "remaining_checks": verification_requirements,
+        "checkpoint_ready": False,
+    }
+    operator_control = {
+        "next_recommended_action": status.get("primary_action"),
+        "runbook_recovery_lane": status.get("resume_reason"),
+        "approval_pause_state": status.get("approval_state"),
+        "clarify_pause_state": bool(status.get("human_intervention_reason")),
+    }
     return {
         "format": CONTROL_PLANE_FORMATS["strategy_decision"],
         "session_id": session.id,
@@ -257,6 +298,11 @@ def build_strategy_decision(session: PlanSession, workspace_state: dict[str, obj
         "risks": [str(item) for item in session.structured_brief.risks],
         "verification_requirements": verification_requirements,
         "validation_plan": verification_requirements,
+        "program_posture": program_posture,
+        "delegation_contract": delegation_contract,
+        "program_continuity": program_continuity,
+        "milestone_verification": milestone_verification,
+        "operator_control": operator_control,
         "executes": False,
         "workspace_state_created_at": workspace_state.get("created_at") if isinstance(workspace_state, dict) else None,
         "created_at": now_iso(),

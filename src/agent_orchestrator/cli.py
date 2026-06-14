@@ -26,7 +26,7 @@ from agent_orchestrator.policies import OrchestrationMode, get_policy
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 from agent_orchestrator.run_store import RunStore
 from agent_orchestrator.session import SessionRuntime
-from agent_orchestrator.strategy import CompatibilityStrategyPlanner
+from agent_orchestrator.strategy import NativeStrategyPlanner
 from agent_orchestrator.tasks import TaskContract
 
 
@@ -353,6 +353,7 @@ def main() -> None:
     team_execute.add_argument("--provider", choices=["codex", "claude"])
     team_execute.add_argument("--review-policy", choices=REVIEW_POLICY_CHOICES, default="auto")
     team_execute.add_argument("--context-policy", choices=["fresh", "resume", "resume_if_same_task"], default="resume_if_same_task")
+    team_execute.add_argument("--execution-mode", choices=["legacy", "native"], default="native")
 
     team_setup = team_subparsers.add_parser("setup", help="Inspect provider/runtime and workflow readiness.")
     team_setup.add_argument("--plans-root", default=".agent_orchestrator/plans")
@@ -716,7 +717,7 @@ def _execute_cli_request(
     intake = IntentIntake(orchestrator.planner)
     intake_result = intake.intake(requirement, route, policy)
     task_contract = TaskContract.from_dict(intake_result.task_contract) if isinstance(intake_result.task_contract, dict) else None
-    strategy_planner = orchestrator.strategy_planner or CompatibilityStrategyPlanner(orchestrator.decomposer)
+    strategy_planner = orchestrator.strategy_planner or NativeStrategyPlanner(orchestrator.decomposer)
     strategy_plan = strategy_planner.plan(task_contract, policy, route=route) if task_contract is not None else None
     session_runtime = SessionRuntime()
     session = session_runtime.start_session(
@@ -740,6 +741,7 @@ def _execute_cli_request(
         task_contract=task_contract.to_dict() if task_contract is not None else {},
         compatibility_metadata=strategy_plan.compatibility_metadata if strategy_plan is not None else {},
         selected_execution_strategy=strategy_plan.strategy.value if strategy_plan is not None else "unknown",
+        planner_family=strategy_plan.planner_family if strategy_plan is not None else "native",
         metadata={
             "runtime_name": route.execution_mode.value,
             "async_requested": async_run,

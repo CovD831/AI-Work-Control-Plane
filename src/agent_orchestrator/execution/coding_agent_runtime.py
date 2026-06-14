@@ -21,6 +21,7 @@ from agent_orchestrator.execution.models import (
     ActionRequest,
     ActionResult,
     CompressedExecutionContext,
+    ExecutionKernelContract,
     ExecutionRequest,
     ExecutionResumeContract,
     ExecutionResult,
@@ -28,16 +29,18 @@ from agent_orchestrator.execution.models import (
     ExecutionStepDecision,
     ObservationRecord,
     PendingApprovalState,
+    UnifiedAgentAdapterContract,
 )
 from agent_orchestrator.execution.state_store import ExecutionStateStore
 from agent_orchestrator.execution.runtime import ExecutionRuntime
 from agent_orchestrator.intake import ExecutionMode
-from agent_orchestrator.memory import MemoryStore
+from agent_orchestrator.memory import KnowledgeStore, MemoryStore
 from agent_orchestrator.orchestrator import Orchestrator
-from agent_orchestrator.policies import get_policy
-from agent_orchestrator.session import ScratchpadStore
-from agent_orchestrator.strategy import CompatibilityStrategyPlanner
+from agent_orchestrator.policies import OrchestrationMode, get_policy
+from agent_orchestrator.session import ScratchpadStore, SessionRuntime
+from agent_orchestrator.strategy import CompatibilityStrategyPlanner, NativeStrategyPlanner
 from agent_orchestrator.tasks import TaskContract
+from agent_orchestrator.execution.native_tools import NativeToolbox
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +96,8 @@ class _IsolationState:
     output_target_count: int
     input_patch_plan_count: int
     output_patch_plan_count: int
+    reinjection_mode: str
+    reinjection_targets: list[str]
     digest: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
@@ -104,6 +109,8 @@ class _IsolationState:
             "output_target_count": self.output_target_count,
             "input_patch_plan_count": self.input_patch_plan_count,
             "output_patch_plan_count": self.output_patch_plan_count,
+            "reinjection_mode": self.reinjection_mode,
+            "reinjection_targets": list(self.reinjection_targets),
             "digest": dict(self.digest),
         }
 
@@ -121,6 +128,7 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
     event_store: EventStore = field(default_factory=EventStore)
     scratchpad_store: ScratchpadStore = field(default_factory=ScratchpadStore)
     memory_store: MemoryStore = field(default_factory=MemoryStore)
+    toolbox: NativeToolbox = field(default_factory=NativeToolbox)
     model_selector_transport: Callable[[str, dict[str, object], dict[str, str], int], dict[str, object]] | None = None
     summarizer_transport: Callable[[str, dict[str, object], dict[str, str], int], dict[str, object]] | None = None
     intent_refiner_transport: Callable[[str, dict[str, object], dict[str, str], int], dict[str, object]] | None = None
@@ -128,10 +136,102 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
     approvals_root: Path | str | None = None
     name: str = "coding_agent"
 
+    def _kernel_contract(self) -> ExecutionKernelContract:
+        return ExecutionKernelContract(
+            kernel_name=self.name,
+            kernel_role="governed_execution_kernel",
+            input_sources=[
+                "execution_request",
+                "task_contract",
+                "session_runtime",
+                "control_plane_artifacts",
+                "execution_topology_intent",
+                "provider_runtime_capabilities",
+            ],
+            output_surfaces=[
+                "execution_result",
+                "structured_observations",
+                "resume_contract",
+                "runtime_event_stream",
+                "recovery_projection",
+                "memory_projection",
+                "approval_pause_state",
+            ],
+        )
+
+    def _adapter_contract(self, request: ExecutionRequest) -> UnifiedAgentAdapterContract:
+        path_selection = _path_selection_payload(request)
+        return UnifiedAgentAdapterContract(
+            adapter_family="native_first_party",
+            agent_kind="coding_agent",
+            execution_contract=self._kernel_contract().to_dict(),
+            runtime_metadata={
+                "runtime_name": self.name,
+                "execution_mode": ExecutionMode.CODING_AGENT.value,
+                "task_kind": request.route.task_kind.value,
+            },
+            capability_surface=_shared_adapter_capability_surface(
+                adapter_family="native_first_party",
+                agent_kind="coding_agent",
+                path_selection=path_selection,
+                approval_required=True,
+                approval_pause_supported=True,
+                evidence_outputs=[
+                    "execution_result",
+                    "structured_observations",
+                    "runtime_event_stream",
+                    "recovery_projection",
+                    "memory_projection",
+                ],
+                recovery_surfaces=[
+                    "state_store",
+                    "resume_contract",
+                    "approval_pause_state",
+                ],
+                runtime_metadata={
+                    "runtime_name": self.name,
+                    "execution_mode": ExecutionMode.CODING_AGENT.value,
+                    "task_kind": request.route.task_kind.value,
+                },
+            ),
+            path_selection=path_selection,
+            approval_semantics={
+                "approval_required": True,
+                "approval_pause_supported": True,
+            },
+            evidence_outputs=[
+                "execution_result",
+                "structured_observations",
+                "runtime_event_stream",
+                "recovery_projection",
+                "memory_projection",
+            ],
+            recovery_surfaces=[
+                "state_store",
+                "resume_contract",
+                "approval_pause_state",
+            ],
+        )
+
     def run(self, request: ExecutionRequest) -> ExecutionResult:
-        policy = get_policy(request.mode) if request.mode is not None else get_policy()
+        policy = get_policy(request.mode) if request.mode is not None else get_policy(OrchestrationMode.SUCCESS_FIRST)
         task_contract = TaskContract.from_dict(request.task_contract) if isinstance(request.task_contract, dict) else None
-        strategy_planner = self.orchestrator.strategy_planner or CompatibilityStrategyPlanner(self.orchestrator.decomposer)
+        strategy_planner = self.orchestrator.strategy_planner
+        if strategy_planner is None or isinstance(strategy_planner, CompatibilityStrategyPlanner):
+            strategy_planner = NativeStrategyPlanner(self.orchestrator.decomposer)
+        workspace_root = self.repo_explorer.workspace_root
+        verifier_runner = getattr(self.verify_loop.verifier, "runner", None)
+        if verifier_runner is None:
+            from agent_orchestrator.command import SubprocessCommandRunner
+
+            verifier_runner = SubprocessCommandRunner()
+        self.toolbox.workspace_root = workspace_root if isinstance(workspace_root, Path) else Path(workspace_root)
+        self.toolbox.runner = verifier_runner
+        self.toolbox.artifact_store = self.repo_explorer.artifact_store
+        self.repo_explorer.toolbox = self.toolbox
+        self.context_builder  # keep context builder explicit for current main path
+        self.edit_executor.toolbox = self.toolbox
+        self.verify_loop.verifier.toolbox = self.toolbox
         strategy_plan = strategy_planner.plan(task_contract, policy, route=request.route) if task_contract is not None else None
         repo_report = self.repo_explorer.explore(request)
         context = self.context_builder.build(request=request, strategy_plan=strategy_plan, repo_report=repo_report)
@@ -211,7 +311,14 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
         payload = {
             "runtime_name": self.name,
             "execution_mode": ExecutionMode.CODING_AGENT.value,
+            "requirement": request.requirement,
+            "task_contract": dict(request.task_contract or {}),
+            "adapter_contract": self._adapter_contract(request).to_dict(),
+            "native_tool_surface": self.toolbox.surface_summary(),
+            "native_tool_trace": self.toolbox.tool_trace(),
             "task_kind": request.route.task_kind.value,
+            "path_selection": _path_selection_payload(request),
+            "kernel_contract": self._kernel_contract().to_dict(),
             "session_id": request.session_id,
             "turn_id": request.turn_id,
             "context_snapshot": dict(request.context_snapshot or {}),
@@ -228,6 +335,7 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             "attempt_memory": list(repair_summary_payload.get("attempts", [])),
             "recovery_summary": dict(repair_summary_payload.get("recovery_recommendation", {})),
             "strategy_summary": strategy_plan.summary() if strategy_plan is not None else {},
+            "planner_family": strategy_plan.planner_family if strategy_plan is not None else "native",
             "execution_steps": [step.to_dict() for step in steps],
             "planner_context_trace": list(planner_context_trace),
             "next_stage_proposals": list(next_stage_proposals),
@@ -272,11 +380,36 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             payload=payload,
             pending_approval=pending_approval,
         )
+        payload["session_continuity_contract"] = _session_continuity_contract(payload=payload)
+        payload["context_engineering_contract"] = _context_engineering_contract(
+            request=request,
+            context_selection=payload["context_selection"],
+            structured_observations=structured_observations,
+            compaction_state=payload["compaction_state"],
+            compressed_context=payload["compressed_context"],
+            isolation_state=payload["isolation_state"],
+            resume_context=payload["resume_context"],
+            scratchpad_entries=payload["scratchpad_entries"],
+            retrieved_memory=payload.get("retrieved_memory", []),
+        )
         payload["next_step_contract"] = _next_step_contract(
             decisions=step_decisions,
             status=status,
             pending_approval=pending_approval,
             resume_context=payload["resume_context"],
+            context_engineering_contract=payload["context_engineering_contract"],
+        )
+        payload["step_loop_contract"] = _step_loop_contract(
+            status=status,
+            planner_context_trace=planner_context_trace,
+            next_stage_proposals=next_stage_proposals,
+            stage_selection_trace=stage_selection_trace,
+            action_selection_trace=action_selection_trace,
+            decisions=step_decisions,
+            pending_approval=pending_approval,
+            next_step_contract=payload["next_step_contract"],
+            resume_context=payload["resume_context"],
+            context_engineering_contract=payload["context_engineering_contract"],
         )
         payload["event_summary"] = _emit_execution_events(
             self,
@@ -285,6 +418,19 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             accepted=accepted,
             steps=steps,
             pending_approval=pending_approval,
+        )
+        payload["native_task_proof"] = _native_task_proof(
+            runtime=self,
+            request=request,
+            payload=payload,
+        )
+        payload["native_repo_task_acceptance"] = _native_repo_task_acceptance(
+            request=request,
+            payload=payload,
+        )
+        payload["native_complex_repo_task_acceptance"] = _native_complex_repo_task_acceptance(
+            request=request,
+            payload=payload,
         )
         _persist_execution_state(
             self,
@@ -295,6 +441,7 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             steps=steps,
             payload=payload,
         )
+        _record_native_learning_assets(self, request=request, payload=payload)
         _record_execution_artifacts(self, request=request, payload=payload)
         return ExecutionResult(
             runtime_name=self.name,
@@ -307,6 +454,8 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             reasons=list(request.route.reasons),
             session_id=request.session_id,
             turn_id=request.turn_id,
+            kernel_contract=self._kernel_contract(),
+            path_selection=_path_selection_payload(request),
         )
 
     def start(self, request: ExecutionRequest) -> ExecutionResult:
@@ -331,6 +480,8 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             reasons=list(request.route.reasons),
             session_id=request.session_id,
             turn_id=request.turn_id,
+            kernel_contract=self._kernel_contract(),
+            path_selection=_path_selection_payload(request),
         )
 
     def resume_from_state(self, request: ExecutionRequest) -> ExecutionResult:
@@ -363,6 +514,7 @@ class _KernelStageSelection:
     outcome: str
     next_stage: RuntimeStage | None
     reason: str
+    decision: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -370,6 +522,7 @@ class _KernelStageSelection:
             "outcome": self.outcome,
             "next_stage": self.next_stage,
             "reason": self.reason,
+            "decision": dict(self.decision),
         }
 
 
@@ -380,6 +533,7 @@ class _KernelActionSelection:
     source: str
     selected: dict[str, object]
     reason: str
+    decision: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -388,6 +542,7 @@ class _KernelActionSelection:
             "source": self.source,
             "selected": dict(self.selected),
             "reason": self.reason,
+            "decision": dict(self.decision),
         }
 
 
@@ -475,6 +630,7 @@ class _KernelNextStageProposal:
     reason: str
     candidates: list[_KernelNextStageCandidate]
     selected_candidate_id: str
+    selection: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -484,6 +640,7 @@ class _KernelNextStageProposal:
             "reason": self.reason,
             "candidates": [candidate.to_dict() for candidate in self.candidates],
             "selected_candidate_id": self.selected_candidate_id,
+            "selection": dict(self.selection),
         }
 
 
@@ -518,6 +675,53 @@ class _KernelStageOutcomeSemantics:
 
 
 @dataclass(frozen=True, slots=True)
+class _KernelNextStageDecision:
+    candidates: list[_KernelNextStageCandidate]
+    selected_candidate: _KernelNextStageCandidate
+    ranking_enabled: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "ranking_enabled": self.ranking_enabled,
+            "candidate_count": len(self.candidates),
+            "selected_candidate_id": self.selected_candidate.candidate_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _KernelActionDecision:
+    selection: _KernelActionSelection
+    planner_context: _KernelPlannerContext
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "decision_type": "action_selection",
+            "stage": self.selection.stage,
+            "selected_action_type": self.selection.action_type,
+            "selected_source": self.selection.source,
+            "planner_feasibility": self.planner_context.action_feasibility,
+            "approval_required": self.planner_context.approval_required,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _KernelStageDecision:
+    selection: _KernelStageSelection
+    next_stage_proposal: _KernelNextStageProposal
+    action_selection: _KernelActionSelection | None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "decision_type": "stage_selection",
+            "selection_mode": "action_and_proposal" if self.action_selection is not None else "proposal_only",
+            "selected_outcome": self.selection.outcome,
+            "selected_next_stage": self.selection.next_stage,
+            "proposal_selected_candidate_id": self.next_stage_proposal.selected_candidate_id,
+            "action_selected_type": self.action_selection.action_type if self.action_selection is not None else None,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class _KernelStageStrategy:
     candidate_generator: Callable[
         [_KernelPlannerContext, _KernelResumeState],
@@ -543,19 +747,39 @@ class _KernelStageStrategy:
         planner_context: _KernelPlannerContext,
         resume_state: _KernelResumeState,
     ) -> _KernelNextStageProposal:
+        decision = _next_stage_decision(
+            planner_context=planner_context,
+            resume_state=resume_state,
+            stage_strategy=self,
+        )
+        return _proposal_from_decision(
+            current_stage=current_stage,
+            decision=decision,
+        )
+
+    def next_stage_decision(
+        self,
+        *,
+        planner_context: _KernelPlannerContext,
+        resume_state: _KernelResumeState,
+    ) -> _KernelNextStageDecision:
         candidates = self.candidate_generator(
             planner_context,
             resume_state,
+        )
+        ranking_enabled = _ranking_enabled_for_stage(
+            planner_context,
+            stage_strategy=self,
         )
         selected = _select_next_stage_candidate(
             candidates,
             planner_context=planner_context,
             stage_strategy=self,
         )
-        return _proposal_from_selected_candidate(
-            current_stage=current_stage,
+        return _KernelNextStageDecision(
             candidates=candidates,
             selected_candidate=selected,
+            ranking_enabled=ranking_enabled,
         )
 
     def build_stage_plan(
@@ -930,13 +1154,55 @@ def _execute_edit_stage(
     )
 
 
+def _kernel_terminal_outcome(
+    *,
+    next_stage: RuntimeStage,
+    pending_approval: dict[str, object] | None,
+    applied_changes: list[object],
+    repair_summary: dict[str, object],
+    final_verification: dict[str, object],
+    status: str,
+    accepted: bool,
+    should_stop: bool,
+) -> _KernelStageOutcome:
+    return _stage_outcome(
+        next_stage=next_stage,
+        pending_approval=pending_approval,
+        applied_changes=list(applied_changes),
+        repair_summary=repair_summary,
+        final_verification=final_verification,
+        status=status,
+        accepted=accepted,
+        should_stop=should_stop,
+    )
+
+
+def _kernel_continue_outcome(
+    *,
+    next_stage: RuntimeStage,
+    applied_changes: list[object],
+    repair_summary: dict[str, object],
+    final_verification: dict[str, object],
+) -> _KernelStageOutcome:
+    return _stage_outcome(
+        next_stage=next_stage,
+        pending_approval=None,
+        applied_changes=list(applied_changes),
+        repair_summary=repair_summary,
+        final_verification=final_verification,
+        status="blocked",
+        accepted=False,
+        should_stop=False,
+    )
+
+
 def _paused_edit_outcome(
     *,
     pending_approval: dict[str, object] | None,
     plan: _KernelStagePlan,
     resume_state: _KernelResumeState,
 ) -> _KernelStageOutcome:
-    return _stage_outcome(
+    return _kernel_terminal_outcome(
         next_stage=plan.stage_cursor,
         pending_approval=pending_approval,
         applied_changes=[],
@@ -954,7 +1220,7 @@ def _blocked_edit_outcome(
     plan: _KernelStagePlan,
     resume_state: _KernelResumeState,
 ) -> _KernelStageOutcome:
-    return _stage_outcome(
+    return _kernel_terminal_outcome(
         next_stage=plan.next_stage_proposal.proposed_stage,
         pending_approval=None,
         applied_changes=[],
@@ -987,15 +1253,11 @@ def _continue_stage_outcome(
     repair_summary: dict[str, object],
     final_verification: dict[str, object],
 ) -> _KernelStageOutcome:
-    return _stage_outcome(
+    return _kernel_continue_outcome(
         next_stage=next_stage,
-        pending_approval=None,
         applied_changes=list(applied_changes),
         repair_summary=repair_summary,
         final_verification=final_verification,
-        status="blocked",
-        accepted=False,
-        should_stop=False,
     )
 
 
@@ -1084,7 +1346,7 @@ def _paused_verify_outcome(
     resume_state: _KernelResumeState,
     applied_changes: list[object],
 ) -> _KernelStageOutcome:
-    return _stage_outcome(
+    return _kernel_terminal_outcome(
         next_stage=plan.stage_cursor,
         pending_approval=pending_approval,
         applied_changes=list(applied_changes),
@@ -1102,7 +1364,7 @@ def _blocked_verify_resume_outcome(
     resume_state: _KernelResumeState,
     applied_changes: list[object],
 ) -> _KernelStageOutcome:
-    return _stage_outcome(
+    return _kernel_terminal_outcome(
         next_stage=plan.stage_cursor,
         pending_approval=None,
         applied_changes=list(applied_changes),
@@ -1135,7 +1397,7 @@ def _completed_verify_outcome(
     status: str,
     accepted: bool,
 ) -> _KernelStageOutcome:
-    return _stage_outcome(
+    return _kernel_terminal_outcome(
         next_stage=plan.next_stage_proposal.proposed_stage,
         pending_approval=None,
         applied_changes=list(applied_changes),
@@ -1216,12 +1478,32 @@ def _propose_next_stage(
     )
 
 
+def _next_stage_decision(
+    *,
+    planner_context: _KernelPlannerContext,
+    resume_state: _KernelResumeState,
+    stage_strategy: _KernelStageStrategy,
+) -> _KernelNextStageDecision:
+    return stage_strategy.next_stage_decision(
+        planner_context=planner_context,
+        resume_state=resume_state,
+    )
+
+
 def _select_next_stage(*, next_stage_proposal: _KernelNextStageProposal) -> _KernelStageSelection:
     return _KernelStageSelection(
         stage=next_stage_proposal.current_stage,
         outcome=next_stage_proposal.disposition,
         next_stage=next_stage_proposal.proposed_stage,
         reason=next_stage_proposal.reason,
+        decision={
+            "decision_type": "stage_selection",
+            "selection_mode": "proposal_only",
+            "selected_outcome": next_stage_proposal.disposition,
+            "selected_next_stage": next_stage_proposal.proposed_stage,
+            "proposal_selected_candidate_id": next_stage_proposal.selected_candidate_id,
+            "action_selected_type": None,
+        },
     )
 
 
@@ -1229,7 +1511,12 @@ def _proposal_stage_selection(
     action_selection: _KernelActionSelection | None,
     next_stage_proposal: _KernelNextStageProposal,
 ) -> _KernelStageSelection:
-    return _select_next_stage(next_stage_proposal=next_stage_proposal)
+    stage_selection = _select_next_stage(next_stage_proposal=next_stage_proposal)
+    return _stage_selection_with_decision(
+        stage_selection=stage_selection,
+        next_stage_proposal=next_stage_proposal,
+        action_selection=action_selection,
+    )
 
 
 def _edit_stage_selection(
@@ -1237,10 +1524,20 @@ def _edit_stage_selection(
     next_stage_proposal: _KernelNextStageProposal,
 ) -> _KernelStageSelection:
     if action_selection is None:
-        return _select_next_stage(next_stage_proposal=next_stage_proposal)
-    return _select_edit_stage(
+        stage_selection = _select_next_stage(next_stage_proposal=next_stage_proposal)
+        return _stage_selection_with_decision(
+            stage_selection=stage_selection,
+            next_stage_proposal=next_stage_proposal,
+            action_selection=None,
+        )
+    stage_selection = _select_edit_stage(
         edit_selection=action_selection,
         next_stage_proposal=next_stage_proposal,
+    )
+    return _stage_selection_with_decision(
+        stage_selection=stage_selection,
+        next_stage_proposal=next_stage_proposal,
+        action_selection=action_selection,
     )
 
 
@@ -1258,28 +1555,64 @@ def _build_next_stage_candidates(
 
 
 def _explore_stage_strategy() -> _KernelStageStrategy:
-    return _KernelStageStrategy(
+    return _assemble_stage_strategy(
         candidate_generator=_explore_candidates_via_strategy,
         ranking_enabled=_explore_ranking_enabled,
         rank_adjustment=_explore_rank_adjustment,
         action_selector=_no_action_selection,
         stage_selector=_proposal_stage_selection,
         executor=_continue_without_side_effects_stage,
-        outcomes=_KernelStageOutcomeSemantics(
+        outcomes=_stage_outcome_semantics(
             continue_outcome=_continue_stage_outcome,
         ),
     )
 
 
-def _edit_stage_strategy() -> _KernelStageStrategy:
+def _assemble_stage_strategy(
+    *,
+    candidate_generator: Callable[[_KernelPlannerContext, _KernelResumeState], list[_KernelNextStageCandidate]],
+    ranking_enabled: Callable[[_KernelPlannerContext], bool],
+    rank_adjustment: Callable[[_KernelPlannerContext, _KernelNextStageCandidate], int],
+    action_selector: Callable[[_KernelPlannerContext], _KernelActionSelection | None],
+    stage_selector: Callable[[_KernelActionSelection | None, _KernelNextStageProposal], _KernelStageSelection],
+    executor: Callable[[CodingAgentExecutionRuntime, ExecutionRequest, object, _KernelResumeState, _KernelStagePlan, list[object]], _KernelStageOutcome],
+    outcomes: _KernelStageOutcomeSemantics,
+) -> _KernelStageStrategy:
     return _KernelStageStrategy(
+        candidate_generator=candidate_generator,
+        ranking_enabled=ranking_enabled,
+        rank_adjustment=rank_adjustment,
+        action_selector=action_selector,
+        stage_selector=stage_selector,
+        executor=executor,
+        outcomes=outcomes,
+    )
+
+
+def _stage_outcome_semantics(
+    *,
+    pause: Callable[..., _KernelStageOutcome] | None = None,
+    block: Callable[..., _KernelStageOutcome] | None = None,
+    continue_outcome: Callable[..., _KernelStageOutcome] | None = None,
+    complete: Callable[..., _KernelStageOutcome] | None = None,
+) -> _KernelStageOutcomeSemantics:
+    return _KernelStageOutcomeSemantics(
+        pause=pause,
+        block=block,
+        continue_outcome=continue_outcome,
+        complete=complete,
+    )
+
+
+def _edit_stage_strategy() -> _KernelStageStrategy:
+    return _assemble_stage_strategy(
         candidate_generator=_edit_candidates_via_strategy,
         ranking_enabled=_edit_ranking_enabled,
         rank_adjustment=_edit_rank_adjustment,
         action_selector=_select_edit_action,
         stage_selector=_edit_stage_selection,
         executor=_execute_edit_stage,
-        outcomes=_KernelStageOutcomeSemantics(
+        outcomes=_stage_outcome_semantics(
             pause=_paused_edit_outcome,
             block=_blocked_edit_outcome,
             continue_outcome=_applied_edit_outcome,
@@ -1288,14 +1621,14 @@ def _edit_stage_strategy() -> _KernelStageStrategy:
 
 
 def _verify_stage_strategy() -> _KernelStageStrategy:
-    return _KernelStageStrategy(
+    return _assemble_stage_strategy(
         candidate_generator=_verify_candidates_via_strategy,
         ranking_enabled=_verify_ranking_enabled,
         rank_adjustment=_verify_rank_adjustment,
         action_selector=_select_verify_action,
         stage_selector=_proposal_stage_selection,
         executor=_execute_verify_stage,
-        outcomes=_KernelStageOutcomeSemantics(
+        outcomes=_stage_outcome_semantics(
             pause=_paused_verify_outcome,
             block=_blocked_verify_resume_outcome,
             complete=_completed_verify_outcome,
@@ -1383,6 +1716,27 @@ def _proposal_from_selected_candidate(
         reason=selected_candidate.reason,
         candidates=candidates,
         selected_candidate_id=selected_candidate.candidate_id,
+        selection={
+            "ranking_enabled": False,
+            "candidate_count": len(candidates),
+            "selected_candidate_id": selected_candidate.candidate_id,
+        },
+    )
+
+
+def _proposal_from_decision(
+    *,
+    current_stage: RuntimeStage,
+    decision: _KernelNextStageDecision,
+) -> _KernelNextStageProposal:
+    return _KernelNextStageProposal(
+        current_stage=current_stage,
+        proposed_stage=decision.selected_candidate.stage,
+        disposition=decision.selected_candidate.disposition,
+        reason=decision.selected_candidate.reason,
+        candidates=decision.candidates,
+        selected_candidate_id=decision.selected_candidate.candidate_id,
+        selection=decision.to_dict(),
     )
 
 
@@ -1406,6 +1760,13 @@ def _candidate_pair(
     second: _KernelNextStageCandidate,
 ) -> list[_KernelNextStageCandidate]:
     return [first, second]
+
+
+def _ordered_candidates(
+    primary: _KernelNextStageCandidate,
+    secondary: _KernelNextStageCandidate,
+) -> list[_KernelNextStageCandidate]:
+    return _candidate_pair(primary, secondary)
 
 
 def _path_vs_terminal_candidates(
@@ -1481,10 +1842,7 @@ def _advance_or_complete_candidates(
     advance_candidate: _KernelNextStageCandidate,
     complete_candidate: _KernelNextStageCandidate,
 ) -> list[_KernelNextStageCandidate]:
-    return _candidate_pair(
-        advance_candidate,
-        complete_candidate,
-    )
+    return _ordered_candidates(advance_candidate, complete_candidate)
 
 
 def _complete_or_retry_candidates(
@@ -1492,10 +1850,7 @@ def _complete_or_retry_candidates(
     complete_candidate: _KernelNextStageCandidate,
     retry_candidate: _KernelNextStageCandidate,
 ) -> list[_KernelNextStageCandidate]:
-    return _candidate_pair(
-        complete_candidate,
-        retry_candidate,
-    )
+    return _ordered_candidates(complete_candidate, retry_candidate)
 
 
 def _block_or_retry_candidates(
@@ -1503,10 +1858,7 @@ def _block_or_retry_candidates(
     block_candidate: _KernelNextStageCandidate,
     retry_candidate: _KernelNextStageCandidate,
 ) -> list[_KernelNextStageCandidate]:
-    return _candidate_pair(
-        block_candidate,
-        retry_candidate,
-    )
+    return _ordered_candidates(block_candidate, retry_candidate)
 
 
 def _verify_complete_candidate(
@@ -1947,56 +2299,105 @@ def _select_edit_stage(
     )
 
 
+def _stage_selection_with_decision(
+    *,
+    stage_selection: _KernelStageSelection,
+    next_stage_proposal: _KernelNextStageProposal,
+    action_selection: _KernelActionSelection | None,
+) -> _KernelStageSelection:
+    return _KernelStageSelection(
+        stage=stage_selection.stage,
+        outcome=stage_selection.outcome,
+        next_stage=stage_selection.next_stage,
+        reason=stage_selection.reason,
+        decision=_KernelStageDecision(
+            selection=stage_selection,
+            next_stage_proposal=next_stage_proposal,
+            action_selection=action_selection,
+        ).to_dict(),
+    )
+
+
+def _action_selection_with_decision(
+    *,
+    action_selection: _KernelActionSelection,
+    planner_context: _KernelPlannerContext,
+) -> _KernelActionSelection:
+    return _KernelActionSelection(
+        stage=action_selection.stage,
+        action_type=action_selection.action_type,
+        source=action_selection.source,
+        selected=dict(action_selection.selected),
+        reason=action_selection.reason,
+        decision=_KernelActionDecision(
+            selection=action_selection,
+            planner_context=planner_context,
+        ).to_dict(),
+    )
+
+
 def _select_edit_action(planner_context: _KernelPlannerContext) -> _KernelActionSelection:
     if planner_context.approval_required and not planner_context.approval_resolved:
-        return _KernelActionSelection(
-            stage="edit",
-            action_type="pause",
-            source="approval_policy",
-            selected={
-                "mode": planner_context.edit_mode,
-                "operation_count": planner_context.operation_count,
-                "pending_approval_stage": planner_context.pending_approval_stage,
-            },
-            reason="Edit action is paused until the required human approval is resolved.",
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="edit",
+                action_type="pause",
+                source="approval_policy",
+                selected={
+                    "mode": planner_context.edit_mode,
+                    "operation_count": planner_context.operation_count,
+                    "pending_approval_stage": planner_context.pending_approval_stage,
+                },
+                reason="Edit action is paused until the required human approval is resolved.",
+            ),
+            planner_context=planner_context,
         )
     if planner_context.edit_mode == "direct_apply" and planner_context.operation_count == 0:
-        return _KernelActionSelection(
-            stage="edit",
-            action_type="block",
-            source="invalid_intent",
-            selected={
-                "mode": planner_context.edit_mode,
-                "operation_count": planner_context.operation_count,
-            },
-            reason="Direct-apply edit intent did not contain executable bounded operations.",
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="edit",
+                action_type="block",
+                source="invalid_intent",
+                selected={
+                    "mode": planner_context.edit_mode,
+                    "operation_count": planner_context.operation_count,
+                },
+                reason="Direct-apply edit intent did not contain executable bounded operations.",
+            ),
+            planner_context=planner_context,
         )
     boundary_violation = _edit_boundary_violation(
         planner_context.operation_paths,
         workspace_root=Path(planner_context.workspace_root),
     )
     if boundary_violation is not None:
-        return _KernelActionSelection(
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="edit",
+                action_type="block",
+                source="boundary_policy",
+                selected={
+                    "mode": planner_context.edit_mode,
+                    "operation_count": planner_context.operation_count,
+                    "path": boundary_violation,
+                    "boundary_policy": "workspace_root_only",
+                },
+                reason="Edit action was blocked before mutation because the selected file path escapes the workspace root.",
+            ),
+            planner_context=planner_context,
+        )
+    return _action_selection_with_decision(
+        action_selection=_KernelActionSelection(
             stage="edit",
-            action_type="block",
-            source="boundary_policy",
+            action_type="file_mutation" if planner_context.edit_mode == "direct_apply" else "edit_prepare",
+            source="explicit_operations" if planner_context.edit_mode == "direct_apply" else "bounded_context",
             selected={
                 "mode": planner_context.edit_mode,
                 "operation_count": planner_context.operation_count,
-                "path": boundary_violation,
-                "boundary_policy": "workspace_root_only",
             },
-            reason="Edit action was blocked before mutation because the selected file path escapes the workspace root.",
-        )
-    return _KernelActionSelection(
-        stage="edit",
-        action_type="file_mutation" if planner_context.edit_mode == "direct_apply" else "edit_prepare",
-        source="explicit_operations" if planner_context.edit_mode == "direct_apply" else "bounded_context",
-        selected={
-            "mode": planner_context.edit_mode,
-            "operation_count": planner_context.operation_count,
-        },
-        reason="Edit action follows explicit bounded operations when present, otherwise stays in report-first preparation mode.",
+            reason="Edit action follows explicit bounded operations when present, otherwise stays in report-first preparation mode.",
+        ),
+        planner_context=planner_context,
     )
 
 
@@ -2087,42 +2488,54 @@ def _blocked_edit_repair_summary(edit_selection: _KernelActionSelection) -> dict
 
 def _select_verify_action(planner_context: _KernelPlannerContext) -> _KernelActionSelection:
     if planner_context.approval_required and not planner_context.approval_resolved:
-        return _KernelActionSelection(
-            stage="verify",
-            action_type="pause",
-            source="approval_policy",
-            selected={
-                "pending_approval_stage": planner_context.pending_approval_stage,
-                "target_paths": list(planner_context.target_paths),
-            },
-            reason="Verification action is paused until the required human approval is resolved.",
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="verify",
+                action_type="pause",
+                source="approval_policy",
+                selected={
+                    "pending_approval_stage": planner_context.pending_approval_stage,
+                    "target_paths": list(planner_context.target_paths),
+                },
+                reason="Verification action is paused until the required human approval is resolved.",
+            ),
+            planner_context=planner_context,
         )
     if planner_context.should_block_verify_resume:
-        return _KernelActionSelection(
-            stage="verify",
-            action_type="block",
-            source="exhausted_recovery",
-            selected={
-                "remaining_retry_budget": planner_context.remaining_retry_budget,
-                "latest_observation_kind": planner_context.latest_observation_kind,
-            },
-            reason="Verification is blocked because continuation state shows failure with no remaining retry budget.",
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="verify",
+                action_type="block",
+                source="exhausted_recovery",
+                selected={
+                    "remaining_retry_budget": planner_context.remaining_retry_budget,
+                    "latest_observation_kind": planner_context.latest_observation_kind,
+                },
+                reason="Verification is blocked because continuation state shows failure with no remaining retry budget.",
+            ),
+            planner_context=planner_context,
         )
     if planner_context.verification_command:
-        return _KernelActionSelection(
-            stage="verify",
-            action_type="run_command",
-            source="resume_context",
-            selected={"command": list(planner_context.verification_command)},
-            reason="Verification reused the planned command from continuation state.",
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="verify",
+                action_type="run_command",
+                source="resume_context",
+                selected={"command": list(planner_context.verification_command)},
+                reason="Verification reused the planned command from continuation state.",
+            ),
+            planner_context=planner_context,
         )
     derived = _planned_verification_command(planner_context.target_paths)
-    return _KernelActionSelection(
-        stage="verify",
-        action_type="run_command",
-        source="derived_from_targets",
-        selected={"command": list(derived)},
-        reason="Verification command derived from bounded target paths in the current edit intent.",
+    return _action_selection_with_decision(
+        action_selection=_KernelActionSelection(
+            stage="verify",
+            action_type="run_command",
+            source="derived_from_targets",
+            selected={"command": list(derived)},
+            reason="Verification command derived from bounded target paths in the current edit intent.",
+        ),
+        planner_context=planner_context,
     )
 
 
@@ -2153,7 +2566,10 @@ def _should_block_verify_resume(
 def _planned_verification_command(target_paths: list[str] | object) -> list[str]:
     if not isinstance(target_paths, list) or not target_paths:
         return []
-    return ["python3", "-m", "compileall", *[str(item) for item in target_paths if isinstance(item, str)]]
+    verifiable = [str(item) for item in target_paths if isinstance(item, str) and Path(str(item)).suffix.lower() in {".py", ".pyi"}]
+    if not verifiable:
+        return []
+    return ["python3", "-m", "compileall", *verifiable]
 
 
 def _build_execution_steps(
@@ -2452,32 +2868,245 @@ def _build_step_decisions(
     return decisions
 
 
+def _active_loop_decision(
+    *,
+    decisions: list[ExecutionStepDecision],
+    pending_approval: dict[str, object] | None,
+) -> ExecutionStepDecision | None:
+    if isinstance(pending_approval, dict):
+        pending_stage = str(pending_approval.get("stage") or "")
+        target_kind = "edit_execution" if pending_stage == "edit" else "verification" if pending_stage == "verify" else None
+        if target_kind is not None:
+            selected = next((decision for decision in decisions if decision.step_kind == target_kind), None)
+            if selected is not None:
+                return selected
+    return next(
+        (decision for decision in reversed(decisions) if decision.disposition in {"pause", "block", "complete"}),
+        decisions[-1] if decisions else None,
+    )
+
+
 def _next_step_contract(
     *,
     decisions: list[ExecutionStepDecision],
     status: str,
     pending_approval: dict[str, object] | None,
     resume_context: dict[str, object] | None = None,
+    context_engineering_contract: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    active: ExecutionStepDecision | None = None
-    if isinstance(pending_approval, dict):
-        pending_stage = str(pending_approval.get("stage") or "")
-        target_kind = "edit_execution" if pending_stage == "edit" else "verification" if pending_stage == "verify" else None
-        if target_kind is not None:
-            active = next((decision for decision in decisions if decision.step_kind == target_kind), None)
-    if active is None:
-        active = next(
-            (decision for decision in reversed(decisions) if decision.disposition in {"pause", "block", "complete"}),
-            decisions[-1] if decisions else None,
-        )
+    active = _active_loop_decision(decisions=decisions, pending_approval=pending_approval)
     resume_reason = _resume_reason_hint(resume_context)
+    current_step_kind = active.step_kind if active is not None else None
     return {
         "status": status,
         "current_disposition": active.disposition if active is not None else "complete",
-        "current_step_kind": active.step_kind if active is not None else None,
+        "current_step_kind": current_step_kind,
         "next_step_kind": active.next_step_kind if active is not None else None,
         "reason": resume_reason or (active.reason if active is not None else "No further steps recorded."),
         "pending_approval": dict(pending_approval) if isinstance(pending_approval, dict) else None,
+        "context_engineering_refs": _context_refs_for_step_kind(
+            step_kind=current_step_kind,
+            context_engineering_contract=context_engineering_contract,
+        ),
+    }
+
+
+def _step_loop_contract(
+    *,
+    status: str,
+    planner_context_trace: list[dict[str, object]],
+    next_stage_proposals: list[dict[str, object]],
+    stage_selection_trace: list[dict[str, object]],
+    action_selection_trace: list[dict[str, object]],
+    decisions: list[ExecutionStepDecision],
+    pending_approval: dict[str, object] | None,
+    next_step_contract: dict[str, object],
+    resume_context: dict[str, object],
+    context_engineering_contract: dict[str, object] | None = None,
+) -> dict[str, object]:
+    final_context = planner_context_trace[-1] if planner_context_trace else {}
+    final_stage = final_context.get("stage_cursor")
+    active = _active_loop_decision(decisions=decisions, pending_approval=pending_approval)
+    current_step_kind = active.step_kind if active is not None else next_step_contract.get("current_step_kind")
+    return {
+        "loop_model": "explicit_stage_step_loop",
+        "status": status,
+        "current_stage": final_stage,
+        "terminal_stage": final_stage if status in {"completed", "blocked"} else None,
+        "current_disposition": active.disposition if active is not None else next_step_contract.get("current_disposition"),
+        "current_step_kind": current_step_kind,
+        "resume_supported": bool(resume_context.get("resume_supported", True)),
+        "resume_kind": resume_context.get("resume_kind"),
+        "context_engineering_refs": _context_refs_for_step_kind(
+            step_kind=current_step_kind,
+            context_engineering_contract=context_engineering_contract,
+        ),
+        "trace_lengths": {
+            "planner_context_trace": len(planner_context_trace),
+            "next_stage_proposals": len(next_stage_proposals),
+            "stage_selection_trace": len(stage_selection_trace),
+            "action_selection_trace": len(action_selection_trace),
+        },
+        "trace_refs": {
+            "planner_context_trace": "payload.planner_context_trace",
+            "next_stage_proposals": "payload.next_stage_proposals",
+            "stage_selection_trace": "payload.stage_selection_trace",
+            "action_selection_trace": "payload.action_selection_trace",
+            "next_step_contract": "payload.next_step_contract",
+        },
+    }
+
+
+def _context_refs_for_step_kind(
+    *,
+    step_kind: str | None,
+    context_engineering_contract: dict[str, object] | None,
+) -> dict[str, object]:
+    refs = (
+        context_engineering_contract.get("trace_refs", {})
+        if isinstance(context_engineering_contract, dict)
+        and isinstance(context_engineering_contract.get("trace_refs"), dict)
+        else {}
+    )
+    if not isinstance(step_kind, str) or not step_kind:
+        return {"required_surfaces": [], "trace_refs": {}}
+    required_surfaces = ["select", "structured_observation"]
+    if step_kind == "repo_exploration":
+        required_surfaces = ["write", "select", "structured_observation"]
+    elif step_kind == "edit_execution":
+        required_surfaces = ["write", "select", "structured_observation", "isolate"]
+    elif step_kind == "verification":
+        required_surfaces = ["select", "structured_observation", "compact", "resume_continuity"]
+    surface_ref_map = {
+        "write": {
+            "scratchpad_entries": refs.get("scratchpad_entries"),
+            "compressed_context": refs.get("compressed_context"),
+            "resume_context": refs.get("resume_context"),
+        },
+        "select": {
+            "context_selection": refs.get("context_selection"),
+        },
+        "structured_observation": {
+            "structured_observations": refs.get("structured_observations"),
+        },
+        "compact": {
+            "compaction_state": refs.get("compaction_state"),
+            "compressed_context": refs.get("compressed_context"),
+        },
+        "isolate": {
+            "isolation_state": refs.get("isolation_state"),
+        },
+        "resume_continuity": {
+            "resume_context": refs.get("resume_context"),
+        },
+    }
+    return {
+        "required_surfaces": required_surfaces,
+        "trace_refs": {
+            surface: surface_ref_map[surface]
+            for surface in required_surfaces
+            if surface in surface_ref_map
+        },
+    }
+
+
+def _context_engineering_contract(
+    *,
+    request: ExecutionRequest,
+    context_selection: dict[str, object],
+    structured_observations: list[dict[str, object]],
+    compaction_state: dict[str, object],
+    compressed_context: dict[str, object],
+    isolation_state: dict[str, object],
+    resume_context: dict[str, object],
+    scratchpad_entries: list[dict[str, object]],
+    retrieved_memory: list[dict[str, object]] | object,
+) -> dict[str, object]:
+    deterministic = context_selection.get("deterministic", {}) if isinstance(context_selection, dict) else {}
+    retrieval = context_selection.get("retrieval", {}) if isinstance(context_selection, dict) else {}
+    model_driven = context_selection.get("model_driven", {}) if isinstance(context_selection, dict) else {}
+    latest_scratchpad = scratchpad_entries[0] if isinstance(scratchpad_entries, list) and scratchpad_entries else {}
+    memory_count = len(retrieved_memory) if isinstance(retrieved_memory, list) else 0
+    recent_observation_count = (
+        len(resume_context.get("recent_observations", []))
+        if isinstance(resume_context.get("recent_observations"), list)
+        else 0
+    )
+    return {
+        "format": "agent_orchestrator.context_engineering_contract.v1",
+        "requirement": request.requirement,
+        "main_path_required": True,
+        "write": {
+            "session_scratchpad": {
+                "required": True,
+                "entry_kind": latest_scratchpad.get("kind") if isinstance(latest_scratchpad, dict) else None,
+                "entry_ref": "payload.scratchpad_entries[0]" if latest_scratchpad else None,
+            },
+            "persistent_memory": {
+                "required": True,
+                "namespace": "coding_agent",
+                "retrieved_memory_count": memory_count,
+                "projection_mode": "explicit_memory_store",
+            },
+            "transient_loop_context": {
+                "required": True,
+                "compressed_context_ref": "payload.compressed_context",
+                "resume_context_ref": "payload.resume_context",
+            },
+        },
+        "select": {
+            "required_for_model_participation": True,
+            "deterministic_strategy": deterministic.get("strategy"),
+            "retrieval_strategy": retrieval.get("strategy"),
+            "model_driven_used": bool(model_driven.get("used_model")),
+            "selected_context_ref": "payload.context_selection.selected_context",
+            "selected_memory_count": retrieval.get("selected_memory_count", 0),
+        },
+        "structured_observation": {
+            "required_post_action": True,
+            "record_count": len(structured_observations),
+            "artifact_backed_count": sum(1 for item in structured_observations if item.get("has_artifact") is True),
+            "deduplicated_count": sum(1 for item in structured_observations if item.get("deduplicated") is True),
+            "records_ref": "payload.structured_observations",
+        },
+        "compact": {
+            "required_when_context_pressure_rises": True,
+            "stage": compaction_state.get("stage") if isinstance(compaction_state, dict) else None,
+            "light_compaction_applied": bool(compaction_state.get("light_compaction_applied")) if isinstance(compaction_state, dict) else False,
+            "summarization_triggered": bool(compaction_state.get("summarization_triggered")) if isinstance(compaction_state, dict) else False,
+            "compressed_context_ref": "payload.compressed_context",
+        },
+        "isolate": {
+            "required_when_complexity_exceeds_loop_budget": True,
+            "applied": bool(isolation_state.get("applied")) if isinstance(isolation_state, dict) else False,
+            "strategy": isolation_state.get("strategy") if isinstance(isolation_state, dict) else None,
+            "input_target_count": isolation_state.get("input_target_count") if isinstance(isolation_state, dict) else None,
+            "output_target_count": isolation_state.get("output_target_count") if isinstance(isolation_state, dict) else None,
+            "input_patch_plan_count": isolation_state.get("input_patch_plan_count") if isinstance(isolation_state, dict) else None,
+            "output_patch_plan_count": isolation_state.get("output_patch_plan_count") if isinstance(isolation_state, dict) else None,
+            "reinjection_mode": isolation_state.get("reinjection_mode") if isinstance(isolation_state, dict) else None,
+            "reinjection_targets_ref": "payload.isolation_state.reinjection_targets",
+            "digest_ref": "payload.isolation_state.digest",
+        },
+        "resume_continuity": {
+            "required": True,
+            "resume_kind": resume_context.get("resume_kind") if isinstance(resume_context, dict) else None,
+            "recent_observation_count": recent_observation_count,
+            "planned_verification_command_present": bool(
+                isinstance(resume_context, dict) and resume_context.get("planned_verification_command")
+            ),
+            "repair_summary_present": bool(isinstance(resume_context, dict) and isinstance(resume_context.get("repair_summary"), dict)),
+        },
+        "trace_refs": {
+            "context_selection": "payload.context_selection",
+            "structured_observations": "payload.structured_observations",
+            "compaction_state": "payload.compaction_state",
+            "compressed_context": "payload.compressed_context",
+            "isolation_state": "payload.isolation_state",
+            "resume_context": "payload.resume_context",
+            "scratchpad_entries": "payload.scratchpad_entries",
+        },
+        "notes": "This contract lifts context-engineering behavior into one explicit main-path surface instead of relying on scattered payload fields alone.",
     }
 
 
@@ -2698,6 +3327,145 @@ def _compaction_state(
         summarization_source=summarization_source,
         system_prompt_compacted=False,
     ).to_dict()
+
+
+def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, object]:
+    resume_context = payload.get("resume_context", {}) if isinstance(payload.get("resume_context"), dict) else {}
+    compaction_state = payload.get("compaction_state", {}) if isinstance(payload.get("compaction_state"), dict) else {}
+    step_loop_contract = payload.get("step_loop_contract", {}) if isinstance(payload.get("step_loop_contract"), dict) else {}
+    strategy_summary = payload.get("strategy_summary", {}) if isinstance(payload.get("strategy_summary"), dict) else {}
+    path_selection = payload.get("path_selection", {}) if isinstance(payload.get("path_selection"), dict) else {}
+    adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
+    verification = payload.get("verification", {}) if isinstance(payload.get("verification"), dict) else {}
+    recovery_summary = payload.get("recovery_summary", {}) if isinstance(payload.get("recovery_summary"), dict) else {}
+    compressed_context = payload.get("compressed_context", {}) if isinstance(payload.get("compressed_context"), dict) else {}
+    context_snapshot = payload.get("context_snapshot", {}) if isinstance(payload.get("context_snapshot"), dict) else {}
+    context_task_contract = (
+        context_snapshot.get("task_contract", {})
+        if isinstance(context_snapshot.get("task_contract"), dict)
+        else {}
+    )
+    execution_history = (
+        payload.get("execution_history_summary", {})
+        if isinstance(payload.get("execution_history_summary"), dict)
+        else {}
+    )
+    recent_observations = (
+        resume_context.get("recent_observations", [])
+        if isinstance(resume_context.get("recent_observations"), list)
+        else []
+    )
+    repair_summary = resume_context.get("repair_summary", {}) if isinstance(resume_context.get("repair_summary"), dict) else {}
+    pending_steps = (
+        execution_history.get("pending_steps", [])
+        if isinstance(execution_history.get("pending_steps"), list)
+        else []
+    )
+    completed_steps = (
+        execution_history.get("completed_steps", [])
+        if isinstance(execution_history.get("completed_steps"), list)
+        else []
+    )
+    active_milestone = (
+        step_loop_contract.get("current_stage")
+        or strategy_summary.get("current_checkpoint_objective")
+        or payload.get("requirement")
+    )
+    task_contract = payload.get("task_contract", {}) if isinstance(payload.get("task_contract"), dict) else {}
+    ready_next_units = [
+        str(item)
+        for item in pending_steps[:3]
+        if item not in {None, ""}
+    ]
+    blocked_units = [
+        str(item)
+        for item in [
+            recovery_summary.get("reason"),
+            verification.get("failure_kind"),
+        ]
+        if item not in {None, ""}
+    ]
+    required_handoff_artifacts = (
+        list(adapter_contract.get("evidence_outputs", []))
+        if isinstance(adapter_contract.get("evidence_outputs"), list)
+        else []
+    )
+    remaining_checks = (
+        list(verification.get("remaining_checks", []))
+        if isinstance(verification.get("remaining_checks"), list)
+        else []
+    )
+    resume_supported = bool(resume_context.get("resume_supported", step_loop_contract.get("resume_supported", True)))
+    long_horizon_posture = {
+        "resume_ready": resume_supported,
+        "recovery_active": bool(repair_summary) or bool(recent_observations),
+        "verification_resume_ready": bool(resume_context.get("planned_verification_command")),
+        "context_pressure": compaction_state.get("stage") in {"light_compaction", "observation_masking", "summarization_ready"},
+        "summarization_ready": compaction_state.get("stage") == "summarization_ready",
+        "pending_followup_count": len(pending_steps),
+    }
+    return {
+        "format": "agent_orchestrator.session_continuity_contract.v1",
+        "resume_supported": resume_supported,
+        "resume_kind": resume_context.get("resume_kind"),
+        "compaction_stage": compaction_state.get("stage"),
+        "masked_observation_count": compaction_state.get("masked_count", 0),
+        "summarization_triggered": compaction_state.get("summarization_triggered", False),
+        "long_horizon_posture": long_horizon_posture,
+        "program_posture": {
+            "program_goal": (
+                task_contract.get("goal")
+                or context_task_contract.get("goal")
+                or strategy_summary.get("goal")
+                or payload.get("requirement")
+                or compressed_context.get("objective")
+                or active_milestone
+            ),
+            "active_milestone": active_milestone,
+            "completed_milestones": [str(item) for item in completed_steps if item not in {None, ""}],
+            "ready_next_units": ready_next_units,
+            "blocked_units": blocked_units,
+        },
+        "delegation_contract": {
+            "selected_executor": (
+                path_selection.get("default_path")
+                or payload.get("runtime_name")
+                or "native"
+            ),
+            "ownership_boundary": path_selection.get("operating_boundary"),
+            "handoff_reason_code": path_selection.get("handoff_reason_code"),
+            "fallback_reason_code": path_selection.get("fallback_reason_code"),
+            "required_handoff_artifacts": required_handoff_artifacts,
+            "resume_expectation": resume_context.get("resume_kind"),
+        },
+        "program_continuity": {
+            "resume_supported": resume_supported,
+            "resume_kind": resume_context.get("resume_kind"),
+            "compaction_stage": compaction_state.get("stage"),
+            "continuity_artifact_status": "ready" if resume_supported else "limited",
+            "latest_recovery_hint": compressed_context.get("latest_recovery_hint"),
+        },
+        "milestone_verification": {
+            "verification_status": verification.get("status"),
+            "remaining_checks": remaining_checks,
+            "checkpoint_ready": bool(verification.get("status") == "passed" and not remaining_checks),
+        },
+        "operator_control": {
+            "next_recommended_action": (
+                recovery_summary.get("action")
+                or step_loop_contract.get("current_disposition")
+                or step_loop_contract.get("current_stage")
+            ),
+            "runbook_recovery_lane": recovery_summary.get("reason"),
+            "approval_pause_state": adapter_contract.get("approval_semantics", {}).get("approval_required")
+            if isinstance(adapter_contract.get("approval_semantics"), dict)
+            else None,
+            "clarify_pause_state": bool(payload.get("clarify_summary", {}).get("needs_clarification"))
+            if isinstance(payload.get("clarify_summary"), dict)
+            else False,
+        },
+        "latest_recovery_hint": compressed_context.get("latest_recovery_hint"),
+    }
 
 
 def _summarize_compacted_history(
@@ -2940,6 +3708,8 @@ def _isolate_runtime_context(
             output_target_count=len(target_paths),
             input_patch_plan_count=len(patch_plan),
             output_patch_plan_count=len(patch_plan),
+            reinjection_mode="full_inline_context",
+            reinjection_targets=list(target_paths),
             digest={
                 "requirement": request.requirement,
                 "selected_model_items": list(model_selected),
@@ -2955,6 +3725,8 @@ def _isolate_runtime_context(
         output_target_count=len(reduced_targets),
         input_patch_plan_count=len(patch_plan),
         output_patch_plan_count=len(reduced_patch_plan),
+        reinjection_mode="digest_focus_subset",
+        reinjection_targets=list(reduced_targets),
         digest={
             "requirement": request.requirement,
             "target_focus": reduced_targets,
@@ -3345,9 +4117,448 @@ def _record_execution_artifacts(
             "turn_id": request.turn_id,
             "artifact_count": artifact_summary.get("artifact_count", 0),
             "artifacts": artifacts,
+            "native_tool_surface": payload.get("native_tool_surface"),
+            "native_tool_trace": payload.get("native_tool_trace"),
+            "repo_report": payload.get("repo_report"),
+            "adapter_contract": payload.get("adapter_contract"),
+            "path_selection": payload.get("path_selection"),
             "compressed_context": payload.get("compressed_context"),
+            "compaction_state": payload.get("compaction_state"),
+            "session_continuity_contract": payload.get("session_continuity_contract"),
+            "context_engineering_contract": payload.get("context_engineering_contract"),
+            "resume_context": payload.get("resume_context"),
+            "step_loop_contract": payload.get("step_loop_contract"),
+            "native_task_proof": payload.get("native_task_proof"),
+            "native_repo_task_acceptance": payload.get("native_repo_task_acceptance"),
+            "native_complex_repo_task_acceptance": payload.get("native_complex_repo_task_acceptance"),
         },
     )
+
+
+def _path_selection_payload(request: ExecutionRequest) -> dict[str, object]:
+    default_path = getattr(request.route, "default_path", None) or (
+        "native" if request.route.execution_mode == ExecutionMode.CODING_AGENT else "external"
+    )
+    operating_boundary = getattr(request.route, "operating_boundary", None) or (
+        "native_preferred" if default_path == "native" else "fallback_governed"
+    )
+    selection_reason = getattr(request.route, "selection_reason", None) or (
+        "Bounded repository work defaults to the native governed path."
+        if default_path == "native"
+        else "This task remains on the governed external path."
+    )
+    handoff_reason_code = getattr(request.route, "handoff_reason_code", None)
+    fallback_reason_code = getattr(request.route, "fallback_reason_code", None) or (
+        "native_runtime_unavailable" if default_path == "native" else "external_runtime_unavailable"
+    )
+    return {
+        "default_path": default_path,
+        "operating_boundary": operating_boundary,
+        "selection_reason": selection_reason,
+        "handoff_reason_code": handoff_reason_code,
+        "fallback_reason_code": fallback_reason_code,
+    }
+
+
+def _shared_adapter_capability_surface(
+    *,
+    adapter_family: str,
+    agent_kind: str,
+    path_selection: dict[str, object],
+    approval_required: bool,
+    approval_pause_supported: bool,
+    evidence_outputs: list[str],
+    recovery_surfaces: list[str],
+    runtime_metadata: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "format": "agent_orchestrator.adapter_capability_surface.v1",
+        "adapter_family": adapter_family,
+        "agent_kind": agent_kind,
+        "runtime_metadata": dict(runtime_metadata),
+        "path_selection": dict(path_selection),
+        "governance": {
+            "approval_required": approval_required,
+            "approval_pause_supported": approval_pause_supported,
+            "fallback_governed": True,
+            "hot_plug_supported": True,
+        },
+        "evidence_outputs": list(evidence_outputs),
+        "recovery_surfaces": list(recovery_surfaces),
+        "comparability": {
+            "shared_with_external": True,
+            "shared_with_native": True,
+            "comparison_mode": "same_contract_two_executors",
+        },
+    }
+
+
+def _record_native_learning_assets(
+    runtime: CodingAgentExecutionRuntime,
+    *,
+    request: ExecutionRequest,
+    payload: dict[str, object],
+) -> None:
+    session_id = request.session_id or _runtime_run_id(request)
+    turn_id = request.turn_id or _runtime_run_id(request)
+    workspace_root = runtime.repo_explorer.workspace_root if isinstance(runtime.repo_explorer.workspace_root, Path) else Path(runtime.repo_explorer.workspace_root)
+    control_root = workspace_root / ".agent_orchestrator"
+    session_runtime = SessionRuntime(control_root / "agent_sessions")
+    knowledge_store = KnowledgeStore(control_root / "knowledge")
+    path_selection = payload.get("path_selection", {}) if isinstance(payload.get("path_selection"), dict) else {}
+    native_task_proof = payload.get("native_task_proof", {}) if isinstance(payload.get("native_task_proof"), dict) else {}
+    native_repo_task_acceptance = (
+        payload.get("native_repo_task_acceptance", {})
+        if isinstance(payload.get("native_repo_task_acceptance"), dict)
+        else {}
+    )
+    native_complex_repo_task_acceptance = (
+        payload.get("native_complex_repo_task_acceptance", {})
+        if isinstance(payload.get("native_complex_repo_task_acceptance"), dict)
+        else {}
+    )
+    trajectory = session_runtime.record_trajectory(
+        session_id=session_id,
+        turn_id=turn_id,
+        task_class=str(native_task_proof.get("task_class") or "bounded_internal_repo_task"),
+        path_selection=path_selection,
+        stage=str(native_task_proof.get("proof_scenario") or "completed"),
+        outcome=str(payload.get("status") or "unknown"),
+        summary=str(native_task_proof.get("proof_scenario") or payload.get("status") or "unknown"),
+        evidence_refs=[
+            "payload.native_task_proof",
+            "payload.native_repo_task_acceptance",
+            "payload.native_complex_repo_task_acceptance",
+            "payload.event_summary",
+        ],
+        asset_refs=[
+            "MemoryStore.memory.jsonl",
+            "KnowledgeStore/lessons.jsonl",
+            "SessionRuntime/trajectories",
+        ],
+        metadata={
+            "selection_reason": path_selection.get("selection_reason"),
+            "handoff_reason_code": path_selection.get("handoff_reason_code"),
+            "fallback_reason_code": path_selection.get("fallback_reason_code"),
+            "real_repo_task_acceptance_ready": native_repo_task_acceptance.get("real_repo_task_acceptance_ready"),
+            "complex_repo_task_ready": native_complex_repo_task_acceptance.get("complex_repo_task_ready"),
+        },
+    )
+    memory_store = runtime.memory_store
+    memory_store.append(
+        namespace="native_trajectory",
+        session_id=session_id,
+        record_type="trajectory",
+        summary=trajectory.summary,
+        role="coding_agent",
+        provider="native",
+        payload=trajectory.to_dict(),
+        provenance={"source": "coding_agent_runtime", "turn_id": turn_id},
+        freshness="fresh",
+        confidence=0.9,
+    )
+    memory_store.append(
+        namespace="native_learning",
+        session_id=session_id,
+        record_type="memory",
+        summary=str(path_selection.get("selection_reason") or "native path selected"),
+        role="curator",
+        provider="native",
+        payload={
+            "path_selection": path_selection,
+            "task_class": native_task_proof.get("task_class"),
+            "proof_scenario": native_task_proof.get("proof_scenario"),
+            "real_repo_task_acceptance_ready": native_repo_task_acceptance.get("real_repo_task_acceptance_ready"),
+            "complex_repo_task_ready": native_complex_repo_task_acceptance.get("complex_repo_task_ready"),
+        },
+        provenance={"source": "trajectory_curator", "turn_id": turn_id},
+        freshness="fresh",
+        confidence=0.8,
+    )
+    knowledge_store.append(
+        session_id=session_id,
+        artifact_type="lessons",
+        summary=str(path_selection.get("selection_reason") or "native path selected"),
+        role="curator",
+        payload={
+            "task_class": native_task_proof.get("task_class"),
+            "proof_scenario": native_task_proof.get("proof_scenario"),
+            "path_selection": path_selection,
+        },
+    )
+    knowledge_store.append(
+        session_id=session_id,
+        artifact_type="skills",
+        summary="Native repo task acceptance asset",
+        role="curator",
+        payload={
+            "trajectory_id": trajectory.trajectory_id,
+            "nudge": {
+                "type": "curator_ready",
+                "write_rules": ["facts->Memory", "procedures->Skill", "decision->policy"],
+            },
+            "task_class": native_task_proof.get("task_class"),
+        },
+    )
+
+
+def _native_task_proof(
+    runtime: CodingAgentExecutionRuntime,
+    *,
+    request: ExecutionRequest,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    artifact_summary = payload.get("artifact_summary", {}) if isinstance(payload.get("artifact_summary"), dict) else {}
+    event_summary = payload.get("event_summary", {}) if isinstance(payload.get("event_summary"), dict) else {}
+    resume_context = payload.get("resume_context", {}) if isinstance(payload.get("resume_context"), dict) else {}
+    step_loop_contract = payload.get("step_loop_contract", {}) if isinstance(payload.get("step_loop_contract"), dict) else {}
+    kernel_contract = payload.get("kernel_contract", {}) if isinstance(payload.get("kernel_contract"), dict) else {}
+    context_selection = payload.get("context_selection", {}) if isinstance(payload.get("context_selection"), dict) else {}
+    isolation_state = payload.get("isolation_state", {}) if isinstance(payload.get("isolation_state"), dict) else {}
+    retrieved_memory = payload.get("retrieved_memory", []) if isinstance(payload.get("retrieved_memory"), list) else []
+    repair_summary = payload.get("repair_summary", {}) if isinstance(payload.get("repair_summary"), dict) else {}
+    recovery_summary = payload.get("recovery_summary", {}) if isinstance(payload.get("recovery_summary"), dict) else {}
+    verification = payload.get("verification", {}) if isinstance(payload.get("verification"), dict) else {}
+    proof_scenario = _native_task_proof_scenario(
+        pending_approval=payload.get("pending_approval"),
+        verification=verification,
+        repair_summary=repair_summary,
+        accepted=payload.get("accepted"),
+        status=payload.get("status"),
+    )
+    return {
+        "format": "agent_orchestrator.native_task_proof.v1",
+        "run_id": _runtime_run_id(request),
+        "runtime_name": runtime.name,
+        "native_runtime_only": True,
+        "external_coding_agent_required": False,
+        "task_class": "bounded_internal_repo_task",
+        "proof_scenario": proof_scenario,
+        "task_requirement": request.requirement,
+        "task_kind": payload.get("task_kind"),
+        "closure_status": payload.get("status"),
+        "accepted": payload.get("accepted"),
+        "kernel_governed": kernel_contract.get("kernel_role") == "governed_execution_kernel",
+        "state_authority": kernel_contract.get("state_authority"),
+        "step_loop_model": step_loop_contract.get("loop_model"),
+        "step_loop_status": step_loop_contract.get("status"),
+        "step_loop_resume_supported": step_loop_contract.get("resume_supported"),
+        "context_select_explicit": bool(context_selection),
+        "structured_observation_count": len(resume_context.get("recent_observations", [])) if isinstance(resume_context.get("recent_observations"), list) else 0,
+        "compact_applied": bool(payload.get("compressed_context")),
+        "isolate_applied": bool(isolation_state.get("applied")),
+        "verification_status": verification.get("status"),
+        "verification_failure_kind": verification.get("failure_kind"),
+        "repair_attempt_count": repair_summary.get("attempt_count", 0),
+        "recovery_action": recovery_summary.get("action"),
+        "resume_ready": bool(resume_context.get("resume_supported", True)),
+        "pending_approval": payload.get("pending_approval"),
+        "artifact_count": artifact_summary.get("artifact_count", 0),
+        "event_count": event_summary.get("event_count", 0),
+        "memory_result_count": len(retrieved_memory),
+        "ui_projection_ready": True,
+        "proof_bundle": {
+            "artifact_summary_ref": "payload.artifact_summary",
+            "event_summary_ref": "payload.event_summary",
+            "resume_context_ref": "payload.resume_context",
+            "compressed_context_ref": "payload.compressed_context",
+            "retrieved_memory_ref": "payload.retrieved_memory",
+            "step_loop_contract_ref": "payload.step_loop_contract",
+        },
+    }
+
+
+def _native_repo_task_acceptance(
+    *,
+    request: ExecutionRequest,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    applied_changes = payload.get("applied_changes", []) if isinstance(payload.get("applied_changes"), list) else []
+    verification = payload.get("verification", {}) if isinstance(payload.get("verification"), dict) else {}
+    edit_intent = payload.get("edit_intent", {}) if isinstance(payload.get("edit_intent"), dict) else {}
+    target_paths = edit_intent.get("target_paths", []) if isinstance(edit_intent.get("target_paths"), list) else []
+    changed_paths = _accepted_change_paths(applied_changes, payload)
+    allowed_prefixes = ("src/agent_orchestrator/", "ui_frontend/")
+    changed_code_paths = [path for path in changed_paths if path.startswith(allowed_prefixes)]
+    changed_surface_paths = [
+        path for path in changed_paths if path.startswith("docs/") or "compliance" in path or "process" in path
+    ]
+    verification_command = verification.get("command", []) if isinstance(verification.get("command"), list) else []
+    verification_artifact = verification.get("artifact", {}) if isinstance(verification.get("artifact"), dict) else {}
+    task_shape_checks = {
+        "repository_exploration_present": {
+            "passed": bool(target_paths),
+            "evidence": {"target_paths": list(target_paths)},
+        },
+        "code_edit_under_repo_surface": {
+            "passed": bool(changed_code_paths),
+            "evidence": {"changed_code_paths": changed_code_paths},
+        },
+        "verification_command_present": {
+            "passed": bool(verification_command),
+            "evidence": {"verification_command": verification_command},
+        },
+        "operator_visible_artifacts_present": {
+            "passed": bool(verification_artifact),
+            "evidence": {"verification_artifact": verification_artifact},
+        },
+        "repo_facing_surface_updated": {
+            "passed": bool(changed_surface_paths),
+            "evidence": {"changed_surface_paths": changed_surface_paths},
+        },
+    }
+    passed_checks = sum(1 for item in task_shape_checks.values() if item.get("passed") is True)
+    return {
+        "format": "agent_orchestrator.native_repo_task_acceptance.v1",
+        "run_id": _runtime_run_id(request),
+        "task_requirement": request.requirement,
+        "task_shape_checks": task_shape_checks,
+        "passed_check_count": passed_checks,
+        "total_check_count": len(task_shape_checks),
+        "real_repo_task_acceptance_ready": passed_checks == len(task_shape_checks),
+        "notes": "This is the stronger project-level acceptance target for one real repository task chain.",
+    }
+
+
+def _native_complex_repo_task_acceptance(
+    *,
+    request: ExecutionRequest,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    applied_changes = payload.get("applied_changes", []) if isinstance(payload.get("applied_changes"), list) else []
+    verification = payload.get("verification", {}) if isinstance(payload.get("verification"), dict) else {}
+    edit_intent = payload.get("edit_intent", {}) if isinstance(payload.get("edit_intent"), dict) else {}
+    native_tool_trace = payload.get("native_tool_trace", {}) if isinstance(payload.get("native_tool_trace"), dict) else {}
+    target_paths = edit_intent.get("target_paths", []) if isinstance(edit_intent.get("target_paths"), list) else []
+    operations = edit_intent.get("operations", []) if isinstance(edit_intent.get("operations"), list) else []
+    changed_paths = _accepted_change_paths(applied_changes, payload)
+    allowed_prefixes = ("src/agent_orchestrator/", "ui_frontend/")
+    changed_code_paths = [path for path in changed_paths if path.startswith(allowed_prefixes)]
+    changed_surface_paths = [
+        path for path in changed_paths if path.startswith("docs/") or "compliance" in path or "process" in path
+    ]
+    verification_command = verification.get("command", []) if isinstance(verification.get("command"), list) else []
+    verification_artifact = verification.get("artifact", {}) if isinstance(verification.get("artifact"), dict) else {}
+    trace_entries = native_tool_trace.get("trace", []) if isinstance(native_tool_trace.get("trace"), list) else []
+    explored_tools = [
+        item.get("tool")
+        for item in trace_entries
+        if isinstance(item, dict) and item.get("tool") in {"read", "search", "glob", "repo_map"}
+    ]
+    complex_checks = {
+        "multi_target_exploration_present": {
+            "passed": len(target_paths) >= 3,
+            "evidence": {"target_paths": list(target_paths), "target_path_count": len(target_paths)},
+        },
+        "multi_file_mutation_present": {
+            "passed": len(changed_paths) >= 3 and len(operations) >= 3,
+            "evidence": {
+                "changed_paths": changed_paths,
+                "changed_path_count": len(changed_paths),
+                "operation_count": len(operations),
+            },
+        },
+        "code_and_repo_surface_updated": {
+            "passed": bool(changed_code_paths) and bool(changed_surface_paths),
+            "evidence": {
+                "changed_code_paths": changed_code_paths,
+                "changed_surface_paths": changed_surface_paths,
+            },
+        },
+        "verification_on_code_targets_present": {
+            "passed": bool(verification_command) and bool(verification_artifact) and len(changed_code_paths) >= 2,
+            "evidence": {
+                "verification_command": verification_command,
+                "verification_artifact": verification_artifact,
+                "changed_code_path_count": len(changed_code_paths),
+            },
+        },
+        "native_exploration_trace_visible": {
+            "passed": len(explored_tools) >= 3 and any(tool in explored_tools for tool in {"search", "read"}),
+            "evidence": {
+                "explored_tools": explored_tools,
+                "trace_count": len(trace_entries),
+            },
+        },
+    }
+    passed_checks = sum(1 for item in complex_checks.values() if item.get("passed") is True)
+    return {
+        "format": "agent_orchestrator.native_complex_repo_task_acceptance.v1",
+        "run_id": _runtime_run_id(request),
+        "task_requirement": request.requirement,
+        "complex_task_checks": complex_checks,
+        "passed_check_count": passed_checks,
+        "total_check_count": len(complex_checks),
+        "complex_repo_task_ready": passed_checks == len(complex_checks),
+        "notes": "This stricter signal targets longer, multi-file native repository tasks that look closer to a daily-driver coding path.",
+    }
+
+
+def _native_task_proof_scenario(
+    *,
+    pending_approval: object,
+    verification: dict[str, object],
+    repair_summary: dict[str, object],
+    accepted: object,
+    status: object,
+) -> str:
+    if isinstance(pending_approval, dict):
+        return "approval_pause_resume_complete" if accepted is True else "approval_pause_blocked"
+    repair_outcome = str(repair_summary.get("outcome") or "")
+    verification_status = str(verification.get("status") or "")
+    attempts = repair_summary.get("attempts", [])
+    had_failed_attempt = (
+        isinstance(attempts, list)
+        and any(
+            isinstance(item, dict)
+            and isinstance(item.get("verification"), dict)
+            and item.get("verification", {}).get("status") == "failed"
+            for item in attempts
+        )
+    )
+    if verification_status == "passed" and repair_summary.get("attempt_count", 0):
+        return "verify_failure_repair_resume_success" if had_failed_attempt else "approval_pause_resume_complete"
+    if status == "blocked" and repair_outcome == "failed":
+        return "verify_failure_exhausted_recovery_block"
+    if accepted is True:
+        return "approval_pause_resume_complete"
+    return "bounded_internal_repo_task"
+
+
+def _accepted_change_paths(applied_changes: list[object], payload: dict[str, object]) -> list[str]:
+    changed_paths: list[str] = []
+    for item in applied_changes:
+        if not isinstance(item, dict) or item.get("status") != "applied":
+            continue
+        path = item.get("path")
+        if isinstance(path, str) and path:
+            changed_paths.append(path)
+            continue
+        operation = item.get("operation")
+        if isinstance(operation, dict):
+            op_path = operation.get("path")
+            if isinstance(op_path, str) and op_path:
+                changed_paths.append(op_path)
+    if changed_paths:
+        return _dedupe_preserve_order_strings(changed_paths)
+    edit_intent = payload.get("edit_intent", {}) if isinstance(payload.get("edit_intent"), dict) else {}
+    operations = edit_intent.get("operations", []) if isinstance(edit_intent.get("operations"), list) else []
+    operation_paths = [
+        str(item.get("path"))
+        for item in operations
+        if isinstance(item, dict) and isinstance(item.get("path"), str) and str(item.get("path"))
+    ]
+    if operation_paths and any(isinstance(item, dict) and item.get("status") == "applied" for item in applied_changes):
+        return _dedupe_preserve_order_strings(operation_paths)
+    return []
+
+
+def _dedupe_preserve_order_strings(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for item in items:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
 
 
 def _resume_contract(

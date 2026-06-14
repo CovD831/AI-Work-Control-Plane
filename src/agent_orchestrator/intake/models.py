@@ -42,6 +42,11 @@ class TaskRouterResult:
     scope_confidence: RiskLevel
     needs_repo_context: bool
     requires_human_confirmation: bool
+    default_path: str = "native"
+    operating_boundary: str = "native_preferred"
+    selection_reason: str = ""
+    handoff_reason_code: str | None = None
+    fallback_reason_code: str | None = None
     reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -54,6 +59,11 @@ class TaskRouterResult:
             "scope_confidence": self.scope_confidence,
             "needs_repo_context": self.needs_repo_context,
             "requires_human_confirmation": self.requires_human_confirmation,
+            "default_path": self.default_path,
+            "operating_boundary": self.operating_boundary,
+            "selection_reason": self.selection_reason,
+            "handoff_reason_code": self.handoff_reason_code,
+            "fallback_reason_code": self.fallback_reason_code,
             "reasons": list(self.reasons),
         }
 

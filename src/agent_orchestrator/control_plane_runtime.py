@@ -208,6 +208,21 @@ def _runtime_event_for_run(run: dict[str, object]) -> dict[str, object]:
     status = "completed" if accepted is True else "failed" if accepted is False else "interrupted"
     payload = run.get("payload", {}) if isinstance(run.get("payload"), dict) else {}
     artifact_summary = payload.get("artifact_summary", {}) if isinstance(payload.get("artifact_summary"), dict) else {}
+    kernel_contract = payload.get("kernel_contract", {}) if isinstance(payload.get("kernel_contract"), dict) else {}
+    step_loop_contract = payload.get("step_loop_contract", {}) if isinstance(payload.get("step_loop_contract"), dict) else {}
+    native_task_proof = payload.get("native_task_proof", {}) if isinstance(payload.get("native_task_proof"), dict) else {}
+    native_repo_task_acceptance = (
+        payload.get("native_repo_task_acceptance", {})
+        if isinstance(payload.get("native_repo_task_acceptance"), dict)
+        else {}
+    )
+    native_complex_repo_task_acceptance = (
+        payload.get("native_complex_repo_task_acceptance", {})
+        if isinstance(payload.get("native_complex_repo_task_acceptance"), dict)
+        else {}
+    )
+    adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
+    path_selection = payload.get("path_selection", {}) if isinstance(payload.get("path_selection"), dict) else {}
     artifact_refs = [str(run.get("path"))] if run.get("path") else []
     artifact_refs.extend(
         str(item.get("artifact_id"))
@@ -223,6 +238,13 @@ def _runtime_event_for_run(run: dict[str, object]) -> dict[str, object]:
         "tool_intent": "team execute",
         "result_status": status,
         "failure_reason": "execution rejected or failed" if accepted is False else None,
+        "kernel_contract": dict(kernel_contract),
+        "adapter_contract": dict(adapter_contract),
+        "path_selection": dict(path_selection),
+        "step_loop_contract": dict(step_loop_contract),
+        "native_task_proof": dict(native_task_proof),
+        "native_repo_task_acceptance": dict(native_repo_task_acceptance),
+        "native_complex_repo_task_acceptance": dict(native_complex_repo_task_acceptance),
         "artifact_refs": artifact_refs,
         "artifact_summary": artifact_summary,
         "usage_cost": _usage_cost_placeholder(),

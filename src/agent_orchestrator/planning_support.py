@@ -155,7 +155,16 @@ def canonical_process_documentation_bundle(project_root: Path) -> ProcessDocumen
                 "AI Work Control Plane Operations Track extends the default operator surface to Workspace / Program Index v2, Approval Inbox, Run Ledger, Topology Blueprint Snapshot, Memory Promotion, and Runtime Health + Tool Inventory",
                 "AI Work Control Plane Live Recovery Track turns the operator-readable surface into an operator-recoverable surface with Recovery Timeline, Runtime Event Stream, Recovery Recommendation, resume hints, and evidence-backed memory promotion",
                 "latest explainer docs: `PROJECT_BREAKDOWN.md`, `PROJECT_BREAKDOWN_V2.md`, `EXECUTION_PLANE_DEEP_DIVE.md`, `INTERVIEW_PREP.md`",
+                "`docs/process/root-map.md`: compact repository entry map",
                 "`docs/process/project-index.md`: canonical reading order and recent update index",
+                "`docs/process/module-manifest.md`: module responsibility and dependency map",
+                "`docs/architecture/coding-agent-goal-spec.md`: governed coding-agent runtime goal spec",
+                "`docs/architecture/native-coding-agent-upgrade-plan.md`: native coding-agent closure target and phase contract",
+                "`docs/process/native-coding-agent-phase-0-baseline.md`: closure baseline and proof-bundle contract",
+                "`docs/process/native-coding-agent-phase-1-kernel-boundary.md`: governed kernel boundary hardening",
+                "`docs/process/native-coding-agent-phase-2-step-loop-convergence.md`: step-loop convergence contract",
+                "`docs/process/native-coding-agent-phase-4-verify-repair-resume.md`: verify-repair-resume closure contract",
+                "`docs/process/native-coding-agent-phase-5-native-dogfood-track.md`: native dogfood evidence track",
                 "`docs/process/agent-evolution-master-plan.md`: future evolution source of truth",
                 "`team inspect-docs` builds `agent_orchestrator.docs_context.v1` packages for agent-ready canonical docs",
                 "`team inspect-handoff` reads `agent_orchestrator.handoff_packet.v1` packets from session messages",
@@ -1746,12 +1755,19 @@ def _collect_root_map_entries(project_root: Path) -> tuple[str, ...]:
         ]
         if project_index.exists():
             entries.append("`docs/process/project-index.md`: canonical reading order and recent update index")
+        entries.append("`docs/process/context-map.md`: canonical docs and artifact map")
         if impl_process.exists():
             entries.append("`docs/process/agent-orchestrator-implementation-process.md`: implementation supervision source of truth")
         if runbook.exists():
             entries.append("`docs/process/agent-team-operator-runbook.md`: operator workflow recovery guide")
         if evolution_plan.exists():
             entries.append("`docs/process/agent-evolution-master-plan.md`: future evolution source of truth")
+        entries.append("`docs/architecture/native-coding-agent-upgrade-plan.md`: native coding-agent closure target and phase roadmap")
+        entries.append("`docs/process/native-coding-agent-phase-0-baseline.md`: native closure baseline and first proof contract")
+        entries.append("`docs/process/native-coding-agent-phase-1-kernel-boundary.md`: native governed kernel boundary hardening")
+        entries.append("`docs/process/native-coding-agent-phase-2-step-loop-convergence.md`: native step-loop convergence phase")
+        entries.append("`docs/process/native-coding-agent-phase-4-verify-repair-resume.md`: native verify-repair-resume closure phase")
+        entries.append("`docs/process/native-coding-agent-phase-5-native-dogfood-track.md`: native dogfood evidence phase")
         if any(path.exists() for path in breakdown_docs):
             entries.append("`PROJECT_BREAKDOWN.md`, `PROJECT_BREAKDOWN_V2.md`, `EXECUTION_PLANE_DEEP_DIVE.md`, `INTERVIEW_PREP.md`: latest explainer docs")
     return tuple(entries)

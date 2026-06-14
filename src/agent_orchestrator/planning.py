@@ -16,6 +16,7 @@ from typing import Any, Literal, TypedDict
 from uuid import uuid4
 
 from agent_orchestrator.agent_config import AgentConfig
+from agent_orchestrator.execution import CodingAgentExecutionRuntime, ExecutionRequest
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest, JobRuntime
 from agent_orchestrator.guards import (
     validate_artifact_write,
@@ -29,6 +30,7 @@ from agent_orchestrator.memory import KnowledgeStore, MemoryStore
 from agent_orchestrator.messages import MessageRouter, MessageStore
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode, get_policy
+from agent_orchestrator.intake import ClarifyPolicy, ExecutionMode, TaskKind, TaskRouterResult
 from agent_orchestrator.planning_governance import build_governance_snapshot as _build_governance_snapshot
 from agent_orchestrator.planning_support import (
     ProcessDocumentSpec as ProcessDocumentSpec,
@@ -51,13 +53,14 @@ from agent_orchestrator.planning_support import (
     summarize_document_context_snapshot,
 )
 from agent_orchestrator.review import Finding, ReviewResult
-from agent_orchestrator.strategy import CompatibilityStrategyPlanner
+from agent_orchestrator.strategy import NativeStrategyPlanner
 from agent_orchestrator.tasks import ExecutionContract
 from agent_orchestrator.topology import TopologyName
 from agent_orchestrator.work_graph import WorkGraphStore, build_initial_work_graph, next_executable_node
 
 TeamRole = Literal["lead", "build", "review"]
 ExecutionContextPolicy = Literal["fresh", "resume", "resume_if_same_task"]
+TeamExecutionMode = Literal["legacy", "native"]
 GapStatus = Literal["open", "acknowledged", "closed"]
 PlanSessionStatus = Literal[
     "intake_chat",
@@ -830,8 +833,9 @@ class TeamOrchestrator:
     ) -> PlanSession:
         policy = get_policy(OrchestrationMode.SUCCESS_FIRST)
         contract = self.orchestrator.planner.clarify(requirement, policy)
-        strategy_planner = self.orchestrator.strategy_planner or CompatibilityStrategyPlanner(self.orchestrator.decomposer)
-        work_units = strategy_planner.plan(contract, policy).work_units
+        strategy_planner = self.orchestrator.strategy_planner or NativeStrategyPlanner(self.orchestrator.decomposer)
+        strategy_plan = strategy_planner.plan(contract, policy)
+        work_units = strategy_plan.work_units
         session = PlanSession.new(requirement=requirement, stage_target=self.stage_target)
         session.status = "intake_chat"
         session.resume.current_phase = "intake_chat"
@@ -877,6 +881,7 @@ class TeamOrchestrator:
                 "Execution must start from the approved plan, not from the raw requirement.",
             ],
         )
+        session.structured_brief.decision_rationale.extend(strategy_plan.reasons)
         session.checklist = [
             PlanChecklistItem(label="Lead brief persisted", owner="lead", completed=True),
             PlanChecklistItem(label="Draft confirmed by human", owner="human", completed=False, depends_on=["Lead brief persisted"]),
@@ -1344,25 +1349,28 @@ class TeamOrchestrator:
         return session
 
     def refresh_documentation_sync(self) -> dict[str, object]:
-        bundle = canonical_process_documentation_bundle(self.project_root)
         refresh_results: list[dict[str, object]] = []
-        for name, spec in bundle.iter_specs():
-            path = self.project_root / spec.path
-            expected = spec.render_markdown()
-            current = path.read_text(encoding="utf-8") if path.exists() else None
-            if current != expected:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(expected, encoding="utf-8")
-                refresh_status = "created" if current is None else "updated"
-            else:
-                refresh_status = "unchanged"
-            refresh_results.append(
-                {
-                    "name": name,
-                    "path": spec.path,
-                    "status": refresh_status,
-                }
-            )
+        for _pass in range(2):
+            bundle = canonical_process_documentation_bundle(self.project_root)
+            current_results: list[dict[str, object]] = []
+            for name, spec in bundle.iter_specs():
+                path = self.project_root / spec.path
+                expected = spec.render_markdown()
+                current = path.read_text(encoding="utf-8") if path.exists() else None
+                if current != expected:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(expected, encoding="utf-8")
+                    refresh_status = "created" if current is None else "updated"
+                else:
+                    refresh_status = "unchanged"
+                current_results.append(
+                    {
+                        "name": name,
+                        "path": spec.path,
+                        "status": refresh_status,
+                    }
+                )
+            refresh_results = current_results
         snapshot = build_doc_sync_status_for_project(self.project_root, self.runtime, refresh_results=refresh_results)
         return snapshot
 
@@ -1679,6 +1687,7 @@ class TeamOrchestrator:
         review_policy_override: str | None = None,
         provider_health_snapshot: dict[str, object] | None = None,
         context_policy: ExecutionContextPolicy = "resume_if_same_task",
+        execution_mode: TeamExecutionMode = "native",
     ) -> PlanSession:
         session = self.store.read_session(session_id)
         session.doc_sync = self._build_doc_sync_status()
@@ -1713,17 +1722,31 @@ class TeamOrchestrator:
         self.store.write_session(session)
 
         execution_requirement = session.approved_plan["goal"] if session.approved_plan else session.requirement
-        run = self.orchestrator.run(
-            execution_requirement,
-            mode,
-            review_policy_override=review_policy_override,
-            provider_health_snapshot=provider_health_snapshot,
-        )
-        payload = run.to_dict()
+        if execution_mode == "native":
+            payload, run_id, accepted, run_status = _execute_approved_plan_with_native_runtime(
+                self,
+                session=session,
+                requirement=execution_requirement,
+                mode=mode,
+                review_policy_override=review_policy_override,
+                provider_health_snapshot=provider_health_snapshot,
+                context_policy=context_policy,
+            )
+        else:
+            run = self.orchestrator.run(
+                execution_requirement,
+                mode,
+                review_policy_override=review_policy_override,
+                provider_health_snapshot=provider_health_snapshot,
+            )
+            payload = run.to_dict()
+            run_id = run.run_id
+            accepted = run.accepted
+            run_status = run.status
         context_policy_payload = _execution_context_policy_payload(
             session,
             policy=context_policy,
-            run_id=run.run_id,
+            run_id=run_id,
             stop_reason="execution_completed" if bool(payload.get("accepted", False)) else "execution_blocked",
         )
         metadata = dict(payload.get("metadata", {}))
@@ -1752,12 +1775,13 @@ class TeamOrchestrator:
                 "provider_health_snapshot": provider_health_snapshot or metadata.get("provider_health_snapshot"),
                 "provenance": provenance,
                 "execution_context_policy": context_policy_payload,
+                "team_execution_mode": execution_mode,
             }
         )
         payload["metadata"] = metadata
-        self.orchestrator.run_store.write(run.run_id, payload)
-        session.resume.linked_execution_run_id = run.run_id
-        lead_verdict = _finalize_execution(session, run)
+        self.orchestrator.run_store.write(run_id, payload)
+        session.resume.linked_execution_run_id = run_id
+        lead_verdict = _finalize_execution_from_payload(session, payload) if execution_mode == "native" else _finalize_execution(session, run)
         session.gate_verdict = lead_verdict
         session.status = lead_verdict
         session.resume.current_phase = lead_verdict
@@ -1769,7 +1793,7 @@ class TeamOrchestrator:
             artifact_type="lessons",
             role="lead",
             summary=f"Execution finished with {lead_verdict}.",
-            payload={"run_id": run.run_id, "context_policy": context_policy_payload},
+            payload={"run_id": run_id, "context_policy": context_policy_payload, "team_execution_mode": execution_mode},
         )
         session.structured_brief.checklist_summary = _build_checklist_summary(session.checklist)
         session.doc_sync = self.refresh_documentation_sync()
@@ -1780,12 +1804,13 @@ class TeamOrchestrator:
             session_id=session.id,
             from_role="lead",
             to_role="runtime",
-            content=f"Execution started from approved plan via run {run.run_id}.",
-            work_unit_id=run.run_id,
+            content=f"Execution started from approved plan via run {run_id}.",
+            work_unit_id=run_id,
             payload={
-                "run_id": run.run_id,
+                "run_id": run_id,
                 "status": session.status,
                 "execution_context_policy": context_policy_payload,
+                "team_execution_mode": execution_mode,
                 "docs_context_snapshot_id": session.docs_context_snapshot.get("id")
                 if session.docs_context_snapshot
                 else None,
@@ -2409,6 +2434,113 @@ def _build_blocker_session_summary(session: PlanSession) -> BlockerSessionSummar
     }
 
 
+def _team_native_route() -> TaskRouterResult:
+    return TaskRouterResult(
+        task_kind=TaskKind.DIRECT_FIX,
+        clarify_policy=ClarifyPolicy.LIGHT,
+        execution_mode=ExecutionMode.CODING_AGENT,
+        ambiguity_level="low",
+        risk_level="medium",
+        scope_confidence="high",
+        needs_repo_context=True,
+        requires_human_confirmation=False,
+        reasons=["approved plan executed through native governed coding runtime"],
+    )
+
+
+def _native_team_task_contract(session: PlanSession, requirement: str) -> dict[str, object]:
+    approved_plan = session.approved_plan if isinstance(session.approved_plan, dict) else {}
+    acceptance_criteria = approved_plan.get("acceptance_criteria")
+    if not isinstance(acceptance_criteria, list) or not acceptance_criteria:
+        acceptance_criteria = list(session.structured_brief.acceptance_criteria)
+    context_lines = [requirement]
+    if session.structured_brief.constraints:
+        context_lines.append("Constraints: " + "; ".join(session.structured_brief.constraints))
+    if session.structured_brief.risks:
+        context_lines.append("Risks: " + "; ".join(session.structured_brief.risks))
+    return {
+        "id": session.id,
+        "goal": requirement,
+        "non_goals": [],
+        "context": " ".join(context_lines),
+        "inputs": [requirement],
+        "outputs": ["code changes", "verification result", "runtime evidence"],
+        "acceptance_criteria": [str(item) for item in acceptance_criteria],
+        "risk_level": "medium",
+        "parallelizable": False,
+        "owner_type": "single_worker",
+        "max_depth": 1,
+        "failure_policy": "retry",
+    }
+
+
+def _execute_approved_plan_with_native_runtime(
+    team: TeamOrchestrator,
+    *,
+    session: PlanSession,
+    requirement: str,
+    mode: OrchestrationMode | None,
+    review_policy_override: str | None,
+    provider_health_snapshot: dict[str, object] | None,
+    context_policy: ExecutionContextPolicy,
+) -> tuple[dict[str, object], str, bool | None, str | None]:
+    runtime = CodingAgentExecutionRuntime(orchestrator=team.orchestrator)
+    project_root = team.project_root
+    runtime.repo_explorer.workspace_root = project_root
+    runtime.edit_executor.workspace_root = project_root
+    runtime.edit_executor.action_executor.workspace_root = project_root
+    runtime.verify_loop.verifier.workspace_root = project_root
+    runtime.verify_loop.verifier.action_executor.workspace_root = project_root
+    runtime.state_store.root = project_root / ".agent_orchestrator" / "execution_state"
+    runtime.state_store.__post_init__()
+    runtime.event_store.root = project_root / ".agent_orchestrator" / "events"
+    runtime.event_store.__post_init__()
+    runtime.scratchpad_store.root = project_root / ".agent_orchestrator" / "scratchpads"
+    runtime.scratchpad_store.__post_init__()
+    runtime.memory_store.root = project_root / ".agent_orchestrator" / "memory"
+    runtime.memory_store.__post_init__()
+    runtime.approvals_root = project_root / ".agent_orchestrator" / "approvals"
+    request = ExecutionRequest(
+        requirement=requirement,
+        route=_team_native_route(),
+        runtime_name=runtime.name,
+        mode=mode,
+        review_policy_override=review_policy_override,
+        provider_health_snapshot=provider_health_snapshot,
+        task_contract=_native_team_task_contract(session, requirement),
+        session_id=session.id,
+        turn_id=f"team-exec-{session.id}",
+        context_snapshot={
+            "snapshot_id": session.docs_context_snapshot.get("id") if isinstance(session.docs_context_snapshot, dict) else f"plan-{session.id}",
+            "session_id": session.id,
+            "approved_plan_goal": requirement,
+            "context_policy": context_policy,
+            "source": "team_execute",
+            "docs_context_snapshot": dict(session.docs_context_snapshot) if isinstance(session.docs_context_snapshot, dict) else None,
+        },
+        resume_kind="fresh" if context_policy == "fresh" else "resume_if_same_task",
+        session_metadata={
+            "origin": "team_execute",
+            "plan_session_id": session.id,
+            "approved_plan_goal": requirement,
+            "execution_context_policy": context_policy,
+        },
+    )
+    result = runtime.run(request)
+    payload = {
+        "run_id": result.run_id,
+        "requirement": requirement,
+        "initial_mode": result.execution_mode.value,
+        "final_mode": result.execution_mode.value,
+        "accepted": result.accepted,
+        "status": result.status,
+        "payload": result.payload,
+        "session_id": session.id,
+        "turn_id": request.turn_id,
+    }
+    return payload, result.run_id or f"coding-{session.id}", result.accepted, result.status
+
+
 def _observed_failure_provider(runtime_status: Any, session: PlanSession) -> str | None:
     provider = getattr(runtime_status, "provider", None)
     if isinstance(provider, str) and provider:
@@ -2506,7 +2638,7 @@ def _resume_apply_action(team: TeamOrchestrator, session: PlanSession) -> PlanSe
         resumed.structured_brief.checklist_summary = _build_checklist_summary(resumed.checklist)
         return resumed
     if action == "execute":
-        resumed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+        resumed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST, execution_mode="native")
         resumed.structured_brief.checklist_summary = _build_checklist_summary(resumed.checklist)
         return resumed
     if action == "retry_review":
@@ -3588,6 +3720,8 @@ def _status_strategy_decision(
     ]
     if isinstance(next_task, dict):
         verification_requirements.extend(str(item) for item in next_task.get("validation", []) if item)
+    blocked_units = _task_pool_blockers(session) if next_task is None else []
+    ready_next_units = [str(next_task.get("title"))] if isinstance(next_task, dict) and next_task.get("title") else []
     return {
         "format": "agent_orchestrator.strategy_decision.v1",
         "session_id": session.id,
@@ -3624,6 +3758,36 @@ def _status_strategy_decision(
         "risks": [str(item) for item in session.structured_brief.risks],
         "verification_requirements": verification_requirements,
         "validation_plan": verification_requirements,
+        "program_posture": {
+            "program_goal": session.structured_brief.goal or session.requirement,
+            "active_milestone": current_checkpoint_objective,
+            "completed_milestones": [],
+            "ready_next_units": ready_next_units,
+            "blocked_units": blocked_units,
+        },
+        "delegation_contract": {
+            "selected_executor": "native" if not session.resume.linked_execution_run_id else "runtime",
+            "ownership_boundary": session.structured_brief.topology_recommendation.get("selection_reason"),
+            "handoff_reason_code": session.decision_verdict.selected_provider_runtime.get("handoff_reason_code")
+            if session.decision_verdict and isinstance(session.decision_verdict.selected_provider_runtime, dict)
+            else None,
+            "fallback_reason_code": session.decision_verdict.selected_provider_runtime.get("fallback_reason_code")
+            if session.decision_verdict and isinstance(session.decision_verdict.selected_provider_runtime, dict)
+            else None,
+            "required_handoff_artifacts": ["strategy_decision", "run_ledger", "evidence_bundle"],
+            "resume_expectation": guidance.resume_action,
+        },
+        "milestone_verification": {
+            "verification_status": "pending",
+            "remaining_checks": verification_requirements,
+            "checkpoint_ready": False,
+        },
+        "operator_control": {
+            "next_recommended_action": guidance.primary_action,
+            "runbook_recovery_lane": guidance.resume_reason,
+            "approval_pause_state": session.status == "awaiting_human",
+            "clarify_pause_state": guidance.primary_action == "clarify",
+        },
         "executes": False,
     }
 
@@ -3709,12 +3873,15 @@ def _human_intervention_reason(session: PlanSession, guidance: SessionGuidance, 
 
 def _recovery_semantics_for_guidance(guidance: SessionGuidance) -> dict[str, object]:
     action = guidance.resume_action
+    block_detail = guidance.block_detail or ""
     if action in {"retry_review", "retry_adversarial_review"}:
         category = "retry"
     elif action in {"approve", "execute"}:
         category = "resume"
     elif action == "human_decision":
         category = "escalate"
+    elif "ambigu" in block_detail or "scope" in block_detail or "drift" in block_detail:
+        category = "scope_realign"
     elif guidance.block_source == "execution_run":
         category = "inspect_before_rerun"
     elif action in {"inspect_compliance", "inspect_blockers", "inspect_delegated_job", "inspect_execution"}:
@@ -3727,6 +3894,9 @@ def _recovery_semantics_for_guidance(guidance: SessionGuidance) -> dict[str, obj
         "resume_reason": guidance.resume_reason,
         "block_source": guidance.block_source,
         "block_detail": guidance.block_detail,
+        "failure_shape": "exploration_ambiguity_or_scope_drift"
+        if ("ambigu" in block_detail or "scope" in block_detail or "drift" in block_detail)
+        else None,
         "interruption_aware": True,
         "execution_gate_authority": "approved_plan_gate",
         "records_only": True,

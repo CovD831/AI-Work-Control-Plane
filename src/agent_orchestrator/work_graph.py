@@ -308,11 +308,14 @@ def graph_to_plan_tree(graph: WorkUnitGraph) -> dict[str, object]:
             "status": "unknown",
             "state": "planned",
             "summary": "",
+            "program_posture": graph_program_posture(graph),
             "related_agent_ids": [],
             "message_count": 0,
             "children": [],
         }
-    return build_node(graph.root_id)
+    tree = build_node(graph.root_id)
+    tree["program_posture"] = graph_program_posture(graph)
+    return tree
 
 
 def _session_title(session: Any) -> str:
@@ -377,6 +380,20 @@ def next_executable_node(graph: WorkUnitGraph) -> dict[str, object] | None:
         if node.get("kind") != "session":
             return node
     return schedulable[0] if schedulable else None
+
+
+def graph_program_posture(graph: WorkUnitGraph) -> dict[str, object]:
+    schedulable = schedulable_nodes(graph)
+    completed = [node.title for node in graph.nodes if node.status in {"completed", "accepted", "closed", "approval"}]
+    blocked = [node.title for node in graph.nodes if node.blocked_by or node.status in {"blocked", "failed", "needs_revision", "open"}]
+    active = next_executable_node(graph)
+    return {
+        "program_goal": next((node.title for node in graph.nodes if node.kind == "session"), graph.session_id),
+        "active_milestone": active.get("title") if isinstance(active, dict) else None,
+        "completed_milestones": completed,
+        "ready_next_units": [str(node.get("title")) for node in schedulable if node.get("kind") != "session"],
+        "blocked_units": blocked,
+    }
 
 
 def node_actions(node: WorkUnitNode) -> list[str]:

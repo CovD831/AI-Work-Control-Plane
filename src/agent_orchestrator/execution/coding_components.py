@@ -14,6 +14,7 @@ from agent_orchestrator.adapters import EnvSlotFillConfig, _default_openai_compa
 from agent_orchestrator.command import CommandResult, SubprocessCommandRunner
 from agent_orchestrator.execution.artifact_store import ExecutionArtifactStore
 from agent_orchestrator.execution.models import ActionRequest, ActionResult, ExecutionRequest
+from agent_orchestrator.execution.native_tools import NativeToolbox
 from agent_orchestrator.strategy.models import ExecutionPlan
 
 
@@ -376,19 +377,30 @@ class ActionExecutor:
 class RepoExplorer:
     artifact_store: ExecutionArtifactStore = field(default_factory=ExecutionArtifactStore)
     workspace_root: Path = field(default_factory=Path.cwd)
+    toolbox: NativeToolbox | None = None
     max_candidates: int = 8
 
     def explore(self, request: ExecutionRequest) -> RepoExplorationReport:
+        toolbox = self.toolbox or NativeToolbox(workspace_root=self.workspace_root, artifact_store=self.artifact_store)
+        toolbox.workspace_root = self.workspace_root
+        toolbox.artifact_store = self.artifact_store
         explicit_paths = _extract_paths(request.requirement)
-        all_files = sorted(
-            str(path.relative_to(self.workspace_root))
-            for path in self.workspace_root.rglob("*")
-            if path.is_file() and ".git" not in path.parts and ".agent_orchestrator" not in path.parts
-        )
+        exploration_patterns = _exploration_patterns(request.requirement, explicit_paths)
+        repo_map_result = toolbox.repo_map(exploration_patterns, depth=3)
+        mapped_files = list(repo_map_result.get("files", [])) if isinstance(repo_map_result.get("files"), list) else []
+        glob_result = toolbox.glob(exploration_patterns)
+        glob_matches = list(glob_result.get("matches", [])) if isinstance(glob_result.get("matches"), list) else []
+        search_paths = mapped_files or glob_matches
+        search_result = toolbox.search(request.requirement, paths=search_paths, max_matches=self.max_candidates)
+        all_files = list(dict.fromkeys([*mapped_files, *glob_matches]))
         existing_paths = [path for path in explicit_paths if (self.workspace_root / path).exists()]
         candidate_paths = existing_paths[:]
         if not candidate_paths:
+            candidate_paths = [str(item.get("path")) for item in search_result.get("matches", []) if isinstance(item, dict) and item.get("path")]
+        if not candidate_paths:
             candidate_paths = all_files[: self.max_candidates]
+        candidate_paths = list(dict.fromkeys(path for path in candidate_paths if isinstance(path, str) and path.strip()))
+        read_result = toolbox.read(candidate_paths[: self.max_candidates], max_chars=8000)
         artifact = self.artifact_store.write_repo_exploration(
             run_id=_execution_run_id(request),
             workspace_root=str(self.workspace_root),
@@ -403,7 +415,27 @@ class RepoExplorer:
             existing_paths=existing_paths,
             candidate_paths=candidate_paths[: self.max_candidates],
             file_count=len(all_files),
-            artifact=artifact,
+            artifact={
+                **artifact,
+                "tool_surface": toolbox.surface_summary(),
+                "repo_map": repo_map_result,
+                "glob": glob_result,
+                "search": search_result,
+                "read": read_result,
+                "exploration_profile": {
+                    "patterns": exploration_patterns,
+                    "search_path_count": len(search_paths),
+                    "mapped_directory_count": repo_map_result.get("directory_count"),
+                    "candidate_reason": (
+                        "explicit_existing_paths"
+                        if existing_paths
+                        else "search_matches"
+                        if search_result.get("match_count")
+                        else "repo_map_fallback"
+                    ),
+                    "selected_candidates": candidate_paths[: self.max_candidates],
+                },
+            },
         )
 
 
@@ -434,6 +466,7 @@ class ContextBuilder:
 class EditExecutor:
     action_executor: ActionExecutor = field(default_factory=ActionExecutor)
     workspace_root: Path = field(default_factory=Path.cwd)
+    toolbox: NativeToolbox | None = None
     intent_refiner_transport: Callable[[str, dict[str, object], dict[str, str], int], dict[str, object]] | None = None
 
     def build_intent(
@@ -444,13 +477,28 @@ class EditExecutor:
         context: ExecutionContextPackage,
         context_selection: dict[str, object] | None = None,
     ) -> EditIntent:
+        toolbox = self.toolbox or NativeToolbox(workspace_root=self.workspace_root, artifact_store=self.action_executor.artifact_store)
+        toolbox.workspace_root = self.workspace_root
+        toolbox.artifact_store = self.action_executor.artifact_store
         target_paths = repo_report.existing_paths or repo_report.candidate_paths[:3]
+        explicit_paths = _extract_paths(request.requirement)
+        if explicit_paths:
+            merged_target_paths = [*target_paths]
+            for path in explicit_paths:
+                if path not in merged_target_paths:
+                    merged_target_paths.append(path)
+            target_paths = merged_target_paths
         operations = _extract_operations(request.requirement)
         patch_plan = [f"Inspect {path} and update the implementation if needed." for path in target_paths]
         mode = "report_first"
         if operations:
             mode = "direct_apply"
             patch_plan.extend(f"Apply {operation['kind']} to {operation['path']}." for operation in operations)
+        elif target_paths:
+            read_result = toolbox.read(target_paths[:3], max_chars=6000)
+            matched = read_result.get("records", []) if isinstance(read_result, dict) else []
+            if matched:
+                patch_plan.append(f"Review {len(matched)} target files before editing.")
         refinement = _refine_edit_intent(
             request=request,
             repo_report=repo_report,
@@ -486,17 +534,11 @@ class EditExecutor:
     def apply(self, edit_intent: EditIntent) -> list[AppliedChange]:
         if edit_intent.mode != "direct_apply":
             return []
-        self.action_executor.workspace_root = self.workspace_root
-        result = self.action_executor.execute(
-            ActionRequest(
-                action_id="edit-apply",
-                action_type="file_mutation",
-                description="Apply bounded file mutations from the edit intent.",
-                parameters={"operations": list(edit_intent.operations)},
-                risk_level="medium",
-                requires_approval=True,
-            )
-        )
+        toolbox = self.toolbox or NativeToolbox(workspace_root=self.workspace_root, artifact_store=self.action_executor.artifact_store)
+        toolbox.workspace_root = self.workspace_root
+        toolbox.artifact_store = self.action_executor.artifact_store
+        toolbox.runner = self.action_executor.runner
+        result = toolbox.structured_patch(list(edit_intent.operations))
         changes = result.payload.get("applied_changes", [])
         if not isinstance(changes, list):
             return []
@@ -522,6 +564,7 @@ class VerificationRunner:
     action_executor: ActionExecutor = field(default_factory=ActionExecutor)
     runner: SubprocessCommandRunner = field(default_factory=SubprocessCommandRunner)
     workspace_root: Path = field(default_factory=Path.cwd)
+    toolbox: NativeToolbox | None = None
 
     def run(
         self,
@@ -530,8 +573,13 @@ class VerificationRunner:
         *,
         command_override: list[str] | None = None,
     ) -> VerificationReport:
+        toolbox = self.toolbox or NativeToolbox(workspace_root=self.workspace_root, runner=self.runner, artifact_store=self.action_executor.artifact_store)
+        toolbox.workspace_root = self.workspace_root
+        toolbox.runner = self.runner
+        toolbox.artifact_store = self.action_executor.artifact_store
         command = list(command_override) if isinstance(command_override, list) else []
-        if not command and not edit_intent.target_paths:
+        verification_targets = _verification_target_paths(edit_intent.target_paths)
+        if not command and not verification_targets:
             return VerificationReport(
                 status="skipped",
                 command=[],
@@ -542,19 +590,8 @@ class VerificationRunner:
                 failure_kind=None,
             )
         if not command:
-            command = ["python3", "-m", "compileall", *edit_intent.target_paths]
-        self.action_executor.workspace_root = self.workspace_root
-        self.action_executor.runner = self.runner
-        action_result = self.action_executor.execute(
-            ActionRequest(
-                action_id="verify-runtime",
-                action_type="run_command",
-                description="Run bounded verification command for the edit intent.",
-                parameters={"command": command, "run_id": _execution_run_id(request)},
-                risk_level="medium",
-                requires_approval=True,
-            )
-        )
+            command = ["python3", "-m", "compileall", *verification_targets]
+        action_result = toolbox.verify(run_id=_execution_run_id(request), command=command)
         payload = action_result.payload
         return VerificationReport(
             status="passed" if action_result.status == "passed" else "failed",
@@ -686,6 +723,31 @@ def _extract_paths(requirement: str) -> list[str]:
         if path not in deduped:
             deduped.append(path)
     return deduped
+
+
+def _exploration_patterns(requirement: str, explicit_paths: list[str]) -> list[str]:
+    patterns: list[str] = []
+    for raw_path in explicit_paths:
+        normalized = raw_path.strip().lstrip("./")
+        if not normalized:
+            continue
+        patterns.append(normalized)
+        parent = str(Path(normalized).parent)
+        if parent not in {"", "."}:
+            patterns.append(f"{parent}/**/*")
+    lowered = requirement.lower()
+    if any(token in lowered for token in {"test", "verify", "pytest"}):
+        patterns.append("tests/**/*.py")
+    if any(token in lowered for token in {"doc", "readme", "guide"}):
+        patterns.extend(["docs/**/*.md", "README.md"])
+    patterns.extend(["src/**/*.py", "**/*.py", "**/*.md", "**/*.json", "**/*.ts", "**/*.tsx"])
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        if pattern and pattern not in seen:
+            seen.add(pattern)
+            ordered.append(pattern)
+    return ordered
 
 
 def _refine_edit_intent(
@@ -830,35 +892,50 @@ def _run_verifier_with_optional_override(
 
 
 def _extract_operations(requirement: str) -> list[dict[str, object]]:
-    operations: list[dict[str, object]] = []
-    append_match = re.search(
+    operations_with_pos: list[tuple[int, dict[str, object]]] = []
+    for match in re.finditer(
         r"""append\s+["'`](?P<content>.+?)["'`]\s+to\s+(?P<path>[\w./-]+\.[A-Za-z0-9]+)""",
         requirement,
         flags=re.IGNORECASE,
-    )
-    if append_match:
-        operations.append(
-            {
-                "kind": "append",
-                "path": append_match.group("path"),
-                "content": append_match.group("content"),
-            }
+    ):
+        operations_with_pos.append(
+            (
+                match.start(),
+                {
+                    "kind": "append",
+                    "path": match.group("path"),
+                    "content": match.group("content"),
+                },
+            )
         )
-    replace_match = re.search(
+    for match in re.finditer(
         r"""replace\s+["'`](?P<old>.+?)["'`]\s+with\s+["'`](?P<new>.+?)["'`]\s+in\s+(?P<path>[\w./-]+\.[A-Za-z0-9]+)""",
         requirement,
         flags=re.IGNORECASE,
-    )
-    if replace_match:
-        operations.append(
-            {
-                "kind": "replace",
-                "path": replace_match.group("path"),
-                "old": replace_match.group("old"),
-                "new": replace_match.group("new"),
-            }
+    ):
+        operations_with_pos.append(
+            (
+                match.start(),
+                {
+                    "kind": "replace",
+                    "path": match.group("path"),
+                    "old": match.group("old"),
+                    "new": match.group("new"),
+                },
+            )
         )
-    return operations
+    operations_with_pos.sort(key=lambda item: item[0])
+    return [item for _, item in operations_with_pos]
+
+
+def _verification_target_paths(target_paths: list[str]) -> list[str]:
+    verifiable_suffixes = {".py", ".pyi"}
+    filtered: list[str] = []
+    for item in target_paths:
+        path = Path(str(item))
+        if path.suffix.lower() in verifiable_suffixes:
+            filtered.append(str(item))
+    return filtered
 
 
 def _sha256_text(text: str) -> str:

@@ -108,6 +108,7 @@ def recovery_guidance(summary: dict[str, object]) -> str:
         "resume": "resume",
         "escalate": "escalate",
         "inspect": "inspect",
+        "scope_realign": "realign",
         "manual": "manual",
     }
     mode = mode_labels.get(category, category or "manual")
@@ -227,6 +228,24 @@ def print_strategy_decision(status: dict[str, object], *, prefix: str = "governa
     verification = summary_list(strategy, "verification_requirements") or summary_list(strategy, "validation_plan")
     if verification:
         print(f"{prefix}_verification: {' | '.join(str(item) for item in verification)}")
+    program_posture = summary_dict(strategy, "program_posture")
+    if program_posture:
+        print(
+            f"{prefix}_program_posture: "
+            f"goal={summary_text(program_posture, 'program_goal')} "
+            f"active_milestone={summary_text(program_posture, 'active_milestone')} "
+            f"ready_next_units={len(summary_list(program_posture, 'ready_next_units'))} "
+            f"blocked_units={len(summary_list(program_posture, 'blocked_units'))}"
+        )
+    delegation_contract = summary_dict(strategy, "delegation_contract")
+    if delegation_contract:
+        print(
+            f"{prefix}_delegation: "
+            f"executor={summary_text(delegation_contract, 'selected_executor')} "
+            f"boundary={summary_text(delegation_contract, 'ownership_boundary')} "
+            f"handoff_reason={summary_text(delegation_contract, 'handoff_reason_code')} "
+            f"fallback_reason={summary_text(delegation_contract, 'fallback_reason_code')}"
+        )
 
 
 def team_display_context(payload: dict[str, object], *, pick_primary_action: Any) -> dict[str, object]:
@@ -306,6 +325,53 @@ def print_execution_session_summary(payload: dict[str, object]) -> None:
             f"policy={context_policy.get('policy')} "
             f"resume_target={context_policy.get('resume_target')} "
             f"stop_reason={context_policy.get('stop_reason')}"
+        )
+    continuity = summary_dict(summary, "session_continuity")
+    if continuity:
+        print(
+            "session_continuity: "
+            f"resume_supported={continuity.get('resume_supported')} "
+            f"resume_kind={continuity.get('resume_kind')} "
+            f"compaction_stage={continuity.get('compaction_stage')} "
+            f"runtime_duration_seconds={continuity.get('runtime_duration_seconds')} "
+            f"usage_cost_status={continuity.get('usage_cost_measurement_status')}"
+        )
+    tool_usage = summary_dict(summary, "native_tool_usage")
+    if tool_usage:
+        recent = ",".join(str(item) for item in tool_usage.get("recent_tools", [])) if isinstance(tool_usage.get("recent_tools"), list) else ""
+        print(
+            "native_tool_usage: "
+            f"tool_count={tool_usage.get('tool_count')} "
+            f"trace_count={tool_usage.get('trace_count')} "
+            f"recent={recent or 'none'}"
+        )
+    adapter_capability = summary_dict(summary, "adapter_capability")
+    if adapter_capability:
+        evidence_outputs = ",".join(str(item) for item in adapter_capability.get("evidence_outputs", [])) if isinstance(adapter_capability.get("evidence_outputs"), list) else ""
+        recovery_surfaces = ",".join(str(item) for item in adapter_capability.get("recovery_surfaces", [])) if isinstance(adapter_capability.get("recovery_surfaces"), list) else ""
+        print(
+            "adapter_capability: "
+            f"format={adapter_capability.get('format')} "
+            f"comparison_mode={adapter_capability.get('comparison_mode')} "
+            f"hot_plug_supported={adapter_capability.get('hot_plug_supported')} "
+            f"evidence_outputs={evidence_outputs or 'none'} "
+            f"recovery_surfaces={recovery_surfaces or 'none'}"
+        )
+    adapter_shared = summary_dict(summary, "adapter_shared_contract")
+    if adapter_shared:
+        evidence_outputs = ",".join(str(item) for item in adapter_shared.get("evidence_outputs", [])) if isinstance(adapter_shared.get("evidence_outputs"), list) else ""
+        recovery_surfaces = ",".join(str(item) for item in adapter_shared.get("recovery_surfaces", [])) if isinstance(adapter_shared.get("recovery_surfaces"), list) else ""
+        print(
+            "adapter_shared_contract: "
+            f"family={adapter_shared.get('adapter_family')} "
+            f"kind={adapter_shared.get('agent_kind')} "
+            f"default_path={adapter_shared.get('default_path')} "
+            f"boundary={adapter_shared.get('operating_boundary')} "
+            f"comparison_mode={adapter_shared.get('comparison_mode')} "
+            f"hot_plug_supported={adapter_shared.get('hot_plug_supported')} "
+            f"approval_required={adapter_shared.get('approval_required')} "
+            f"evidence_outputs={evidence_outputs or 'none'} "
+            f"recovery_surfaces={recovery_surfaces or 'none'}"
         )
     blocking_reasons = summary_list(summary, "blocking_reasons")
     if blocking_reasons:
@@ -495,6 +561,140 @@ def print_workspace_state_summary(payload: dict[str, object]) -> None:
             f"name={program.get('name')} active_plans={program.get('active_plan_count', 0)} "
             f"open_approvals={program.get('open_approval_count', 0)}"
         )
+    benchmark = payload.get("comparative_benchmark", {}) if isinstance(payload.get("comparative_benchmark"), dict) else {}
+    if benchmark:
+        shared = ",".join(str(item) for item in benchmark.get("shared_evidence_surface", [])) if isinstance(benchmark.get("shared_evidence_surface"), list) else ""
+        print(
+            "comparative_benchmark: "
+            f"native_default={benchmark.get('native_default_path', False)} "
+            f"acceptance_ready={benchmark.get('native_repo_task_acceptance_ready', False)} "
+            f"complex_acceptance_ready={benchmark.get('native_complex_repo_task_acceptance_ready', False)} "
+            f"task_class={benchmark.get('native_task_class')} "
+            f"shared_surface={shared or 'none'}"
+        )
+    exploration = payload.get("native_exploration", {}) if isinstance(payload.get("native_exploration"), dict) else {}
+    if exploration:
+        selected = ",".join(str(item) for item in exploration.get("selected_candidates", [])) if isinstance(exploration.get("selected_candidates"), list) else ""
+        print(
+            "native_exploration: "
+            f"existing={exploration.get('existing_path_count', 0)} "
+            f"candidates={exploration.get('candidate_path_count', 0)} "
+            f"files={exploration.get('file_count')} "
+            f"repo_map_dirs={exploration.get('repo_map_directory_count')} "
+            f"reason={exploration.get('candidate_reason')} "
+            f"selected={selected or 'none'}"
+        )
+    evidence_summary = payload.get("execution_artifact_summary", {}) if isinstance(payload.get("execution_artifact_summary"), dict) else {}
+    if evidence_summary:
+        continuity = evidence_summary.get("session_continuity", {}) if isinstance(evidence_summary.get("session_continuity"), dict) else {}
+        tool_usage = evidence_summary.get("native_tool_usage", {}) if isinstance(evidence_summary.get("native_tool_usage"), dict) else {}
+        runtime_cost = evidence_summary.get("runtime_cost", {}) if isinstance(evidence_summary.get("runtime_cost"), dict) else {}
+        planner_shared = evidence_summary.get("planner_shared_contract", {}) if isinstance(evidence_summary.get("planner_shared_contract"), dict) else {}
+        adapter_shared = evidence_summary.get("adapter_shared_contract", {}) if isinstance(evidence_summary.get("adapter_shared_contract"), dict) else {}
+        if continuity:
+            print(
+                "session_continuity: "
+                f"resume_supported={continuity.get('resume_supported')} "
+                f"compaction_stage={continuity.get('compaction_stage')} "
+                f"summarization_triggered={continuity.get('summarization_triggered')} "
+                f"resume_kind={continuity.get('resume_kind')}"
+            )
+            posture = continuity.get("long_horizon_posture", {}) if isinstance(continuity.get("long_horizon_posture"), dict) else {}
+            if posture:
+                print(
+                    "long_horizon_posture: "
+                    f"resume_ready={posture.get('resume_ready')} "
+                    f"recovery_active={posture.get('recovery_active')} "
+                    f"verification_resume_ready={posture.get('verification_resume_ready')} "
+                    f"context_pressure={posture.get('context_pressure')} "
+                    f"summarization_ready={posture.get('summarization_ready')}"
+                )
+            program_posture = continuity.get("program_posture", {}) if isinstance(continuity.get("program_posture"), dict) else {}
+            if program_posture:
+                completed = ",".join(str(item) for item in program_posture.get("completed_milestones", [])) if isinstance(program_posture.get("completed_milestones"), list) else ""
+                ready = ",".join(str(item) for item in program_posture.get("ready_next_units", [])) if isinstance(program_posture.get("ready_next_units"), list) else ""
+                blocked = ",".join(str(item) for item in program_posture.get("blocked_units", [])) if isinstance(program_posture.get("blocked_units"), list) else ""
+                print(
+                    "program_posture: "
+                    f"goal={program_posture.get('program_goal')} "
+                    f"active_milestone={program_posture.get('active_milestone')} "
+                    f"completed={completed or 'none'} "
+                    f"ready={ready or 'none'} "
+                    f"blocked={blocked or 'none'}"
+                )
+            delegation_contract = continuity.get("delegation_contract", {}) if isinstance(continuity.get("delegation_contract"), dict) else {}
+            if delegation_contract:
+                required = ",".join(str(item) for item in delegation_contract.get("required_handoff_artifacts", [])) if isinstance(delegation_contract.get("required_handoff_artifacts"), list) else ""
+                print(
+                    "delegation_contract: "
+                    f"executor={delegation_contract.get('selected_executor')} "
+                    f"boundary={delegation_contract.get('ownership_boundary')} "
+                    f"handoff_reason={delegation_contract.get('handoff_reason_code')} "
+                    f"fallback_reason={delegation_contract.get('fallback_reason_code')} "
+                    f"artifacts={required or 'none'}"
+                )
+            milestone_verification = continuity.get("milestone_verification", {}) if isinstance(continuity.get("milestone_verification"), dict) else {}
+            if milestone_verification:
+                remaining = ",".join(str(item) for item in milestone_verification.get("remaining_checks", [])) if isinstance(milestone_verification.get("remaining_checks"), list) else ""
+                print(
+                    "milestone_verification: "
+                    f"status={milestone_verification.get('verification_status')} "
+                    f"checkpoint_ready={milestone_verification.get('checkpoint_ready')} "
+                    f"remaining={remaining or 'none'}"
+                )
+            operator_control = continuity.get("operator_control", {}) if isinstance(continuity.get("operator_control"), dict) else {}
+            if operator_control:
+                print(
+                    "operator_control: "
+                    f"next_action={operator_control.get('next_recommended_action')} "
+                    f"recovery_lane={operator_control.get('runbook_recovery_lane')} "
+                    f"approval_pause={operator_control.get('approval_pause_state')} "
+                    f"clarify_pause={operator_control.get('clarify_pause_state')}"
+                )
+        if runtime_cost:
+            print(
+                "runtime_cost: "
+                f"duration_seconds={runtime_cost.get('duration_seconds')} "
+                f"usage_cost_status={runtime_cost.get('usage_cost_measurement_status')}"
+            )
+        if tool_usage:
+            recent = ",".join(str(item) for item in tool_usage.get("recent_tools", [])) if isinstance(tool_usage.get("recent_tools"), list) else ""
+            print(
+                "native_tool_usage: "
+                f"tool_count={tool_usage.get('tool_count')} "
+                f"trace_count={tool_usage.get('trace_count')} "
+                f"recent={recent or 'none'}"
+            )
+        if planner_shared:
+            actions = ",".join(str(item) for item in planner_shared.get("selected_actions", [])) if isinstance(planner_shared.get("selected_actions"), list) else ""
+            print(
+                "planner_shared_contract: "
+                f"family={planner_shared.get('planner_family')} "
+                f"format={planner_shared.get('format')} "
+                f"strategy={planner_shared.get('selected_strategy')} "
+                f"owner={planner_shared.get('selected_owner')} "
+                f"native_work_units={planner_shared.get('native_work_units')} "
+                f"actions={actions or 'none'}"
+            )
+        if adapter_shared:
+            evidence_outputs = ",".join(str(item) for item in adapter_shared.get("evidence_outputs", [])) if isinstance(adapter_shared.get("evidence_outputs"), list) else ""
+            recovery_surfaces = ",".join(str(item) for item in adapter_shared.get("recovery_surfaces", [])) if isinstance(adapter_shared.get("recovery_surfaces"), list) else ""
+            print(
+                "adapter_shared_contract: "
+                f"family={adapter_shared.get('adapter_family')} "
+                f"kind={adapter_shared.get('agent_kind')} "
+                f"default_path={adapter_shared.get('default_path')} "
+                f"boundary={adapter_shared.get('operating_boundary')} "
+                f"comparison_mode={adapter_shared.get('comparison_mode')} "
+                f"hot_plug_supported={adapter_shared.get('hot_plug_supported')} "
+                f"approval_required={adapter_shared.get('approval_required')} "
+                f"evidence_outputs={evidence_outputs or 'none'} "
+                f"recovery_surfaces={recovery_surfaces or 'none'}"
+            )
+    learning_consumption = payload.get("learning_consumption_ready")
+    if learning_consumption is None and isinstance(evidence_summary, dict):
+        learning_consumption = bool(evidence_summary.get("native_task_proof"))
+    print(f"learning_consumption: {'yes' if learning_consumption else 'no'}")
 
 
 def print_context_packet_summary(payload: dict[str, object]) -> None:
