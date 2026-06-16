@@ -209,6 +209,29 @@ def test_changed_file_compliance_recommends_hook_install_without_blocking_tmp_re
     assert ".agent_orchestrator/hooks.json" in compliance["checked_files"]
 
 
+def test_blocked_session_guidance_prefers_clarify_scope_recovery(tmp_path, monkeypatch) -> None:
+    session = _session(
+        status="blocked",
+        compliance={},
+        jobs_root=tmp_path / "jobs",
+    )
+    session.gaps = []
+    session.resume = SimpleNamespace(linked_execution_run_id="run-1")
+    session.structured_brief = SimpleNamespace(provider_recommendation={})
+    monkeypatch.setattr(
+        "agent_orchestrator.planning_support._linked_execution_clarify_pause",
+        lambda _payload: {"selected_strategy": "clarify_then_edit", "pause_reason": "planner_control_surface"},
+    )
+
+    guidance = build_session_guidance(session)
+
+    assert guidance.primary_action == "clarify"
+    assert guidance.resume_action == "clarify"
+    assert guidance.resume_reason == "clarify_scope"
+    assert guidance.block_detail == "clarify_scope"
+    assert "clarify_scope" in guidance.recovery_actions
+
+
 def test_compliance_warns_when_decision_docs_are_missing(tmp_path) -> None:
     _write_module(
         tmp_path,
@@ -526,3 +549,37 @@ def test_session_guidance_inspects_execution_after_completion() -> None:
     assert guidance.block_source is None
     assert guidance.recommended_commands == ["python -m agent_orchestrator.cli team inspect-execution plan-123"]
     assert guidance.recovery_actions == []
+
+
+def test_session_guidance_surfaces_planner_clarify_pause_for_blocked_execution() -> None:
+    session = _session(status="blocked", linked_execution_run_id="run-123")
+    session.governance_snapshot = {
+        "linked_execution_payload": {
+            "payload": {
+                "pending_approval": None,
+                "strategy_summary": {"selected_execution_strategy": "clarify_then_edit"},
+                "action_selection_trace": [
+                    {"action_type": "pause", "source": "planner_control_surface"}
+                ],
+                "repair_summary": {
+                    "recovery_recommendation": {
+                        "action": "clarify_scope",
+                        "reason": "planner_control_surface",
+                    }
+                },
+            }
+        }
+    }
+
+    guidance = build_session_guidance(session)
+
+    assert guidance.primary_action == "clarify"
+    assert guidance.resume_action == "clarify"
+    assert guidance.resume_reason == "clarify_scope"
+    assert guidance.block_source == "execution_run"
+    assert guidance.block_detail == "clarify_scope"
+    assert guidance.recommended_commands == [
+        'python -m agent_orchestrator.cli team chat plan-123 --message "clarify the missing scope for approved execution"',
+        "python -m agent_orchestrator.cli team inspect-execution plan-123",
+    ]
+    assert guidance.recovery_actions == ["inspect_execution", "clarify"]

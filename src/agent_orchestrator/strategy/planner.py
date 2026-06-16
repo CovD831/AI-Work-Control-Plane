@@ -88,6 +88,7 @@ class CompatibilityStrategyPlanner:
                 planner_family="compatibility",
                 native_work_units=False,
                 legacy_candidate_count=len(getattr(self.expander, "last_candidates", [])),
+                candidates=compatibility_candidates,
             ),
             operating_boundary=route.operating_boundary if route is not None else "fallback_governed",
             selection_reason=route.selection_reason if route is not None else "Compatibility planner maintained the current execution path.",
@@ -114,17 +115,15 @@ class NativeStrategyPlanner:
     ) -> ExecutionPlan:
         strategy = _select_native_strategy(contract, policy, route=route)
         reasons = _strategy_reasons(strategy, contract, policy, route=route)
-        legacy_work_units = self.expander.decompose(contract, policy)
         work_units = _native_work_units(strategy=strategy, contract=contract, policy=policy, route=route)
         candidates = _native_candidates(strategy=strategy, contract=contract, route=route)
         compatibility_metadata = {
             "legacy_decompose_used": False,
-            "legacy_candidate_count": len(getattr(self.expander, "last_candidates", [])),
             "task_type": contract.task_type,
             "native_planner": True,
-            "legacy_reference_only": True,
+            "planner_contract_source": "native_work_units",
+            "planner_independence_status": "native_first_contract_authoritative",
             "native_work_unit_count": len(work_units),
-            "legacy_reference_work_unit_count": len(legacy_work_units),
         }
         plan = ExecutionPlan(
             strategy=strategy,
@@ -141,8 +140,8 @@ class NativeStrategyPlanner:
                 route=route,
                 planner_family="native",
                 native_work_units=True,
-                legacy_candidate_count=len(getattr(self.expander, "last_candidates", [])),
-                legacy_reference_work_units=legacy_work_units,
+                legacy_candidate_count=0,
+                candidates=candidates,
             ),
             operating_boundary=route.operating_boundary if route is not None else "native_preferred",
             selection_reason=route.selection_reason if route is not None else "Native planner selected the default bounded coding path.",
@@ -186,9 +185,12 @@ def _select_native_strategy(
     *,
     route: TaskRouterResult | None,
 ) -> ExecutionStrategy:
+    scope_posture = _native_scope_posture(contract, route=route)
     if route and route.task_kind == TaskKind.MIGRATION and route.risk_level == "high":
         return ExecutionStrategy.EXTERNAL_HANDOFF
     if route and route.requires_human_confirmation:
+        return ExecutionStrategy.NEED_HUMAN_CONFIRMATION
+    if scope_posture["approval_boundary_unknown"]:
         return ExecutionStrategy.NEED_HUMAN_CONFIRMATION
     if route and route.task_kind == TaskKind.INVESTIGATION:
         return ExecutionStrategy.EXPLORE_THEN_EDIT
@@ -196,13 +198,58 @@ def _select_native_strategy(
         return ExecutionStrategy.MIGRATION_GUARDED
     if route and route.task_kind == TaskKind.DOCS:
         return ExecutionStrategy.DOCS_SYNC
-    if route and route.clarify_policy == ClarifyPolicy.DEEP:
+    if scope_posture["needs_clarify"] and route and route.clarify_policy == ClarifyPolicy.DEEP:
         return ExecutionStrategy.CLARIFY_THEN_EDIT
+    if scope_posture["needs_clarify"]:
+        return ExecutionStrategy.CLARIFY_THEN_EDIT
+    if scope_posture["needs_explore"]:
+        return ExecutionStrategy.EXPLORE_THEN_EDIT
     if route and route.scope_confidence == "medium":
         return ExecutionStrategy.EXPLORE_THEN_EDIT
     if contract.risk_level == "high" and route and route.risk_level == "high":
         return ExecutionStrategy.EXTERNAL_HANDOFF
     return ExecutionStrategy.DIRECT_EDIT
+
+
+def _native_scope_posture(contract: TaskContract, *, route: TaskRouterResult | None) -> dict[str, object]:
+    target_scope_count = len(contract.target_scope)
+    actionable_unknown_slots = [
+        slot
+        for slot in contract.unknown_slots
+        if slot not in {"user_intent_summary", "task_type"}
+    ]
+    approval_boundary_unknown = "approval_boundary" in actionable_unknown_slots
+    unknown_slot_count = len(contract.unknown_slots)
+    actionable_unknown_slot_count = len(actionable_unknown_slots)
+    route_scope_confidence = route.scope_confidence if route is not None else None
+    route_clarify_policy = route.clarify_policy if route is not None else None
+    route_requires_confirmation = route.requires_human_confirmation if route is not None else False
+
+    needs_clarify = bool(
+        route_requires_confirmation
+        or actionable_unknown_slot_count > 0
+        or route_clarify_policy == ClarifyPolicy.DEEP
+        or (route_scope_confidence == "low" and target_scope_count == 0)
+    )
+    needs_explore = bool(
+        not needs_clarify
+        and (
+            route_scope_confidence == "medium"
+            or target_scope_count == 0
+            or contract.task_type in {"investigation", "docs"}
+        )
+    )
+    return {
+        "target_scope_count": target_scope_count,
+        "unknown_slot_count": unknown_slot_count,
+        "actionable_unknown_slots": actionable_unknown_slots,
+        "actionable_unknown_slot_count": actionable_unknown_slot_count,
+        "approval_boundary_unknown": approval_boundary_unknown,
+        "route_scope_confidence": route_scope_confidence,
+        "route_clarify_policy": route_clarify_policy.value if route_clarify_policy is not None else None,
+        "needs_clarify": needs_clarify,
+        "needs_explore": needs_explore,
+    }
 
 
 def _strategy_reasons(
@@ -262,26 +309,138 @@ def _native_candidates(
     contract: TaskContract,
     route: TaskRouterResult | None,
 ) -> list[StrategyCandidate]:
-    primary = StrategyCandidate(
-        strategy=strategy,
-        score=max(len(contract.acceptance_criteria), 1),
-        selected=True,
-        reasons=_planner_actions_for_strategy(strategy),
-        metadata={
-            "planner_family": "native",
-            "task_type": contract.task_type,
-            "route_task_kind": route.task_kind.value if route is not None else None,
-        },
-    )
-    fallback_strategy = ExecutionStrategy.EXPLORE_THEN_EDIT if strategy != ExecutionStrategy.EXPLORE_THEN_EDIT else ExecutionStrategy.DIRECT_EDIT
-    fallback = StrategyCandidate(
-        strategy=fallback_strategy,
-        score=max(len(contract.inputs), 1),
-        selected=False,
-        reasons=_planner_actions_for_strategy(fallback_strategy),
-        metadata={"planner_family": "native", "fallback_candidate": True},
-    )
-    return [primary, fallback]
+    native_scope_posture = _native_scope_posture(contract, route=route)
+    selected_actions = _planner_actions_for_strategy(strategy)
+    route_task_kind = route.task_kind.value if route is not None else None
+    route_risk_level = route.risk_level if route is not None else None
+
+    candidate_specs: list[tuple[ExecutionStrategy, int, list[str], dict[str, object]]] = [
+        (
+            strategy,
+            max(len(contract.acceptance_criteria), 1) + len(selected_actions),
+            selected_actions,
+            {
+                "planner_family": "native",
+                "task_type": contract.task_type,
+                "route_task_kind": route_task_kind,
+                "selected_candidate": True,
+            },
+        )
+    ]
+
+    if strategy != ExecutionStrategy.DIRECT_EDIT:
+        candidate_specs.append(
+            (
+                ExecutionStrategy.DIRECT_EDIT,
+                max(len(contract.target_scope), 1) + 1,
+                _planner_actions_for_strategy(ExecutionStrategy.DIRECT_EDIT),
+                {
+                    "planner_family": "native",
+                    "task_type": contract.task_type,
+                    "route_task_kind": route_task_kind,
+                    "reason": "native_default_edit_path",
+                },
+            )
+        )
+
+    if native_scope_posture["needs_explore"] or strategy in {
+        ExecutionStrategy.EXPLORE_THEN_EDIT,
+        ExecutionStrategy.INVESTIGATION_ONLY,
+        ExecutionStrategy.DOCS_SYNC,
+        ExecutionStrategy.CLARIFY_THEN_EDIT,
+    }:
+        candidate_specs.append(
+            (
+                ExecutionStrategy.EXPLORE_THEN_EDIT,
+                max(len(contract.inputs), 1) + int(native_scope_posture["needs_explore"]),
+                _planner_actions_for_strategy(ExecutionStrategy.EXPLORE_THEN_EDIT),
+                {
+                    "planner_family": "native",
+                    "task_type": contract.task_type,
+                    "route_task_kind": route_task_kind,
+                    "reason": "scope_needs_exploration",
+                },
+            )
+        )
+
+    if native_scope_posture["needs_clarify"] or route is not None and route.requires_human_confirmation:
+        candidate_specs.append(
+            (
+                ExecutionStrategy.CLARIFY_THEN_EDIT,
+                max(len(contract.unknown_slots), 1) + int(native_scope_posture["needs_clarify"]),
+                _planner_actions_for_strategy(ExecutionStrategy.CLARIFY_THEN_EDIT),
+                {
+                    "planner_family": "native",
+                    "task_type": contract.task_type,
+                    "route_task_kind": route_task_kind,
+                    "reason": "native_scope_requires_clarification",
+                },
+            )
+        )
+
+    if native_scope_posture["approval_boundary_unknown"] or (route is not None and route.requires_human_confirmation):
+        candidate_specs.append(
+            (
+                ExecutionStrategy.NEED_HUMAN_CONFIRMATION,
+                len(contract.unknown_slots) + len(contract.constraints) + 2,
+                _planner_actions_for_strategy(ExecutionStrategy.NEED_HUMAN_CONFIRMATION),
+                {
+                    "planner_family": "native",
+                    "task_type": contract.task_type,
+                    "route_task_kind": route_task_kind,
+                    "reason": "approval_boundary_needs_human_confirmation",
+                },
+            )
+        )
+
+    if route is not None and route_risk_level == "high" and strategy != ExecutionStrategy.EXTERNAL_HANDOFF:
+        candidate_specs.append(
+            (
+                ExecutionStrategy.EXTERNAL_HANDOFF,
+                len(contract.constraints) + len(contract.unknown_slots) + 3,
+                _planner_actions_for_strategy(ExecutionStrategy.EXTERNAL_HANDOFF),
+                {
+                    "planner_family": "native",
+                    "task_type": contract.task_type,
+                    "route_task_kind": route_task_kind,
+                    "reason": "risk_exceeds_native_bounded_path",
+                },
+            )
+        )
+
+    candidates: list[StrategyCandidate] = []
+    seen_strategies: set[ExecutionStrategy] = set()
+    for candidate_strategy, score, reasons, metadata in candidate_specs:
+        if candidate_strategy in seen_strategies:
+            continue
+        seen_strategies.add(candidate_strategy)
+        candidates.append(
+            StrategyCandidate(
+                strategy=candidate_strategy,
+                score=score,
+                selected=candidate_strategy == strategy,
+                reasons=list(reasons),
+                metadata=metadata,
+            )
+        )
+
+    if strategy not in seen_strategies:
+        candidates.insert(
+            0,
+            StrategyCandidate(
+                strategy=strategy,
+                score=max(len(contract.acceptance_criteria), 1) + len(selected_actions),
+                selected=True,
+                reasons=list(selected_actions),
+                metadata={
+                    "planner_family": "native",
+                    "task_type": contract.task_type,
+                    "route_task_kind": route_task_kind,
+                    "selected_candidate": True,
+                },
+            ),
+        )
+    return candidates
 
 
 def _native_work_units(
@@ -423,10 +582,17 @@ def _decision_evidence(
     planner_family: str,
     native_work_units: bool,
     legacy_candidate_count: int,
+    candidates: list[StrategyCandidate] | None = None,
     legacy_reference_work_units: list[WorkUnit] | None = None,
 ) -> dict[str, object]:
     legacy_reference = legacy_reference_work_units or []
     planner_actions = _planner_actions_for_strategy(strategy)
+    tool_workflow_plan = _tool_workflow_plan(
+        strategy=strategy,
+        planner_family=planner_family,
+        selected_actions=planner_actions,
+    )
+    route_planner_intent = route.planner_intent if route is not None and isinstance(route.planner_intent, dict) else {}
     selected_owner = "external" if strategy == ExecutionStrategy.EXTERNAL_HANDOFF else "native"
     pause_expected = strategy in {
         ExecutionStrategy.MIGRATION_GUARDED,
@@ -436,11 +602,87 @@ def _decision_evidence(
     selected_executor = "external" if selected_owner == "external" else "native"
     ready_next_units = _planner_ready_next_units(strategy=strategy, contract=contract)
     blocked_units = _planner_blocked_units(strategy=strategy, route=route)
+    native_scope_posture = _native_scope_posture(contract, route=route)
     required_handoff_artifacts = (
         ["handoff_packet", "risk_summary"]
         if strategy == ExecutionStrategy.EXTERNAL_HANDOFF
         else ["repo_evidence", "verification_status"]
     )
+    action_priority = {action: index for index, action in enumerate(planner_actions)}
+    planner_reasoning = {
+        "primary_action": planner_actions[0] if planner_actions else None,
+        "candidate_count": len(candidates) if candidates else 0,
+        "selected_candidate_count": len([candidate for candidate in candidates or [] if candidate.selected]),
+        "native_first": planner_family == "native",
+        "requires_clarify": "clarify" in planner_actions,
+        "requires_pause": pause_expected or "approval_pause" in planner_actions,
+        "requires_handoff": "handoff_external" in planner_actions,
+        "requires_fallback": "fallback_external" in planner_actions,
+        "requires_explore": "explore" in planner_actions,
+        "requires_edit": "edit" in planner_actions,
+        "requires_verify": "verify" in planner_actions,
+        "reason_source": "native_strategy" if planner_family == "native" else "compatibility_strategy",
+    }
+    autonomy_actions = {
+        "explore": {
+            "selected": "explore" in planner_actions,
+            "priority_index": action_priority.get("explore"),
+            "source": "native_strategy" if planner_family == "native" else "compatibility_strategy",
+        },
+        "clarify": {
+            "selected": "clarify" in planner_actions,
+            "priority_index": action_priority.get("clarify"),
+            "source": "route_planner_intent" if bool(route_planner_intent.get("clarify")) else "native_strategy" if planner_family == "native" else "compatibility_strategy",
+        },
+        "edit": {
+            "selected": "edit" in planner_actions,
+            "priority_index": action_priority.get("edit"),
+            "source": "native_strategy" if planner_family == "native" else "compatibility_strategy",
+        },
+        "verify": {
+            "selected": "verify" in planner_actions,
+            "priority_index": action_priority.get("verify"),
+            "source": "native_strategy" if planner_family == "native" else "compatibility_strategy",
+        },
+        "pause": {
+            "selected": pause_expected or "approval_pause" in planner_actions,
+            "priority_index": action_priority.get("approval_pause"),
+            "source": "route_planner_intent" if bool(route_planner_intent.get("pause")) else "strategy_guardrail",
+        },
+        "handoff": {
+            "selected": "handoff_external" in planner_actions,
+            "priority_index": action_priority.get("handoff_external"),
+            "source": "route_planner_intent" if bool(route_planner_intent.get("handoff")) else "strategy_guardrail",
+        },
+        "fallback": {
+            "selected": "fallback_external" in planner_actions,
+            "priority_index": action_priority.get("fallback_external"),
+            "source": "route_planner_intent" if bool(route_planner_intent.get("fallback")) else "strategy_guardrail",
+        },
+    }
+    control_surface = {
+        "format": "agent_orchestrator.native_planner_control_surface.v1"
+        if planner_family == "native"
+        else "agent_orchestrator.compatibility_planner_control_surface.v1",
+        "planner_family": planner_family,
+        "decision_mode": "native_first_autonomous" if planner_family == "native" else "compatibility_guided",
+        "continue_native": strategy not in {
+            ExecutionStrategy.EXTERNAL_HANDOFF,
+            ExecutionStrategy.NEED_HUMAN_CONFIRMATION,
+        },
+        "clarify": bool(planner_actions[:1] == ["clarify"]),
+        "pause": bool(pause_expected or "approval_pause" in planner_actions),
+        "handoff": bool("handoff_external" in planner_actions),
+        "fallback": bool("fallback_external" in planner_actions),
+        "resume_posture": (
+            "approval_pause"
+            if "approval_pause" in planner_actions
+            else "handoff"
+            if "handoff_external" in planner_actions
+            else "continue_native"
+        ),
+        "next_recommended_action": planner_actions[0] if planner_actions else "inspect",
+    }
     return {
         "format": "agent_orchestrator.native_planner_decision.v1" if planner_family == "native" else "agent_orchestrator.compatibility_planner_decision.v1",
         "planner_family": planner_family,
@@ -452,15 +694,41 @@ def _decision_evidence(
             "risk_level": contract.risk_level,
             "scope_hint_count": len(contract.target_scope),
             "unknown_slot_count": len(contract.unknown_slots),
+            "native_scope_posture": native_scope_posture,
             "route_task_kind": route.task_kind.value if route is not None else None,
             "route_risk_level": route.risk_level if route is not None else None,
             "route_scope_confidence": route.scope_confidence if route is not None else None,
             "requires_human_confirmation": route.requires_human_confirmation if route is not None else False,
+            "route_planner_intent": dict(route_planner_intent),
         },
-        "decision_candidates": [
+        "decision_candidates": [candidate.strategy.value for candidate in candidates] if candidates else [
             strategy.value,
             ExecutionStrategy.EXPLORE_THEN_EDIT.value if strategy != ExecutionStrategy.EXPLORE_THEN_EDIT else ExecutionStrategy.DIRECT_EDIT.value,
         ],
+        "decision_candidate_evidence": [
+            {
+                "strategy": candidate.strategy.value,
+                "selected": candidate.selected,
+                "score": candidate.score,
+                "reasons": list(candidate.reasons),
+                "metadata": dict(candidate.metadata),
+            }
+            for candidate in candidates
+        ]
+        if candidates
+        else [],
+        "autonomy_boundary": {
+            "primary_action": planner_reasoning["primary_action"],
+            "requires_clarify": planner_reasoning["requires_clarify"],
+            "requires_pause": planner_reasoning["requires_pause"],
+            "requires_handoff": planner_reasoning["requires_handoff"],
+            "requires_fallback": planner_reasoning["requires_fallback"],
+            "requires_explore": planner_reasoning["requires_explore"],
+            "requires_edit": planner_reasoning["requires_edit"],
+            "requires_verify": planner_reasoning["requires_verify"],
+            "native_first": planner_reasoning["native_first"],
+        },
+        "planner_reasoning": planner_reasoning,
         "posture": {
             "explore_first": "explore" in planner_actions,
             "clarify_first": planner_actions[:1] == ["clarify"],
@@ -468,7 +736,28 @@ def _decision_evidence(
             "pause_expected": pause_expected or "approval_pause" in planner_actions,
             "handoff_expected": "handoff_external" in planner_actions,
             "fallback_expected": "fallback_external" in planner_actions,
+            "native_scope_posture": native_scope_posture,
+            "route_intent_alignment": {
+                "explore": bool(route_planner_intent.get("explore")) == ("explore" in planner_actions),
+                "clarify": bool(route_planner_intent.get("clarify")) == ("clarify" in planner_actions),
+                "edit": bool(route_planner_intent.get("edit")) == ("edit" in planner_actions),
+                "verify": bool(route_planner_intent.get("verify")) == ("verify" in planner_actions),
+                "pause": bool(route_planner_intent.get("pause")) == (pause_expected or "approval_pause" in planner_actions),
+                "handoff": bool(route_planner_intent.get("handoff")) == ("handoff_external" in planner_actions),
+            },
         },
+        "autonomy_surface": {
+            "format": "agent_orchestrator.native_planner_autonomy_surface.v1"
+            if planner_family == "native"
+            else "agent_orchestrator.compatibility_planner_autonomy_surface.v1",
+            "planner_family": planner_family,
+            "decision_mode": "native_first_autonomous" if planner_family == "native" else "compatibility_guided",
+            "selected_action_count": len(planner_actions),
+            "actions": autonomy_actions,
+            "primary_action": planner_actions[0] if planner_actions else None,
+        },
+        "control_surface": control_surface,
+        "tool_workflow_plan": tool_workflow_plan,
         "program_posture": {
             "program_goal": contract.goal,
             "active_milestone": ready_next_units[0] if ready_next_units else contract.goal,
@@ -503,8 +792,86 @@ def _decision_evidence(
             "clarify_pause_state": planner_actions[:1] == ["clarify"],
         },
         "native_work_units": native_work_units,
+        "planner_independence": {
+            "format": "agent_orchestrator.native_planner_independence.v1"
+            if planner_family == "native"
+            else "agent_orchestrator.compatibility_planner_independence.v1",
+            "native_first_contract_authoritative": planner_family == "native",
+            "legacy_reference_used": bool(legacy_reference),
+            "legacy_candidate_count": legacy_candidate_count,
+            "native_work_units": native_work_units,
+            "native_autonomy_boundary": {
+                "primary_action": planner_reasoning["primary_action"],
+                "requires_clarify": planner_reasoning["requires_clarify"],
+                "requires_pause": planner_reasoning["requires_pause"],
+                "requires_handoff": planner_reasoning["requires_handoff"],
+                "requires_fallback": planner_reasoning["requires_fallback"],
+                "requires_explore": planner_reasoning["requires_explore"],
+                "requires_edit": planner_reasoning["requires_edit"],
+                "requires_verify": planner_reasoning["requires_verify"],
+            },
+        },
         "legacy_candidate_count": legacy_candidate_count,
         "legacy_reference_work_unit_goals": [unit.goal for unit in legacy_reference[:3]],
+    }
+
+
+def _tool_workflow_plan(
+    *,
+    strategy: ExecutionStrategy,
+    planner_family: str,
+    selected_actions: list[str],
+) -> dict[str, object]:
+    stage_tools = {
+        "explore": {
+            "required_tools": ["repo_map", "find_files", "search", "outline", "read"],
+            "workflow_rationale": "Repository exploration should bound file discovery before mutation.",
+        },
+        "edit": {
+            "required_tools": ["patch_preview", "structured_patch", "diff_preview"],
+            "workflow_rationale": "Governed mutation should preserve pre-apply and post-apply change evidence.",
+        },
+        "verify": {
+            "required_tools": ["verify", "tool_trace"],
+            "workflow_rationale": "Verification should preserve executable closure evidence and observable trace output.",
+        },
+    }
+    selected_action_set = {str(item) for item in selected_actions if isinstance(item, str) and item}
+    workflow_stages: dict[str, object] = {}
+    daily_driver_tools: list[str] = []
+    for stage_name in ("explore", "edit", "verify"):
+        config = stage_tools[stage_name]
+        selected = stage_name in selected_action_set
+        workflow_stages[stage_name] = {
+            "selected": selected,
+            "required_tools": list(config["required_tools"]),
+            "workflow_rationale": config["workflow_rationale"],
+            "projection_required": selected,
+        }
+        if selected:
+            for tool_name in config["required_tools"]:
+                if tool_name not in daily_driver_tools:
+                    daily_driver_tools.append(tool_name)
+    return {
+        "format": "agent_orchestrator.native_tool_workflow_plan.v1"
+        if planner_family == "native"
+        else "agent_orchestrator.compatibility_tool_workflow_plan.v1",
+        "planner_family": planner_family,
+        "selected_strategy": strategy.value,
+        "workflow_stage_order": [stage for stage in ("explore", "edit", "verify") if stage in selected_action_set],
+        "workflow_stages": workflow_stages,
+        "daily_driver_path": {
+            "tools": daily_driver_tools,
+            "selected_stage_count": len([stage for stage in workflow_stages.values() if stage.get("selected") is True]),
+        },
+        "workflow_projection_required": True,
+        "shared_evidence_surface": [
+            "runtime_payload",
+            "workspace_index",
+            "ui_execution_summary",
+            "cli_execution_summary",
+            "evidence_report",
+        ],
     }
 
 

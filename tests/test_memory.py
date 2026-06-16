@@ -113,3 +113,5 @@ def test_router_can_consume_native_learning_assets(tmp_path) -> None:
     result = router.route("Investigate why the queue stalls and summarize the root cause.")
 
     assert result.default_path == "native"
+    assert result.learning_consumed is True
+    assert result.native_coverage_class == "investigation_to_edit_verify"

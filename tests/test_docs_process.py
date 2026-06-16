@@ -106,6 +106,73 @@ def test_native_closure_docs_are_canonical_and_define_baseline_contract() -> Non
     assert "no, not yet" in closure_audit
 
 
+def test_goal_mode_coding_agent_execution_docs_define_completion_contract() -> None:
+    project_index = _repo_text("docs/process/project-index.md")
+    goal_summary = _repo_text("docs/process/goal-mode-coding-agent-execution-summary.md")
+    goal_detail = _repo_text("docs/process/goal-mode-coding-agent-execution.md")
+    goal_audit = _repo_text("docs/process/goal-mode-coding-agent-execution-closure-audit.md")
+
+    assert "docs/process/goal-mode-coding-agent-execution-summary.md" in project_index
+    assert "docs/process/goal-mode-coding-agent-execution.md" in project_index
+    assert "docs/process/goal-mode-coding-agent-execution-closure-audit.md" in project_index
+
+    assert "P0 Execution Loop" in goal_summary
+    assert "P1 Editing And Verification" in goal_summary
+    assert "P2 Recovery And Approval" in goal_summary
+    assert "P3 Operator Visibility" in goal_summary
+    assert "goal-mode-coding-agent-execution.md" in goal_summary
+
+    assert "Global Stopping Criteria" in goal_detail
+    assert "Phase Acceptance Criteria" in goal_detail
+    assert "Anti-Local-Optimum Guardrail" in goal_detail
+    assert "File-Level Verification Targets" in goal_detail
+    assert "Required Verification Evidence" in goal_detail
+
+    assert "P0 Execution Loop" in goal_audit
+    assert "P1 Editing And Verification" in goal_audit
+    assert "P2 Recovery And Approval" in goal_audit
+    assert "P3 Operator Visibility" in goal_audit
+    assert "Status: `strongly evidenced`" in goal_audit
+    assert "Current conclusion: `complete for this goal`" in goal_audit
+    assert "team.execute(..., execution_mode=\"native\")" in goal_audit
+    assert "resume_from_state" in goal_audit
+    assert "agent_orchestrator.execution_fact_chain.v1" in goal_audit
+    assert "test_team_resume_can_complete_native_execution_after_both_approvals" in goal_audit
+    assert "test_team_resume_command_can_complete_native_execution_after_both_approvals" in goal_audit
+    assert "test_dashboard_resume_session_can_complete_native_execution_after_both_approvals" in goal_audit
+    assert "test_workspace_index_records_execution_artifact_summary_from_coding_runtime" in goal_audit
+    assert "The answer is:" in goal_audit
+    assert "`yes`" in goal_audit
+
+
+def test_native_agent_coverage_expansion_docs_pin_benchmark_and_recovery_semantics() -> None:
+    summary = _repo_text("docs/process/goal-mode-native-agent-coverage-expansion-summary.md")
+    detail = _repo_text("docs/process/goal-mode-native-agent-coverage-expansion.md")
+    audit = _repo_text("docs/process/goal-mode-native-agent-coverage-expansion-closure-audit.md")
+
+    assert "investigation_to_edit_verify" in summary
+    assert "multi_file_helper_or_compliance_repair" in summary
+    assert "comparative_acceptance_bundle_ready" in summary
+    assert "learning_consumed" in summary
+    assert "exploration_ambiguity_or_scope_drift" in summary
+    assert "continue/inspect" in summary
+    assert "scope_realign" in summary
+    assert "fallback/handoff" in summary
+
+    assert "success rate" in detail or "success rate" in detail.lower()
+    assert "blocked rate" in detail
+    assert "verification cost" in detail
+    assert "human intervention frequency" in detail
+
+    assert "P0 Native Default Coverage Expansion" in audit
+    assert "P1 Comparative Benchmark And Coverage Evidence" in audit
+    assert "P2 Recovery Breadth Hardening" in audit
+    assert "P3 Learning Asset Consumption Loop" in audit
+    assert "Current conclusion: `complete for this goal`" in audit
+    assert "governed_fallback_hot_plug_preserved" in audit
+    assert "learning assets are consumed in a real router decision" in audit
+
+
 def test_long_cycle_plan_declares_auto_continue_protocol() -> None:
     text = Path("docs/process/长周期主执行计划.md").read_text(encoding="utf-8")
 
@@ -131,12 +198,49 @@ def test_control_plane_artifact_contracts_document_stable_formats() -> None:
     assert "agent_orchestrator.workspace_state.v1" in text
     assert "agent_orchestrator.context_packet.v1" in text
     assert "agent_orchestrator.strategy_decision.v1" in text
-    assert "agent_orchestrator.execution_topology_snapshot.v1" in text
     assert "agent_orchestrator.approval_item.v1" in text
     assert "agent_orchestrator.evidence_bundle.v1" in text
     assert "agent_orchestrator.provider_evidence_summary.v1" in text
     assert "agent_orchestrator.governance_bundle.v1" in text
     assert "agent_orchestrator.governance_bundle_inspection.v1" in text
+    assert "native_tool_workflow_surface" in text
+    assert "native_tool_productization_surface" in text
+    assert "adapter_productization_surface" in text
+    assert "comparative_native_tool_summary" in text
+    assert "comparative_adapter_summary" in text
+    assert "comparative_daily_driver_summary" in text
+    assert "comparative_completion_summary" in text
+    assert "session_productization_surface" in text
+    assert "workflow_continuity" in text
+    assert "operator_posture_digest" in text
+    assert "clarify_boundary_digest" in text
+    assert "session_planner_decision" in text
+    assert "session_continuity_outline" in text
+    assert "comparative_session_posture_summary" in text
+    assert "comparative_session_continuity_summary" in text
+    assert "workflow_resume_ready" in text
+    assert "workflow_projection_visible" in text
+    assert "autonomy_posture" in text
+    assert "resume_expectation" in text
+    assert "resume_posture" in text
+    assert "session_posture_cases" in text
+    assert "productization_case_count" in text
+    assert "continuity_snapshot" in text
+    assert "compacted_context_summary" in text
+    assert "recovery_contract" in text
+    assert "shared_contract_alignment" in text
+    assert "shared_productization_contract_ready" in text
+    assert "daily_driver_main_path_ready" in text
+    assert "comparison_posture_basis" in text
+    assert "comparison_proof_strength" in text
+    assert "daily_driver_repeatability_tier" in text
+    assert "independent_daily_driver_repo_task_families_proven" in text
+    assert "external_comparison_harness_surface" in text
+    assert "stronger_task_families" in text
+    assert "repo_task_acceptance_families_proven" in text
+    assert "daily_driver_repo_task_families_proven" in text
+    assert "broader_repeatability_gap_families" in text
+    assert "Evidence comparison or trend surfaces" in text
     assert "Unknown fields must be ignored" in text
 
 
@@ -146,6 +250,32 @@ def test_release_readiness_mentions_provider_evidence_summary() -> None:
     assert "agent_orchestrator.provider_evidence_summary.v1" in text
     assert "agent_orchestrator.governance_bundle.v1" in text
     assert "without claiming provider session ownership" in text
+
+
+def test_evidence_freeze_docs_require_trend_proof_strength_visibility() -> None:
+    checklist = _repo_text("docs/process/v1-candidate-release-checklist.md")
+    freeze_plan = _repo_text("docs/process/v1-candidate-freeze-plan.md")
+    phase_plan = _repo_text("docs/process/v1x-upgrade-phase-plan.md")
+    trend = _repo_text("docs/process/v1x-evidence-trend.md")
+    hardening = _repo_text("docs/process/v1x-hardening-workflow-report.md")
+    artifact_refresh = _repo_text("docs/process/ai-work-control-plane-real-task-dogfood-phase-3-artifact-refresh.md")
+    runbook = _repo_text("docs/process/agent-team-operator-runbook.md")
+
+    assert "Comparative Proof Strength" in checklist
+    assert "Comparative Proof Strength" in freeze_plan
+    assert "Comparative Proof Strength" in phase_plan
+    assert "repeatability posture" in checklist
+    assert "direct-proof and repeatability posture" in freeze_plan
+    assert "proof-strength posture" in phase_plan
+    assert "## Comparative Proof Strength" in trend
+    assert "baseline_direct_proof_status:" in trend
+    assert "current_repeatability_status:" in trend
+    assert "Comparative Proof Strength" in hardening
+    assert "Comparative Proof Strength" in artifact_refresh
+    assert "Comparative Proof Strength" in runbook
+    assert "repeatability posture" in runbook
+    assert "evidence compare" in runbook
+    assert "current_version_assessment" in runbook
 
 
 def test_control_plane_dogfood_evidence_records_real_chain() -> None:
@@ -173,6 +303,45 @@ def test_native_coding_agent_dogfood_evidence_records_task_class_and_three_proof
     assert "agent_orchestrator.native_runtime_closure.v1" in text
     assert "agent_orchestrator.native_repo_task_acceptance.v1" in text
     assert "agent_orchestrator.program_execution_proof.v1" in text
+    assert "native_tool_workflow_surface" in text
+    assert "native_tool_productization_surface" in text
+    assert "adapter_productization_surface" in text
+    assert "comparative_adapter_summary" in text
+    assert "session_productization_surface" in text
+    assert "workflow_continuity" in text
+    assert "operator_posture_digest" in text
+    assert "clarify_boundary_digest" in text
+    assert "session_planner_decision" in text
+    assert "session_continuity_outline" in text
+    assert "comparative_session_posture_summary" in text
+    assert "comparative_session_continuity_summary" in text
+    assert "workflow_resume_ready" in text
+    assert "workflow_projection_visible" in text
+    assert "autonomy_posture" in text
+    assert "resume_expectation" in text
+    assert "resume_posture" in text
+    assert "session_posture_cases" in text
+    assert "productization_case_count" in text
+    assert "continuity_snapshot" in text
+    assert "compacted_context_summary" in text
+    assert "recovery_contract" in text
+    assert "shared_contract_alignment" in text
+    assert "shared_productization_contract_ready" in text
+    assert "session_productization_surface" in text
+    assert "native_tool_usage" in text
+    assert "daily_driver_main_path_ready" in text
+    assert "daily_driver_main_path_ready_cases" in text
+    assert "comparison_posture" in text
+    assert "comparison_posture_basis" in text
+    assert "comparison_proof_strength" in text
+    assert "comparative_daily_driver_summary" in text
+    assert "comparative_completion_summary" in text
+    assert "daily_driver_repeatability_tier" in text
+    assert "independent_daily_driver_repo_task_families_proven" in text
+    assert "stronger_task_families" in text
+    assert "broader_repeatability_gap_families" in text
+    assert "multiple stronger direct-proof families" in text
+    assert "evidence trend reports" in text
     assert "agent_orchestrator.runtime_event_stream.v1" in text
     assert "agent_orchestrator.workspace_index.v1" in text
     assert "agent_orchestrator.recovery_recommendation.v1" in text
@@ -182,6 +351,75 @@ def test_native_coding_agent_dogfood_evidence_records_task_class_and_three_proof
     assert "multi-milestone native program-execution evidence chain" in text
     assert "native-coding-agent-dogfood-evidence.md" in runbook
     assert "native coding-agent dogfood baseline" in process
+
+
+def test_native_agent_productization_goal_summary_mentions_shared_productization_readiness() -> None:
+    text = Path("docs/process/goal-mode-native-agent-productization-summary.md").read_text(encoding="utf-8")
+
+    assert "shared_contract_alignment" in text
+    assert "shared_productization_contract_ready" in text
+    assert "native_tool_workflow_surface" in text
+    assert "native_tool_productization_surface" in text
+    assert "session_planner_decision" in text
+    assert "session_continuity_outline" in text
+    assert "comparative_session_posture_summary" in text
+    assert "autonomy_posture" in text
+    assert "resume_expectation" in text
+    assert "resume_posture" in text
+    assert "session_posture_cases" in text
+    assert "adapter_productization_surface" in text
+    assert "comparative_adapter_summary" in text
+    assert "productization_case_count" in text
+    assert "native_tool_usage" in text
+    assert "daily_driver_main_path_ready" in text
+    assert "comparison_posture" in text
+    assert "comparison_posture_basis" in text
+    assert "comparison_proof_strength" in text
+    assert "stronger_task_families" in text
+    assert "repo_task_acceptance_families_proven" in text
+    assert "daily_driver_repo_task_families_proven" in text
+    assert "broader_repeatability_gap_families" in text
+    assert "broader daily-driver family" in text
+
+
+def test_native_agent_productization_closure_audit_tracks_current_strength_and_remaining_gap() -> None:
+    project_index = _repo_text("docs/process/project-index.md")
+    audit = _repo_text("docs/process/goal-mode-native-agent-productization-closure-audit.md")
+
+    assert "docs/process/goal-mode-native-agent-productization-closure-audit.md" in project_index
+    assert "P0 Native Tool Surface Expansion" in audit
+    assert "P1 Native Planner Independence" in audit
+    assert "P2 Session Productization And Long-Horizon Continuity" in audit
+    assert "P3 Unified Native/External Adapter Ecosystem" in audit
+    assert "File-Level Verification Targets Audit" in audit
+    assert "Required Verification Evidence Audit" in audit
+    assert "src/agent_orchestrator/execution/native_tools.py" in audit
+    assert "tests/test_cli_presenters.py" in audit
+    assert "native_tool_workflow_surface" in audit
+    assert "native_tool_productization_surface" in audit
+    assert "adapter_productization_surface" in audit
+    assert "comparative_adapter_summary" in audit
+    assert "comparative_daily_driver_summary" in audit
+    assert "comparative_completion_summary" in audit
+    assert "session_productization_surface" in audit
+    assert "comparative_session_posture_summary" in audit
+    assert "workflow_continuity" in audit
+    assert "workflow-stage continuity" in audit
+    assert "operator_posture_digest" in Path("docs/process/control-plane-artifact-contracts.md").read_text(encoding="utf-8")
+    assert "workflow_continuity" in Path("docs/process/control-plane-artifact-contracts.md").read_text(encoding="utf-8")
+    assert "workflow_projection_visible" in Path("docs/process/control-plane-artifact-contracts.md").read_text(encoding="utf-8")
+    assert "clarify_boundary_digest" in Path("docs/process/control-plane-artifact-contracts.md").read_text(encoding="utf-8")
+    assert "daily_driver_main_path_ready" in audit
+    assert "comparison_posture" in audit
+    assert "comparison_proof_strength" in audit
+    assert "productization_case_count" in audit
+    assert "multiple stronger direct-proof families proven" in audit
+    assert "multiple stronger direct-proof families exist" in audit
+    assert "six independent daily-driver families" in audit
+    assert "broadly_proven_on_internal_repo_task_slice" in audit
+    assert "Current conclusion: `not yet complete for this goal`" in audit
+    assert "yes, with strong evidence" in audit
+    assert "`no, not yet`" in audit
 
 
 def test_control_plane_reference_rescreen_maps_research_repos_to_new_direction() -> None:

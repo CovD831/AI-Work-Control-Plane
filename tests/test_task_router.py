@@ -23,6 +23,8 @@ def test_task_router_routes_direct_fix_to_legacy_with_light_or_skip_clarify() ->
     assert result.operating_boundary == "native_preferred"
     assert result.selection_reason
     assert result.fallback_reason_code == "native_runtime_unavailable"
+    assert result.planner_intent["edit"] is True
+    assert result.planner_intent["verify"] is True
 
 
 def test_task_router_routes_investigation_requests_to_native_when_learning_assets_exist(tmp_path) -> None:
@@ -44,6 +46,9 @@ def test_task_router_routes_investigation_requests_to_native_when_learning_asset
     assert result.default_path == "native"
     assert result.operating_boundary == "native_preferred"
     assert result.fallback_reason_code == "native_runtime_unavailable"
+    assert result.native_coverage_class == "investigation_to_edit_verify"
+    assert result.learning_consumed is True
+    assert result.learning_source_count >= 1
     assert result.clarify_policy in {ClarifyPolicy.SKIP, ClarifyPolicy.LIGHT, ClarifyPolicy.DEEP}
 
 
@@ -55,7 +60,22 @@ def test_task_router_routes_investigation_requests_to_governed_fallback_without_
     assert result.task_kind == TaskKind.INVESTIGATION
     assert result.default_path == "native"
     assert result.operating_boundary == "native_preferred"
+    assert result.native_coverage_class == "bounded_investigation_followthrough"
+    assert result.learning_consumed is False
     assert result.clarify_policy in {ClarifyPolicy.LIGHT, ClarifyPolicy.DEEP}
+
+
+def test_task_router_routes_multi_file_helper_or_compliance_repair_to_native() -> None:
+    router = TaskRouter()
+
+    result = router.route(
+        "Repair the helper implementation in src/app/helper.py and src/app/compliance.py and update the compliance hook docs."
+    )
+
+    assert result.default_path == "native"
+    assert result.operating_boundary == "native_preferred"
+    assert result.native_coverage_class == "multi_file_helper_or_compliance_repair"
+    assert "helper" in result.selection_reason.lower() or "compliance" in result.selection_reason.lower()
 
 
 def test_task_router_routes_migration_to_deep_clarify_and_confirmation() -> None:
@@ -71,6 +91,8 @@ def test_task_router_routes_migration_to_deep_clarify_and_confirmation() -> None
     assert result.default_path == "external"
     assert result.operating_boundary == "external_preferred"
     assert result.handoff_reason_code == "risk_exceeds_native_bounded_path"
+    assert result.planner_intent["pause"] is True
+    assert result.planner_intent["handoff"] is True
 
 
 def test_task_router_routes_docs_tasks() -> None:

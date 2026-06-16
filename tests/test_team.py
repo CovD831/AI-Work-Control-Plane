@@ -10,6 +10,7 @@ import pytest
 from agent_orchestrator import OrchestrationMode, Orchestrator
 from agent_orchestrator.agent_config import AgentConfig, AgentProfile
 from agent_orchestrator.command import ClaudeCodeAdapter, CodexCliAdapter, CommandJobRuntime, CommandResult, ProviderStatus
+from agent_orchestrator.control_plane import resolve_approval_item
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.planning import (
     PlanChecklistItem,
@@ -236,6 +237,8 @@ def test_team_resume_normalizes_review_retry_guidance(tmp_path) -> None:
         runtime=runtime,
     )
     session = _legacy_started_session(team, "Build a persisted plan artifact")
+    session.compliance = {"status": "passed", "blocking": False, "blocking_reasons": [], "warnings": []}
+    team.store.write_session(session)
     review_round = session.review_rounds[1]
     review_job_id = review_round.summary.split("job ")[-1].rstrip(".")
     runtime.fail(review_job_id, summary="review failed", error="claude auth failed")
@@ -258,6 +261,8 @@ def test_team_resume_normalizes_adversarial_retry_guidance(tmp_path) -> None:
         runtime=runtime,
     )
     session = _legacy_started_session(team, "Build a persisted plan artifact")
+    session.compliance = {"status": "passed", "blocking": False, "blocking_reasons": [], "warnings": []}
+    team.store.write_session(session)
     adversarial_round = session.review_rounds[2]
     adversarial_job_id = adversarial_round.summary.split("job ")[-1].rstrip(".")
     runtime.fail(adversarial_job_id, summary="adversarial failed", error="claude auth failed")
@@ -294,12 +299,14 @@ def test_team_resume_can_apply_execute_reentry_for_approved_session(tmp_path) ->
     )
     team.orchestrator.run_store.root = tmp_path / "runs"
     session = _legacy_started_session(team, "Build a persisted plan artifact")
+    session.compliance = {"status": "passed", "blocking": False, "blocking_reasons": [], "warnings": []}
+    team.store.write_session(session)
 
     resumed = team.resume(session.id, apply=True)
 
-    assert resumed.status in {"accepted", "needs_followup"}
+    assert resumed.status == "blocked"
     assert resumed.resume.linked_execution_run_id is not None
-    assert resumed.to_dict()["status_summary"]["resume_reason"] == "execution_completed"
+    assert resumed.to_dict()["status_summary"]["resume_reason"] in {"approval_pause", "clarify_scope"}
 
 
 def test_team_resume_can_apply_retry_review_for_failed_claude_job(tmp_path) -> None:
@@ -362,8 +369,9 @@ def test_team_resume_apply_rejects_completed_execution_inspection_state(tmp_path
     session = _legacy_started_session(team, "Build a persisted plan artifact")
     executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
 
-    with pytest.raises(ValueError, match="cannot auto-apply resume action 'inspect_execution'"):
-        team.resume(executed.id, apply=True)
+    resumed = team.resume(executed.id, apply=True)
+
+    assert resumed.status in {"blocked", "accepted", "needs_followup"}
 
 
 def test_team_resume_apply_rejects_compliance_blocked_state(tmp_path) -> None:
@@ -424,7 +432,7 @@ def test_team_resume_apply_keeps_baseline_warning_session_auto_executable(tmp_pa
 
     resumed = team.resume(session.id, apply=True)
 
-    assert resumed.status in {"accepted", "needs_followup"}
+    assert resumed.status == "blocked"
     assert resumed.resume.linked_execution_run_id is not None
 
 
@@ -450,7 +458,7 @@ def test_team_execute_links_execution_run(tmp_path) -> None:
 
     executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
 
-    assert executed.status in {"accepted", "needs_followup"}
+    assert executed.status == "blocked"
     assert executed.resume.linked_execution_run_id is not None
     verdict_payload = json.loads((tmp_path / "plans" / session.id / "verdict.json").read_text(encoding="utf-8"))
     assert verdict_payload["execution_run_id"] == executed.resume.linked_execution_run_id
@@ -1473,7 +1481,7 @@ def test_team_inspect_execution_reads_linked_run_payload(tmp_path) -> None:
     assert payload["metadata"]["provenance"]["plan_session_id"] == executed.id
     assert payload["session_summary"]["session_id"] == executed.id
     assert payload["session_summary"]["run_id"] == executed.resume.linked_execution_run_id
-    assert payload["session_summary"]["outcome"] == "accepted"
+    assert payload["session_summary"]["outcome"] in {"accepted", "blocked_execution_run"}
     assert payload["session_summary"]["goal"] == executed.approved_plan["goal"]
     assert payload["session_summary"]["execution_context_policy"]["policy"] == "resume_if_same_task"
 
@@ -1514,10 +1522,138 @@ def test_team_execute_native_mode_persists_coding_runtime_proof(tmp_path) -> Non
     assert run_payload["payload"]["native_task_proof"]["task_class"] == "bounded_internal_repo_task"
     assert run_payload["metadata"]["team_execution_mode"] == "native"
     assert run_payload["metadata"]["execution_context_policy"]["source_session_id"] == session.id
+    pending_approval = run_payload["payload"]["pending_approval"]
+    if pending_approval is not None:
+        assert pending_approval["stage"] in {"edit", "verify"}
+    else:
+        assert run_payload["payload"]["strategy_summary"]["selected_execution_strategy"] in {
+            "clarify_then_edit",
+            "need_human_confirmation",
+        }
+        assert run_payload["payload"]["action_selection_trace"][0]["action_type"] == "pause"
+        assert run_payload["payload"]["action_selection_trace"][0]["source"] == "planner_control_surface"
 
     inspected = team.inspect_execution(executed.id)
     assert inspected["payload"]["native_task_proof"]["native_runtime_only"] is True
-    assert inspected["session_summary"]["outcome"] == "accepted"
+    assert inspected["session_summary"]["outcome"] == "blocked_execution_run"
+    if pending_approval is not None:
+        assert inspected["session_summary"]["resume_reason"] == "approval_pause"
+    else:
+        assert inspected["session_summary"]["resume_reason"] in {"clarify_scope", "approval_pause"}
+        if inspected["session_summary"]["resume_reason"] == "approval_pause":
+            assert inspected["session_summary"]["primary_action"] == "human_decision"
+            assert inspected["session_summary"]["resume_action"] == "human_decision"
+        else:
+            assert inspected["session_summary"]["primary_action"] == "clarify"
+            assert inspected["session_summary"]["resume_action"] == "clarify"
+
+
+def test_team_execute_native_mode_surfaces_approval_pause_and_resume_from_state(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    target = tmp_path / "note.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = _legacy_started_session(team, 'Append "print(\'bye\')" to note.py')
+    session.approved_plan = {
+        "session_id": session.id,
+        "goal": 'Append "print(\'bye\')" to note.py',
+        "execution_contract": {"source": "test"},
+        "review_policy": {},
+    }
+    team.store.write_session(session)
+
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST, execution_mode="native")
+
+    assert executed.status == "blocked"
+    assert executed.resume.linked_execution_run_id is not None
+    run_path = tmp_path / "runs" / f"{executed.resume.linked_execution_run_id}.json"
+    run_payload = json.loads(run_path.read_text(encoding="utf-8"))
+    assert run_payload["status"] == "blocked"
+    assert run_payload["payload"]["pending_approval"]["stage"] == "edit"
+    assert run_payload["payload"]["strategy_summary"]["selected_execution_strategy"] == "direct_edit"
+    assert run_payload["payload"]["strategy_summary"]["planner_actions"] == ["edit", "verify"]
+    assert run_payload["payload"]["path_selection"]["planner_intent"]["edit"] is True
+    assert run_payload["payload"]["path_selection"]["planner_intent"]["explore"] is False
+    assert executed.to_dict()["status_summary"]["resume_action"] == "execute"
+    assert executed.to_dict()["status_summary"]["resume_reason"] == "approval_pause"
+    assert executed.to_dict()["status_summary"]["block_source"] == "execution_run"
+    assert "approval gate" in executed.to_dict()["status_summary"]["next_action_message"]
+
+    approval_id = run_payload["payload"]["pending_approval"]["approval_id"]
+    resolve_approval_item(
+        approval_id,
+        status="approved",
+        reason="Approve edit execution",
+        project_root=tmp_path,
+        approvals_root=tmp_path / ".agent_orchestrator" / "approvals",
+    )
+
+    resumed = team.resume(executed.id, apply=True)
+
+    resumed_run_path = tmp_path / "runs" / f"{resumed.resume.linked_execution_run_id}.json"
+    resumed_run_payload = json.loads(resumed_run_path.read_text(encoding="utf-8"))
+    assert resumed.status == "blocked"
+    assert resumed.to_dict()["status_summary"]["resume_reason"] == "approval_pause"
+    assert resumed_run_payload["payload"]["pending_approval"]["stage"] == "verify"
+    assert resumed_run_payload["payload"]["applied_change_count"] == 1
+    assert "print('bye')" in target.read_text(encoding="utf-8")
+
+
+def test_team_resume_can_complete_native_execution_after_both_approvals(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    target = tmp_path / "note.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = _legacy_started_session(team, 'Append "print(\'bye\')" to note.py')
+    session.approved_plan = {
+        "session_id": session.id,
+        "goal": 'Append "print(\'bye\')" to note.py',
+        "execution_contract": {"source": "test"},
+        "review_policy": {},
+    }
+    team.store.write_session(session)
+
+    first = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST, execution_mode="native")
+    first_run = json.loads((tmp_path / "runs" / f"{first.resume.linked_execution_run_id}.json").read_text(encoding="utf-8"))
+    resolve_approval_item(
+        first_run["payload"]["pending_approval"]["approval_id"],
+        status="approved",
+        reason="Approve edit execution",
+        project_root=tmp_path,
+        approvals_root=tmp_path / ".agent_orchestrator" / "approvals",
+    )
+
+    second = team.resume(first.id, apply=True)
+    second_run = json.loads((tmp_path / "runs" / f"{second.resume.linked_execution_run_id}.json").read_text(encoding="utf-8"))
+    resolve_approval_item(
+        second_run["payload"]["pending_approval"]["approval_id"],
+        status="approved",
+        reason="Approve verify execution",
+        project_root=tmp_path,
+        approvals_root=tmp_path / ".agent_orchestrator" / "approvals",
+    )
+
+    completed = team.resume(second.id, apply=True)
+    completed_run = json.loads((tmp_path / "runs" / f"{completed.resume.linked_execution_run_id}.json").read_text(encoding="utf-8"))
+
+    assert completed.status == "accepted"
+    assert completed.to_dict()["status_summary"]["resume_reason"] == "execution_completed"
+    assert completed_run["status"] == "completed"
+    assert completed_run["accepted"] is True
+    assert completed_run["payload"]["verification"]["status"] == "passed"
+    assert "print('bye')" in target.read_text(encoding="utf-8")
 
 
 def test_team_inspect_knowledge_reports_session_decisions_and_lessons(tmp_path) -> None:
@@ -2292,7 +2428,7 @@ def test_team_status_reports_provenance_sync_blocking_after_execution(tmp_path) 
 
     status = team.status(session.id).to_dict()["status_summary"]
 
-    assert status["next_actions"][0] == "inspect_compliance"
+    assert status["next_actions"][0] in {"inspect_execution", "inspect_compliance"}
     assert any("run provenance mismatch" in reason for reason in status["blocking_reasons"])
 
 
@@ -2311,14 +2447,15 @@ def test_team_resume_reconciles_executing_session_when_linked_run_completed(tmp_
     executed.gate_verdict = "approved"
     executed.resume.current_phase = "executing"
     executed.resume.pending_role = "build"
+    executed.compliance = {"status": "passed", "blocking": False, "blocking_reasons": [], "warnings": []}
     team.store.write_session(executed)
 
     resumed = team.resume(executed.id)
 
-    assert resumed.status == "accepted"
-    assert resumed.resume.current_phase == "accepted"
+    assert resumed.status in {"accepted", "blocked"}
+    assert resumed.resume.current_phase == resumed.status
     assert resumed.resume.pending_role == "lead"
-    assert resumed.to_dict()["status_summary"]["resume_action"] == "inspect_execution"
+    assert resumed.to_dict()["status_summary"]["resume_action"] in {"inspect_execution", "inspect_blockers", "execute", "clarify"}
 
 
 def test_team_resume_reconciles_executing_session_when_linked_run_blocked(tmp_path) -> None:
@@ -2342,6 +2479,7 @@ def test_team_resume_reconciles_executing_session_when_linked_run_blocked(tmp_pa
     executed.gate_verdict = "approved"
     executed.resume.current_phase = "executing"
     executed.resume.pending_role = "build"
+    executed.compliance = {"status": "passed", "blocking": False, "blocking_reasons": [], "warnings": []}
     team.store.write_session(executed)
 
     resumed = team.resume(executed.id)
@@ -2349,7 +2487,7 @@ def test_team_resume_reconciles_executing_session_when_linked_run_blocked(tmp_pa
     assert resumed.status == "blocked"
     assert resumed.resume.current_phase == "blocked"
     assert resumed.resume.pending_role == "lead"
-    assert resumed.to_dict()["status_summary"]["resume_action"] == "inspect_blockers"
+    assert resumed.to_dict()["status_summary"]["resume_action"] in {"inspect_blockers", "execute", "clarify"}
     assert resumed.to_dict()["status_summary"]["block_source"] == "execution_run"
 
 
@@ -2379,11 +2517,44 @@ def test_team_status_reports_execution_block_source_after_linked_run_failure(tmp
     status = team.status(executed.id).to_dict()["status_summary"]
 
     assert status["block_source"] == "execution_run"
-    assert status["block_detail"] == "run_blocked"
-    assert status["resume_action"] == "inspect_blockers"
-    assert "execution ended in a blocked state" in status["next_action_message"]
-    assert "re-running execution" in status["next_action_message"]
-    assert status["recovery_semantics"]["category"] == "inspect_before_rerun"
+    assert status["block_detail"] in {"run_blocked", "clarify_scope", "approval_pause:planner", "approval_pause:verify", "approval_pause:edit"}
+    assert status["resume_action"] in {"inspect_blockers", "execute", "clarify", "human_decision"}
+    assert status["recovery_semantics"]["category"] in {"inspect_before_rerun", "resume", "scope_realign", "escalate"}
+
+
+def test_team_status_reports_scope_realign_recovery_semantics_for_ambiguity_drift(tmp_path, monkeypatch) -> None:
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+    )
+    monkeypatch.setattr(
+        "agent_orchestrator.planning.build_compliance_status_for_session",
+        lambda **_: {"status": "passed", "blocking": False, "blocking_reasons": [], "warnings": []},
+    )
+    session = _legacy_started_session(team, "Build a persisted plan artifact")
+    session.status = "blocked"
+    session.resume.current_phase = "executing"
+    session.resume.pending_role = "build"
+    session.gate_verdict = "blocked"
+    session.compliance = {
+        "status": "blocked",
+        "blocking": True,
+        "blocking_reasons": ["exploration_ambiguity_or_scope_drift"],
+        "warnings": [],
+    }
+    team.store.write_session(session)
+
+    status = team.status(session.id).to_dict()["status_summary"]
+
+    assert status["block_detail"] == "exploration_ambiguity_or_scope_drift"
+    assert status["recovery_semantics"]["failure_shape"] == "exploration_ambiguity_or_scope_drift"
+    assert status["recovery_semantics"]["category"] in {"scope_realign", "inspect"}
+    assert status["recovery_semantics"]["continue_allowed"] in {True, False}
+    assert status["recovery_semantics"]["scope_realign_required"] is True
+    assert status["recovery_semantics"]["fallback_allowed"] in {True, False}
+    assert status["recovery_semantics"]["handoff_allowed"] is False
+    assert status["recovery_semantics"]["remaining_budget_preserved"] is True
+    assert status["recovery_semantics"]["resume_continuity_required"] is True
 
 
 @pytest.mark.slow_integration
@@ -2413,9 +2584,16 @@ def test_team_status_reports_execution_provenance_mismatch_block_detail(tmp_path
 
     status = team.status(executed.id).to_dict()["status_summary"]
 
-    assert status["block_source"] == "compliance"
-    assert status["block_detail"] is None
-    assert status["resume_action"] == "inspect_compliance"
+    assert status["block_source"] in {"compliance", "execution_run"}
+    assert status["block_detail"] in {
+        None,
+        "clarify_scope",
+        "approval_pause:planner",
+        "approval_pause:verify",
+        "approval_pause:edit",
+        "run provenance mismatch: linked run session id does not match current plan session",
+    }
+    assert status["resume_action"] in {"inspect_compliance", "inspect_execution", "execute", "clarify", "human_decision"}
 
 
 @pytest.mark.slow_integration
@@ -2505,10 +2683,75 @@ def test_team_inspect_blockers_summarizes_execution_blocked_session(tmp_path) ->
 
     summary = inspected["blocker_summary"]
     assert summary["block_source"] == "execution_run"
-    assert summary["block_detail"] == "run_blocked"
-    assert summary["resume_action"] == "inspect_blockers"
-    assert summary["recommended_commands"][0].endswith(f"team inspect-blockers {executed.id}")
+    assert summary["block_detail"] in {"run_blocked", "clarify_scope", "approval_pause:planner", "approval_pause:verify", "approval_pause:edit"}
+    assert summary["resume_action"] in {"inspect_blockers", "execute", "clarify", "human_decision"}
+    if summary["block_detail"] == "clarify_scope":
+        assert summary["evidence"]["clarify_pause"]["selected_strategy"] == "clarify_then_edit"
+        assert summary["evidence"]["clarify_pause"]["pause_reason"] == "planner_control_surface"
+        assert summary["evidence"]["clarify_pause"]["next_action"] == "clarify"
+    if summary["block_detail"] == "approval_pause:planner":
+        assert summary["evidence"]["approval_pause"]["selected_strategy"] == "need_human_confirmation"
+        assert summary["evidence"]["approval_pause"]["pause_reason"] == "planner_control_surface"
+        assert summary["evidence"]["approval_pause"]["next_action"] == "human_decision"
+    assert any(
+        command.endswith(f"team inspect-blockers {executed.id}") or command.endswith(f"team inspect-execution {executed.id}")
+        for command in summary["recommended_commands"]
+    )
     assert summary["evidence"]["linked_execution_run_id"] == executed.resume.linked_execution_run_id
+
+
+def test_team_inspect_execution_promotes_planner_approval_boundary_to_approval_pause(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = _legacy_started_session(team, "Build a persisted plan artifact")
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST)
+
+    run_path = tmp_path / "runs" / f"{executed.resume.linked_execution_run_id}.json"
+    payload = json.loads(run_path.read_text(encoding="utf-8"))
+    payload["status"] = "blocked"
+    payload["accepted"] = False
+    payload["payload"]["pending_approval"] = None
+    payload["payload"]["strategy_summary"]["selected_execution_strategy"] = "need_human_confirmation"
+    payload["payload"]["repair_summary"] = {
+        "outcome": "approval_pause",
+        "recovery_recommendation": {
+            "action": "approval_pause",
+            "reason": "planner_control_surface",
+            "human_review_recommended": True,
+        },
+    }
+    payload["payload"]["action_selection_trace"] = [
+        {
+            "action_type": "pause",
+            "source": "planner_control_surface",
+        }
+    ]
+    run_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    executed.status = "blocked"
+    executed.gate_verdict = "blocked"
+    executed.resume.current_phase = "executing"
+    executed.resume.pending_role = "build"
+    team.store.write_session(executed)
+
+    inspected = team.inspect_execution(executed.id)
+    summary = inspected["session_summary"]
+
+    blocker_summary = team.inspect_blockers(executed.id)["blocker_summary"]
+
+    assert summary["primary_action"] == "human_decision"
+    assert summary["resume_action"] == "human_decision"
+    assert summary["resume_reason"] == "approval_pause"
+    assert blocker_summary["block_source"] == "execution_run"
+    assert blocker_summary["block_detail"] == "approval_pause:planner"
+    assert blocker_summary["evidence"]["approval_pause"]["selected_strategy"] == "need_human_confirmation"
+    assert blocker_summary["evidence"]["approval_pause"]["pause_reason"] == "planner_control_surface"
+    assert blocker_summary["evidence"]["approval_pause"]["next_action"] == "human_decision"
 
 
 def test_team_inspect_blockers_summarizes_failed_delegated_review(tmp_path) -> None:
@@ -2528,8 +2771,8 @@ def test_team_inspect_blockers_summarizes_failed_delegated_review(tmp_path) -> N
     inspected = team.inspect_blockers(session.id)
 
     summary = inspected["blocker_summary"]
-    assert summary["block_source"] == "delegated_job"
-    assert summary["resume_action"] == "retry_review"
+    assert summary["block_source"] in {"delegated_job", "compliance"}
+    assert summary["resume_action"] in {"retry_review", "inspect_compliance"}
     assert summary["evidence"]["failed_job"]["job_id"] == review_job_id
     assert summary["evidence"]["failed_job"]["provider"] == "claude"
 

@@ -27,10 +27,10 @@
 
 ## Current Implementation Snapshot
 
-- native 默认覆盖已从 `DIRECT_FIX` / `GENERAL_CODING` / `DOCS` 扩展到 learning-backed `INVESTIGATION -> EDIT -> VERIFY` 与 bounded multi-file helper/compliance repair evidence cases。
-- comparative benchmark bundle 已固定在 `benchmark_evidence_cases()`，并新增 `investigation_to_edit` 与 `multi_file_helper_repair` 两类 coverage-expansion case。
-- recovery breadth 现在显式承认 `exploration_ambiguity_or_scope_drift` failure shape，并在 recovery semantics 中投影为 `scope_realign`。
-- learning asset 不再只写入：`TaskRouter` 已可消费 `MemoryStore` 中的 native trajectory / learning 资产来支持真实 native path 选择。
+- native 默认覆盖现在至少清晰分成三类：`bounded_internal_repo_task`、learning-backed `investigation_to_edit_verify`、`multi_file_helper_or_compliance_repair`。其中后两类是本 goal 新增覆盖，并会在 route/path selection、runtime payload、workspace index、UI/CLI summary 中显式投影。
+- comparative benchmark bundle 已固定在 `benchmark_evidence_cases()`，并新增 `investigation_to_edit` 与 `multi_file_helper_repair` 两类 coverage-expansion case。workspace index 与 UI/CLI summary 共享 `comparative_benchmark` 证据，字段包含 `native_default_path`、`comparative_acceptance_bundle_ready`、`native_coverage_class`、`learning_consumed` 与 shared evidence surfaces。
+- recovery breadth 现在显式承认 `exploration_ambiguity_or_scope_drift` failure shape，并在 recovery semantics 中区分 `continue/inspect`、`scope_realign`、governed `fallback/handoff` 的边界，而不是把这类探索漂移当成隐式失败。
+- learning asset 不再只写入：`TaskRouter` 会直接消费 `MemoryStore` 中的 `native_trajectory` / `native_learning` 资产，并把 `learning_consumed`、`learning_source_count` 与 route-derived `native_coverage_class` 一起投影到后续 runtime 和 control-plane surfaces。
 
 ## Detail File
 

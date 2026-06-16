@@ -57,6 +57,13 @@ class TaskRouter:
             reasons.append("Migration-style work is treated as confirmation-sensitive in Phase 1.")
 
         learning_assets = self._learning_assets(normalized, lowered)
+        learning_consumed = self._learning_hint_supports_native(learning_assets)
+        native_coverage_class = self._native_coverage_class(
+            normalized=normalized,
+            lowered=lowered,
+            task_kind=task_kind,
+            learning_consumed=learning_consumed,
+        )
         clarify_policy = self._clarify_policy(task_kind, ambiguity_level, risk_level, scope_confidence, learning_assets)
         execution_mode = self._execution_mode(task_kind)
         default_path, operating_boundary, selection_reason, handoff_reason_code, fallback_reason_code = self._execution_boundary(
@@ -65,6 +72,7 @@ class TaskRouter:
             risk_level=risk_level,
             requires_human_confirmation=requires_human_confirmation,
             learning_assets=learning_assets,
+            native_coverage_class=native_coverage_class,
             reasons=reasons,
         )
         needs_repo_context = task_kind in {
@@ -89,6 +97,18 @@ class TaskRouter:
             selection_reason=selection_reason,
             handoff_reason_code=handoff_reason_code,
             fallback_reason_code=fallback_reason_code,
+            native_coverage_class=native_coverage_class,
+            learning_consumed=learning_consumed,
+            learning_source_count=self._learning_source_count(learning_assets),
+            planner_intent=self._planner_intent(
+                task_kind=task_kind,
+                clarify_policy=clarify_policy,
+                risk_level=risk_level,
+                scope_confidence=scope_confidence,
+                default_path=default_path,
+                operating_boundary=operating_boundary,
+                requires_human_confirmation=requires_human_confirmation,
+            ),
             reasons=reasons,
         )
 
@@ -96,8 +116,12 @@ class TaskRouter:
         store = self.native_learning_store
         if store is None:
             return {"trajectory_hits": [], "memory_hits": [], "skill_hits": []}
-        trajectory_hits = store.search(normalized, limit=5)
-        memory_hits = store.search(lowered, limit=5)
+        trajectory_hits = store.query(namespace="native_trajectory", limit=5)
+        memory_hits = store.query(namespace="native_learning", limit=5)
+        if not trajectory_hits:
+            trajectory_hits = store.search(normalized, limit=5)
+        if not memory_hits:
+            memory_hits = store.search(lowered, limit=5)
         skill_hits = [record for record in store.query(record_type="memory", limit=5) if "skill" in str(record.get("summary", "")).lower()]
         return {
             "trajectory_hits": trajectory_hits,
@@ -203,6 +227,7 @@ class TaskRouter:
         risk_level: str,
         requires_human_confirmation: bool,
         learning_assets: dict[str, object],
+        native_coverage_class: str | None,
         reasons: list[str],
     ) -> tuple[str, str, str, str | None, str | None]:
         if execution_mode == ExecutionMode.NO_EXECUTION:
@@ -218,10 +243,12 @@ class TaskRouter:
                 reasons.append("Native learning assets point to an established investigation -> edit -> verify path.")
             elif task_kind == TaskKind.INVESTIGATION:
                 reasons.append("Investigation-style work is now covered by the native main path when evidence supports a bounded edit follow-through.")
+            if native_coverage_class == "multi_file_helper_or_compliance_repair":
+                reasons.append("Bounded multi-file helper/compliance repair is covered by the native governed path.")
             return (
                 "native",
                 "native_preferred",
-                "Bounded repository edits, docs-linked updates, and bounded investigation/rewrite tasks default to the native governed path.",
+                self._selection_reason_for_native_class(native_coverage_class, learning_assets),
                 None,
                 "native_runtime_unavailable",
             )
@@ -241,8 +268,95 @@ class TaskRouter:
             "external_runtime_unavailable",
         )
 
+    def _planner_intent(
+        self,
+        *,
+        task_kind: TaskKind,
+        clarify_policy: ClarifyPolicy,
+        risk_level: str,
+        scope_confidence: str,
+        default_path: str,
+        operating_boundary: str,
+        requires_human_confirmation: bool,
+    ) -> dict[str, object]:
+        actions: list[str] = []
+        if task_kind != TaskKind.QUESTION_ONLY and (
+            task_kind in {TaskKind.INVESTIGATION, TaskKind.DOCS}
+            or scope_confidence != "high"
+        ):
+            actions.append("explore")
+        if clarify_policy != ClarifyPolicy.SKIP:
+            actions.append("clarify")
+        if task_kind != TaskKind.QUESTION_ONLY and default_path == "native":
+            actions.append("edit")
+            actions.append("verify")
+        if requires_human_confirmation:
+            actions.append("pause")
+        if operating_boundary == "external_preferred":
+            actions.append("handoff")
+        elif default_path != "native":
+            actions.append("fallback")
+        return {
+            "version": "agent_orchestrator.route_planner_intent.v1",
+            "explore": "explore" in actions,
+            "clarify": "clarify" in actions,
+            "edit": "edit" in actions,
+            "verify": "verify" in actions,
+            "pause": "pause" in actions,
+            "handoff": "handoff" in actions,
+            "fallback": "fallback" in actions,
+            "priority": actions,
+            "native_first": default_path == "native",
+            "requires_confirmation": requires_human_confirmation,
+            "risk_level": risk_level,
+        }
+
     def _learning_hint_supports_native(self, learning_assets: dict[str, object]) -> bool:
         trajectory_hits = learning_assets.get("trajectory_hits", []) if isinstance(learning_assets.get("trajectory_hits"), list) else []
         memory_hits = learning_assets.get("memory_hits", []) if isinstance(learning_assets.get("memory_hits"), list) else []
         skill_hits = learning_assets.get("skill_hits", []) if isinstance(learning_assets.get("skill_hits"), list) else []
         return bool(trajectory_hits or memory_hits or skill_hits)
+
+    def _learning_source_count(self, learning_assets: dict[str, object]) -> int:
+        return sum(
+            len(value)
+            for key, value in learning_assets.items()
+            if key in {"trajectory_hits", "memory_hits", "skill_hits"} and isinstance(value, list)
+        )
+
+    def _native_coverage_class(
+        self,
+        *,
+        normalized: str,
+        lowered: str,
+        task_kind: TaskKind,
+        learning_consumed: bool,
+    ) -> str | None:
+        if task_kind == TaskKind.INVESTIGATION:
+            return "investigation_to_edit_verify" if learning_consumed else "bounded_investigation_followthrough"
+        path_count = len(re.findall(PATH_HINT_PATTERN, normalized))
+        has_helper_signal = "helper" in lowered or "helper implementation" in lowered
+        has_compliance_signal = "compliance" in lowered or "hook" in lowered
+        if task_kind in {TaskKind.DIRECT_FIX, TaskKind.GENERAL_CODING, TaskKind.DOCS} and (
+            path_count >= 2 or has_helper_signal or has_compliance_signal
+        ):
+            return "multi_file_helper_or_compliance_repair"
+        if task_kind in {TaskKind.DIRECT_FIX, TaskKind.GENERAL_CODING, TaskKind.DOCS}:
+            return "bounded_internal_repo_task"
+        return None
+
+    def _selection_reason_for_native_class(
+        self,
+        native_coverage_class: str | None,
+        learning_assets: dict[str, object],
+    ) -> str:
+        learning_backed = self._learning_hint_supports_native(learning_assets)
+        if native_coverage_class == "investigation_to_edit_verify":
+            return "Learning-backed investigation -> edit -> verify work now defaults to the native governed path."
+        if native_coverage_class == "bounded_investigation_followthrough":
+            return "Bounded investigation tasks with an expected edit follow-through default to the native governed path."
+        if native_coverage_class == "multi_file_helper_or_compliance_repair":
+            return "Bounded multi-file helper and compliance-linked repair tasks default to the native governed path."
+        if learning_backed:
+            return "Learning-backed bounded repository work defaults to the native governed path."
+        return "Bounded repository edits, docs-linked updates, and bounded investigation/rewrite tasks default to the native governed path."

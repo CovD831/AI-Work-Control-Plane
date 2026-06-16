@@ -107,6 +107,157 @@ class SessionGuidance:
         }
 
 
+def build_strategy_decision_contract(
+    *,
+    session_id: str,
+    goal: str,
+    requirement: str,
+    status: str,
+    current_checkpoint_objective: str,
+    recommended_action: str | None,
+    primary_reason: str | None,
+    resume_action: str | None,
+    resume_reason: str | None,
+    selected_topology: str | None,
+    topology_reason: str | None,
+    topology_signals: dict[str, object],
+    review_policy: dict[str, object],
+    provider_fallback: dict[str, object],
+    rationale: list[object],
+    risks: list[object],
+    verification_requirements: list[object],
+    ready_next_units: list[object],
+    blocked_units: list[object],
+    selected_executor: str,
+    handoff_reason_code: str | None,
+    fallback_reason_code: str | None,
+    required_handoff_artifacts: list[object],
+    approval_pause_state: object,
+    clarify_pause_state: bool,
+    compliance_blocking: bool,
+    recovery_actions: list[object],
+    extra_fields: dict[str, object] | None = None,
+) -> dict[str, object]:
+    verification_items = [str(item) for item in verification_requirements]
+    route_planner_intent = {
+        "version": "agent_orchestrator.route_planner_intent.v1",
+        "explore": False,
+        "clarify": clarify_pause_state,
+        "edit": recommended_action == "execute" and selected_executor == "native",
+        "verify": any("pytest" in item.lower() for item in verification_items),
+        "pause": bool(approval_pause_state) or bool(blocked_units) or compliance_blocking,
+        "handoff": bool(handoff_reason_code),
+        "fallback": bool(fallback_reason_code),
+        "priority": (
+            ["clarify"]
+            if clarify_pause_state
+            else ["execute", "verify"]
+            if recommended_action == "execute"
+            else [str(recommended_action)]
+            if recommended_action
+            else []
+        ),
+        "native_first": selected_executor == "native",
+        "requires_confirmation": bool(approval_pause_state),
+        "risk_level": topology_signals.get("risk_level"),
+    }
+    adapter_shared_contract = {
+        "format": "agent_orchestrator.adapter_shared_contract.v1",
+        "comparison_mode": "same_contract_two_executors",
+        "default_path": "native" if selected_executor == "native" else "external",
+        "operating_boundary": (
+            "native_preferred"
+            if selected_executor == "native"
+            else "fallback_governed"
+        ),
+        "approval_required": bool(approval_pause_state),
+        "fallback_governed": True,
+        "hot_plug_supported": True,
+        "evidence_outputs": [str(item) for item in required_handoff_artifacts],
+        "recovery_surfaces": ["plan_session", "approval_state", "recovery_timeline"],
+        "path_selection": {
+            "default_path": "native" if selected_executor == "native" else "external",
+            "planner_intent": dict(route_planner_intent),
+            "handoff_reason_code": handoff_reason_code,
+            "fallback_reason_code": fallback_reason_code,
+        },
+    }
+    payload = {
+        "format": "agent_orchestrator.strategy_decision.v1",
+        "session_id": session_id,
+        "goal": goal,
+        "current_checkpoint_objective": current_checkpoint_objective,
+        "next_goal": current_checkpoint_objective,
+        "status": status,
+        "recommended_action": recommended_action,
+        "control_plane_focus": "state_context_strategy_topology_approval_evidence_memory_recovery",
+        "orchestration_horizon": {
+            "short_term": "explicit orchestration solves real local work",
+            "medium_term": "control plane governs orchestration and evidence",
+            "long_term": "models may internalize orchestration while external artifacts remain auditable",
+        },
+        "selected_topology": selected_topology,
+        "topology_reason": topology_reason,
+        "topology_policy": {
+            "task_size": topology_signals.get("subtask_count"),
+            "signals": dict(topology_signals),
+            "review_policy": dict(review_policy),
+            "provider_fallback": dict(provider_fallback),
+        },
+        "recovery_policy": {
+            "resume_action": resume_action,
+            "resume_reason": resume_reason,
+            "recovery_actions": [str(item) for item in recovery_actions],
+            "interruption_aware": True,
+            "execution_gate_authority": "approved_plan_gate",
+            "records_only": True,
+        },
+        "rationale": [str(item) for item in rationale],
+        "risks": [str(item) for item in risks],
+        "verification_requirements": verification_items,
+        "validation_plan": verification_items,
+        "program_posture": {
+            "program_goal": goal or requirement,
+            "active_milestone": current_checkpoint_objective,
+            "completed_milestones": [],
+            "ready_next_units": [str(item) for item in ready_next_units],
+            "blocked_units": [str(item) for item in blocked_units],
+        },
+        "route_planner_intent": route_planner_intent,
+        "delegation_contract": {
+            "selected_executor": selected_executor,
+            "ownership_boundary": topology_reason,
+            "handoff_reason_code": handoff_reason_code,
+            "fallback_reason_code": fallback_reason_code,
+            "required_handoff_artifacts": [str(item) for item in required_handoff_artifacts],
+            "resume_expectation": resume_action,
+        },
+        "adapter_shared_contract": adapter_shared_contract,
+        "program_continuity": {
+            "resume_supported": True,
+            "resume_kind": resume_action,
+            "compaction_stage": None,
+            "continuity_artifact_status": "projected",
+            "latest_recovery_hint": primary_reason,
+        },
+        "milestone_verification": {
+            "verification_status": "pending",
+            "remaining_checks": verification_items,
+            "checkpoint_ready": False,
+        },
+        "operator_control": {
+            "next_recommended_action": recommended_action,
+            "runbook_recovery_lane": resume_reason,
+            "approval_pause_state": approval_pause_state,
+            "clarify_pause_state": clarify_pause_state,
+        },
+        "executes": False,
+    }
+    if extra_fields:
+        payload.update(extra_fields)
+    return payload
+
+
 BLOCK_SOURCES = {"compliance", "delegated_job", "execution_run", "review", "awaiting_human"}
 HEADER_REQUIRED_FIELDS = ("DEPS", "RESPONSIBILITY", "MODULE")
 HEADER_PLACEHOLDER_VALUES = {"待补充", "待确定", "todo", "tbd", "unknown"}
@@ -238,6 +389,7 @@ def build_doc_sync_status_for_project(
     *,
     refresh_results: list[dict[str, object]] | None = None,
     changed_files: list[str] | None = None,
+    plans_root: Path | str | None = None,
 ) -> dict[str, object]:
     required_docs = [
         "README.md",
@@ -318,6 +470,7 @@ def build_doc_sync_status_for_project(
     payload: dict[str, object] = {
         "project_root": str(project_root),
         "jobs_root": jobs_root,
+        "plans_root": str(plans_root) if plans_root is not None else "",
         "required_docs_checked": len(required_docs),
         "missing_docs": missing,
         "stale_docs": stale_docs,
@@ -1538,9 +1691,51 @@ def execution_block_detail(session: PlanSession) -> str | None:
     reasons = [str(item) for item in session.compliance.get("blocking_reasons", [])]
     if any("run provenance mismatch" in reason for reason in reasons):
         return "provenance_mismatch"
+    if reasons:
+        # Surface named blocking reasons so recovery semantics can classify
+        # exploration/scope drift consistently across status consumers.
+        return reasons[0]
     if session.resume.linked_execution_run_id and session.status == "blocked":
         return "run_blocked"
     return None
+
+
+def _linked_execution_clarify_pause(linked_run_payload: dict[str, object]) -> dict[str, str] | None:
+    payload = linked_run_payload.get("payload", {}) if isinstance(linked_run_payload, dict) else {}
+    if not isinstance(payload, dict):
+        return None
+    pending_approval = payload.get("pending_approval")
+    if isinstance(pending_approval, dict):
+        return None
+    repair_summary = payload.get("repair_summary", {})
+    recovery_recommendation = (
+        repair_summary.get("recovery_recommendation", {})
+        if isinstance(repair_summary, dict)
+        else {}
+    )
+    if not isinstance(recovery_recommendation, dict):
+        recovery_recommendation = {}
+    action = str(recovery_recommendation.get("action") or "")
+    action_selection_trace = payload.get("action_selection_trace", [])
+    first_trace = action_selection_trace[0] if isinstance(action_selection_trace, list) and action_selection_trace else {}
+    trace_source = str(first_trace.get("source") or "")
+    trace_action_type = str(first_trace.get("action_type") or "")
+    strategy_summary = payload.get("strategy_summary", {})
+    selected_strategy = (
+        str(strategy_summary.get("selected_execution_strategy") or "")
+        if isinstance(strategy_summary, dict)
+        else ""
+    )
+    if action not in {"clarify_scope", "approval_pause"}:
+        return None
+    if trace_source != "planner_control_surface" or trace_action_type != "pause":
+        return None
+    return {
+        "selected_strategy": selected_strategy
+        or ("need_human_confirmation" if action == "approval_pause" else "clarify_then_edit"),
+        "pause_reason": str(recovery_recommendation.get("reason") or trace_source or "planner_control_surface"),
+        "action": action,
+    }
 
 
 def build_session_guidance(session: PlanSession) -> SessionGuidance:
@@ -1549,6 +1744,18 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
     compliance_warnings = _compliance_warnings(session)
     baseline_warnings = _baseline_compliance_warnings(session)
     delegated_jobs, delegated_job_failed, delegated_job_in_progress, delegated_job_provider = _collect_delegated_jobs(session)
+    linked_run_payload = _linked_execution_run_payload(session)
+    pending_approval = (
+        linked_run_payload.get("payload", {}).get("pending_approval")
+        if isinstance(linked_run_payload.get("payload"), dict)
+        else None
+    )
+    pending_approval_stage = (
+        str(pending_approval.get("stage"))
+        if isinstance(pending_approval, dict) and pending_approval.get("stage") is not None
+        else None
+    )
+    clarify_pause = _linked_execution_clarify_pause(linked_run_payload)
 
     primary_action = "inspect_session"
     primary_reason = "inspect the current session state before continuing"
@@ -1563,6 +1770,16 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
         primary_reason = "execution is in progress; wait for completion or inspect the linked run"
         resume_action = "wait_for_execution"
         resume_reason = "execution_in_progress"
+    elif session.status == "blocked" and isinstance(pending_approval, dict):
+        block_source = "execution_run"
+        block_detail = f"approval_pause:{pending_approval_stage or 'unknown'}"
+        primary_action = "inspect_execution"
+        primary_reason = (
+            "execution is paused on an approval gate; inspect the linked run and resolve the pending approval before resuming"
+        )
+        resume_action = "execute"
+        resume_reason = "approval_pause"
+        recovery_actions = ["inspect_execution"]
     elif session.status == "intake_chat":
         primary_action = "mark_draft_ready"
         primary_reason = "continue chatting with the planning lead until the first draft is ready"
@@ -1584,6 +1801,7 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
         recovery_actions = ["inspect_delegated_job"]
     elif compliance_blocking_reasons:
         block_source = "compliance"
+        block_detail = compliance_blocking_reasons[0]
         primary_action = "inspect_compliance"
         primary_reason = "compliance is blocking the workflow; restore required docs before approval or execution"
         resume_action = "inspect_compliance"
@@ -1674,6 +1892,26 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
         resume_action = "human_decision"
         resume_reason = "human_confirmation_required"
         recovery_actions = ["human_decision"]
+    elif session.status == "blocked" and clarify_pause is not None:
+        block_source = "execution_run"
+        if clarify_pause.get("action") == "approval_pause":
+            block_detail = "approval_pause:planner"
+            primary_action = "human_decision"
+            primary_reason = (
+                "native execution paused on a planner approval boundary; inspect the linked run and provide human confirmation before resuming"
+            )
+            resume_action = "human_decision"
+            resume_reason = "approval_pause"
+            recovery_actions = ["inspect_execution", "human_decision", "resume_native"]
+        else:
+            block_detail = "clarify_scope"
+            primary_action = "clarify"
+            primary_reason = (
+                "native execution paused on a planner clarification boundary; inspect the linked run and clarify the missing scope before resuming"
+            )
+            resume_action = "clarify"
+            resume_reason = "clarify_scope"
+            recovery_actions = ["inspect_execution", "clarify_scope", "resume_native"]
     elif session.status == "blocked":
         primary_action = "inspect_blockers"
         resume_action = "inspect_blockers"
@@ -1686,7 +1924,7 @@ def build_session_guidance(session: PlanSession) -> SessionGuidance:
                 "execution ended in a blocked state; inspect the linked run before changing the plan "
                 "or re-running execution"
             )
-            recovery_actions = ["inspect_blockers", "inspect_execution"]
+            recovery_actions = ["inspect_blockers", "inspect_execution", "handoff_or_fallback"]
             if block_detail == "provenance_mismatch":
                 recovery_actions.append("inspect_compliance")
         else:
@@ -1926,6 +2164,31 @@ def _read_delegated_job_status(session: PlanSession, job_id: str):
         return None
 
 
+def _linked_execution_run_payload(session: PlanSession) -> dict[str, object]:
+    governance_snapshot = getattr(session, "governance_snapshot", None)
+    if isinstance(governance_snapshot, dict):
+        payload = governance_snapshot.get("linked_execution_payload")
+        if isinstance(payload, dict):
+            return payload
+    run_id = getattr(getattr(session, "resume", None), "linked_execution_run_id", None)
+    if not run_id:
+        return {}
+    plans_root = None
+    if isinstance(getattr(session, "doc_sync", None), dict):
+        plans_root = session.doc_sync.get("plans_root")
+    if not plans_root:
+        return {}
+    runs_root = Path(plans_root).parent / "runs"
+    path = runs_root / f"{run_id}.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _delegated_round_family(round_type: str) -> str | None:
     if round_type in {"review", "review_retry"}:
         return "review"
@@ -1951,6 +2214,11 @@ def _resume_guidance_command(session_id: str, action: str) -> str:
         return f"python -m agent_orchestrator.cli team approve {session_id}"
     if action == "execute":
         return f"python -m agent_orchestrator.cli team execute {session_id} --mode success_first"
+    if action == "clarify":
+        return (
+            f"python -m agent_orchestrator.cli team chat {session_id} "
+            '--message "clarify the missing scope for approved execution"'
+        )
     if action == "inspect_execution":
         return f"python -m agent_orchestrator.cli team inspect-execution {session_id}"
     if action == "inspect_blockers":

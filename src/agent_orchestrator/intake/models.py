@@ -47,6 +47,10 @@ class TaskRouterResult:
     selection_reason: str = ""
     handoff_reason_code: str | None = None
     fallback_reason_code: str | None = None
+    native_coverage_class: str | None = None
+    learning_consumed: bool = False
+    learning_source_count: int = 0
+    planner_intent: dict[str, object] = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -64,6 +68,10 @@ class TaskRouterResult:
             "selection_reason": self.selection_reason,
             "handoff_reason_code": self.handoff_reason_code,
             "fallback_reason_code": self.fallback_reason_code,
+            "native_coverage_class": self.native_coverage_class,
+            "learning_consumed": self.learning_consumed,
+            "learning_source_count": self.learning_source_count,
+            "planner_intent": dict(self.planner_intent),
             "reasons": list(self.reasons),
         }
 
