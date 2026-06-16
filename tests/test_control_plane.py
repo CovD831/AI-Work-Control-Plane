@@ -19,6 +19,8 @@ from agent_orchestrator.control_plane import (
     inspect_governance_bundle,
     resolve_approval_item,
 )
+from agent_orchestrator.control_plane_workspace import WorkspaceStateSnapshot, workspace_index_optional_sections
+from agent_orchestrator.evidence import WorkflowEvidenceCase, capture_workflow_evidence
 from agent_orchestrator.execution import CodingAgentExecutionRuntime, ExecutionRequest
 from agent_orchestrator.intake import ClarifyPolicy, ExecutionMode, TaskKind, TaskRouterResult
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
@@ -41,6 +43,7 @@ def _coding_route() -> TaskRouterResult:
         scope_confidence="high",
         needs_repo_context=True,
         requires_human_confirmation=False,
+        native_coverage_class="bounded_internal_repo_task",
         reasons=["control-plane artifact visibility test"],
     )
 
@@ -292,6 +295,9 @@ def test_topology_snapshot_is_read_only_and_links_approval_evidence(tmp_path) ->
     assert payload["strategy_decision"]["executes"] is False
     assert payload["strategy_decision"]["control_plane_focus"] == "state_context_strategy_topology_approval_evidence_memory_recovery"
     assert payload["strategy_decision"]["topology_policy"]["signals"]
+    assert payload["strategy_decision"]["route_planner_intent"]["native_first"] is True
+    assert payload["strategy_decision"]["adapter_shared_contract"]["format"] == "agent_orchestrator.adapter_shared_contract.v1"
+    assert payload["strategy_decision"]["adapter_shared_contract"]["comparison_mode"] == "same_contract_two_executors"
     assert payload["strategy_decision"]["runtime_health"]["records_only"] is True
     assert payload["strategy_decision"]["tool_inventory"]["mutation_policy"].startswith("inventory only")
     assert payload["strategy_decision"]["usage_cost"]["source"] == "placeholder"
@@ -299,6 +305,16 @@ def test_topology_snapshot_is_read_only_and_links_approval_evidence(tmp_path) ->
     assert "selected_executor" in payload["delegation_contract"]
     assert "verification_status" in payload["milestone_verification"]
     assert "next_recommended_action" in payload["operator_control"]
+    assert payload["session_planner_decision"]["format"] == "agent_orchestrator.session_planner_snapshot.v1"
+    assert payload["session_planner_decision"]["autonomy_posture"]["pause_expected"] in {True, False}
+    assert payload["session_planner_decision"]["tool_workflow_plan"]["workflow_projection_required"] in {True, False}
+    assert payload["session_continuity_outline"]["format"] == "agent_orchestrator.session_continuity_outline.v1"
+    assert payload["session_continuity_outline"]["autonomy_posture"]["resume_posture"] in {
+        "fresh_entry",
+        "same_task_resume",
+        "approval_reentry",
+        None,
+    }
     assert payload["evidence_bundle"]["format"] == "agent_orchestrator.evidence_bundle.v1"
 
 
@@ -479,6 +495,8 @@ def test_dogfood_control_plane_pipeline_links_state_context_strategy_approval_ev
     assert topology["run_ledger"]["format"] == "agent_orchestrator.run_ledger.v1"
     assert queue["inbox_summary"]["pending_count"] >= 1
     assert topology["strategy_decision"]["executes"] is False
+    assert topology["strategy_decision"]["route_planner_intent"]["native_first"] is True
+    assert topology["strategy_decision"]["adapter_shared_contract"]["format"] == "agent_orchestrator.adapter_shared_contract.v1"
     assert topology["strategy_decision"]["recovery_policy"]["execution_gate_authority"] == "approved_plan_gate"
     assert evidence["memory_recommendation"]["auto_write"] is False
     assert evidence["memory_recommendation"]["candidates"]
@@ -694,6 +712,15 @@ def test_recovery_recommendation_is_read_only_and_explains_next_step(tmp_path) -
     assert "agent_orchestrator.recovery_timeline.v1" in payload["recoverable_artifact_refs"]
     assert payload["program_posture"]["program_goal"] == "Need a recovery recommendation"
     assert payload["delegation_contract"]["selected_executor"] == "human"
+    assert payload["session_planner_decision"]["format"] == "agent_orchestrator.session_planner_snapshot.v1"
+    assert payload["session_planner_decision"]["autonomy_posture"]["pause_expected"] in {True, False}
+    assert payload["session_continuity_outline"]["format"] == "agent_orchestrator.session_continuity_outline.v1"
+    assert payload["session_continuity_outline"]["autonomy_posture"]["resume_posture"] in {
+        "fresh_entry",
+        "same_task_resume",
+        "approval_reentry",
+        None,
+    }
     assert payload["milestone_verification"]["verification_status"] == "blocked"
     assert payload["operator_control"]["approval_pause_state"] is True
     assert payload["branch_candidates"]
@@ -720,6 +747,7 @@ def test_recovery_recommendation_exposes_ranked_recovery_branches(tmp_path) -> N
     assert all("rationale" in branch for branch in branches)
     assert payload["recovery_search"]["selected_command"] == payload["safest_next_operator_command"]
     assert payload["recovery_search"]["disagreement_level"] in {"low", "medium", "high"}
+    assert payload["session_continuity_outline"]["resume_expectation"] is not None
 
 
 def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(tmp_path) -> None:
@@ -774,22 +802,107 @@ def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(
     assert index["execution_artifact_summary"]["compressed_context"]["objective"] == 'Append "print(\'bye\')" to note.py'
     assert index["execution_artifact_summary"]["context_engineering_contract"]["format"] == "agent_orchestrator.context_engineering_contract.v1"
     assert index["execution_artifact_summary"]["native_tool_surface"]["format"] == "agent_orchestrator.native_tool_surface.v1"
+    assert index["execution_artifact_summary"]["native_tool_surface"]["capability_profile"]["read"]["purpose"] == "bounded file inspection"
+    assert index["execution_artifact_summary"]["native_tool_surface"]["capability_profile"]["diff_preview"]["purpose"] == "governed bounded change preview for operator-visible review"
+    assert index["execution_artifact_summary"]["native_tool_surface"]["workflow_surface"]["daily_driver_path"]["tools"] == [
+        "repo_map",
+        "find_files",
+        "search",
+        "outline",
+        "read",
+        "patch_preview",
+        "structured_patch",
+        "diff_preview",
+        "verify",
+    ]
+    assert index["execution_artifact_summary"]["native_tool_surface"]["daily_driver_readiness"]["repo_exploration_ready"] is True
+    assert index["execution_artifact_summary"]["native_tool_surface"]["daily_driver_readiness"]["glob_ready"] is True
+    assert index["execution_artifact_summary"]["native_tool_surface"]["daily_driver_readiness"]["diff_preview_ready"] is True
+    assert index["execution_artifact_summary"]["native_tool_productization_surface"]["format"] == "agent_orchestrator.native_tool_productization_surface.v1"
+    assert index["execution_artifact_summary"]["native_tool_productization_surface"]["operator_visibility_ready"] is True
+    assert index["execution_artifact_summary"]["native_tool_productization_surface"]["readiness"]["glob_ready"] is True
+    assert index["execution_artifact_summary"]["native_tool_productization_surface"]["readiness"]["structural_outline_ready"] is True
+    assert index["operator_tool_digest"]["format"] == "agent_orchestrator.operator_tool_digest.v1"
+    assert index["operator_tool_digest"]["tooling_posture"] == "daily_driver_ready"
+    assert "repo_map" in index["operator_tool_digest"]["daily_driver_tools"]
+    assert index["operator_planner_digest"]["format"] == "agent_orchestrator.operator_planner_digest.v1"
+    assert index["operator_planner_digest"]["primary_action"]
+    assert index["operator_planner_digest"]["selected_executor"] == "native"
+    assert index["operator_planner_digest"]["next_recommended_action"]
+    assert index["execution_artifact_summary"]["native_tool_workflow_surface"]["edit"]["tools"] == [
+        "patch_preview",
+        "structured_patch",
+        "diff_preview",
+    ]
     assert index["execution_artifact_summary"]["native_tool_usage"]["trace_count"] >= 1
+    assert index["execution_artifact_summary"]["compacted_context_summary"]["objective"] == 'Append "print(\'bye\')" to note.py'
+    assert index["execution_artifact_summary"]["compacted_context_summary"]["compaction_stage"] in {"full_fidelity", "light_compaction", "observation_masking", "summarization_ready"}
     assert index["execution_artifact_summary"]["native_exploration"]["candidate_path_count"] >= 1
     assert index["execution_artifact_summary"]["native_exploration"]["exploration_profile"]["candidate_reason"] in {
         "explicit_existing_paths",
         "search_matches",
         "repo_map_fallback",
     }
+    assert index["execution_artifact_summary"]["native_exploration"]["exploration_evidence"]["format"] == "agent_orchestrator.native_exploration_evidence.v1"
+    assert "workspace_index" in index["execution_artifact_summary"]["native_exploration"]["exploration_evidence"]["shared_evidence_surface"]
+    assert "outline_projection" in index["execution_artifact_summary"]["native_exploration"]["exploration_evidence"]["shared_evidence_surface"]
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["comparison_mode"] == "same_contract_two_executors"
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["hot_plug_supported"] is True
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["default_path"] == "native"
+    assert "workspace_index" in index["execution_artifact_summary"]["adapter_shared_contract"]["shared_evidence_surface"]
+    assert index["execution_artifact_summary"]["adapter_shared_contract"]["operator_visibility_contract"]["tool_surface_required"] is True
+    assert index["execution_artifact_summary"]["adapter_shared_contract"]["tooling_contract"]["workflow_projection_required"] is True
+    assert index["execution_artifact_summary"]["adapter_shared_contract"]["recovery_contract"]["fallback_allowed"] is True
+    assert index["execution_artifact_summary"]["adapter_shared_contract"]["operator_recovery_surface"]["default_recovery_lane"] == "approval_pause"
+    assert index["execution_artifact_summary"]["adapter_productization_surface"]["format"] == "agent_orchestrator.adapter_productization_surface.v1"
+    assert index["execution_artifact_summary"]["adapter_productization_surface"]["surface_status"] == "same_contract_two_executors_governed"
+    assert index["execution_artifact_summary"]["adapter_productization_surface"]["resume_contract_supported"] is True
+    assert index["execution_artifact_summary"]["adapter_productization_surface"]["operator_recovery_surface"]["default_recovery_lane"] == "approval_pause"
+    assert index["execution_artifact_summary"]["shared_productization_surface"]["format"] == "agent_orchestrator.shared_productization_surface.v1"
+    assert index["execution_artifact_summary"]["shared_productization_surface"]["shared_productization_contract_ready"] is True
+    assert index["execution_artifact_summary"]["shared_productization_surface"]["contract_readiness"]["session_ready"] is True
+    assert index["execution_artifact_summary"]["shared_productization_surface"]["contract_readiness"]["tool_ready"] is True
+    assert index["execution_artifact_summary"]["shared_productization_surface"]["contract_readiness"]["adapter_ready"] is True
+    assert index["execution_artifact_summary"]["shared_productization_surface"]["contract_readiness"]["planner_ready"] is True
+    assert index["execution_artifact_summary"]["shared_productization_surface"]["native_tool_workflow_surface"]["daily_driver_path"]["tools"] == [
+        "repo_map",
+        "find_files",
+        "search",
+        "outline",
+        "read",
+        "patch_preview",
+        "structured_patch",
+        "diff_preview",
+        "verify",
+    ]
     assert index["execution_artifact_summary"]["session_continuity"]["resume_supported"] is True
     assert index["execution_artifact_summary"]["session_continuity"]["resume_kind"] in {None, "fresh", "approval_resume"}
+    assert index["execution_artifact_summary"]["session_continuity"]["resume_contract"]["resume_supported"] is True
+    assert index["execution_artifact_summary"]["session_continuity"]["resume_contract"]["continuity_snapshot"]["format"] == "agent_orchestrator.session_continuity_snapshot.v1"
+    assert index["execution_artifact_summary"]["session_continuity"]["resume_contract"]["program_posture"]["program_goal"]
+    assert index["execution_artifact_summary"]["resume_contract"]["native_tool_usage"]["trace_count"] >= 1
+    assert "find_files" in index["execution_artifact_summary"]["native_complex_repo_task_acceptance"]["complex_task_checks"]["native_exploration_trace_visible"]["evidence"]["explored_tools"]
     assert index["execution_artifact_summary"]["session_continuity"]["long_horizon_posture"]["resume_ready"] is True
+    assert index["execution_artifact_summary"]["session_continuity"]["long_horizon_posture"]["resume_posture"] in {
+        "fresh_entry",
+        "same_task_resume",
+        "approval_reentry",
+    }
+    assert "workspace_index" in index["execution_artifact_summary"]["session_continuity"]["shared_evidence_surface"]
+    assert index["execution_artifact_summary"]["session_continuity"]["continuity_snapshot"]["format"] == "agent_orchestrator.session_continuity_snapshot.v1"
+    assert index["execution_artifact_summary"]["session_continuity"]["session_productization_surface"]["format"] == "agent_orchestrator.session_productization_surface.v1"
+    assert index["execution_artifact_summary"]["session_continuity"]["session_productization_surface"]["continuity_readiness"]["resume_ready"] is True
+    assert index["execution_artifact_summary"]["session_continuity"]["comparative_benchmark_digest"]["external_harness_status"] == (
+        "missing_authoritative_opencode_harness"
+    )
+    assert index["execution_artifact_summary"]["session_continuity"]["session_productization_surface"]["comparative_benchmark_digest"]["external_harness_status"] == (
+        "missing_authoritative_opencode_harness"
+    )
     assert index["execution_artifact_summary"]["session_continuity"]["program_posture"]["program_goal"]
     assert "active_milestone" in index["execution_artifact_summary"]["session_continuity"]["program_posture"]
     assert "selected_executor" in index["execution_artifact_summary"]["session_continuity"]["delegation_contract"]
+    assert index["execution_artifact_summary"]["session_continuity"]["program_continuity"]["long_chain_native_first_ready"] is False
+    assert index["execution_artifact_summary"]["session_continuity"]["program_continuity"]["closure_strength"] == "runtime_closure_only"
     assert "verification_status" in index["execution_artifact_summary"]["session_continuity"]["milestone_verification"]
     assert "next_recommended_action" in index["execution_artifact_summary"]["session_continuity"]["operator_control"]
     assert index["execution_artifact_summary"]["runtime_cost"]["usage_cost_measurement_status"] == "placeholder"
@@ -803,15 +916,266 @@ def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(
     ]
     assert index["execution_artifact_summary"]["native_task_proof"]["format"] == "agent_orchestrator.native_task_proof.v1"
     assert index["execution_artifact_summary"]["native_task_proof"]["native_runtime_only"] is True
+    assert index["execution_artifact_summary"]["planner_decision"]["format"] == "agent_orchestrator.session_planner_snapshot.v1"
+    assert index["execution_artifact_summary"]["planner_decision"]["autonomy_posture"]["pause_expected"] in {True, False}
+    assert index["execution_artifact_summary"]["planner_closure_posture"]["format"] == "agent_orchestrator.planner_closure_posture.v1"
+    assert index["execution_artifact_summary"]["planner_closure_posture"]["closure_mode"] in {
+        "verify",
+        "continue_native",
+        "planner_complete",
+        "approval_pause",
+        "handoff",
+        "fallback",
+    }
+    assert "next_recommended_action" in index["execution_artifact_summary"]["planner_closure_posture"]
+    assert index["execution_artifact_summary"]["continuity_outline"]["format"] == "agent_orchestrator.session_continuity_outline.v1"
+    assert index["execution_artifact_summary"]["continuity_outline"]["autonomy_posture"]["resume_posture"] in {
+        "fresh_entry",
+        "same_task_resume",
+        "approval_reentry",
+        None,
+    }
+    assert index["execution_artifact_summary"]["planner_shared_contract"]["format"] == "agent_orchestrator.native_planner_decision.v1"
+    assert index["execution_artifact_summary"]["planner_shared_contract_summary"]["decision_candidates"]
+    assert index["execution_artifact_summary"]["planner_shared_contract_summary"]["decision_boundary"]["risk_level"]
+    assert index["execution_artifact_summary"]["planner_shared_contract_summary"]["selected_executor"] == "native"
+    assert "edit" in index["execution_artifact_summary"]["planner_shared_contract_summary"]["route_planner_intent"]["priority"]
+    assert index["execution_artifact_summary"]["planner_shared_contract_summary"]["autonomy_surface"]["format"] == "agent_orchestrator.native_planner_autonomy_surface.v1"
+    assert index["execution_artifact_summary"]["planner_shared_contract_summary"]["autonomy_surface"]["actions"]["edit"]["selected"] is True
+    assert index["execution_artifact_summary"]["planner_shared_contract_summary"]["planner_reasoning"]["native_first"] is True
+    assert index["execution_artifact_summary"]["planner_shared_contract_summary"]["autonomy_boundary"]["requires_edit"] is True
+    assert index["execution_artifact_summary"]["planner_shared_contract_summary"]["planner_reasoning"]["requires_verify"] is True
     assert index["execution_artifact_summary"]["native_repo_task_acceptance"]["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
     assert index["execution_artifact_summary"]["native_repo_task_acceptance"]["real_repo_task_acceptance_ready"] is False
     assert index["execution_artifact_summary"]["native_complex_repo_task_acceptance"]["format"] == "agent_orchestrator.native_complex_repo_task_acceptance.v1"
     assert index["execution_artifact_summary"]["native_complex_repo_task_acceptance"]["complex_repo_task_ready"] is False
+    assert index["execution_artifact_summary"]["adapter_capability_surface"]["format"] == "agent_orchestrator.adapter_capability_surface.v1"
+    assert index["execution_artifact_summary"]["adapter_capability"]["format"] == "agent_orchestrator.adapter_capability_surface.v1"
+    assert index["execution_artifact_summary"]["adapter_capability"]["comparison_mode"] == "same_contract_two_executors"
+    assert "workspace_index" in index["execution_artifact_summary"]["adapter_capability_surface"]["shared_evidence_surface"]
+    assert "ui_execution_summary" in index["execution_artifact_summary"]["adapter_capability"]["shared_evidence_surface"]
+    assert index["execution_fact_chain"]["format"] == "agent_orchestrator.execution_fact_chain.v1"
+    assert index["execution_fact_chain"]["objective"] == 'Append "print(\'bye\')" to note.py'
+    assert index["execution_fact_chain"]["resume_supported"] is True
+    assert index["execution_fact_chain"]["task_class"] == "bounded_internal_repo_task"
+    assert "ui.operator_summary.execution_fact_chain" in index["execution_fact_chain"]["shared_surface_refs"]
     assert index["comparative_benchmark"]["format"] == "agent_orchestrator.comparative_benchmark_summary.v1"
     assert index["comparative_benchmark"]["native_default_path"] is True
+    assert index["comparative_benchmark"]["comparative_acceptance_bundle_ready"] is True
+    assert index["comparative_benchmark"]["native_coverage_class"] == "bounded_internal_repo_task"
     assert index["comparative_benchmark"]["native_complex_repo_task_acceptance_ready"] is False
+    assert index["comparative_benchmark"]["long_chain_native_first_ready"] is False
+    assert index["comparative_benchmark"]["daily_driver_main_path_ready"] is False
+    assert index["comparative_benchmark"]["daily_driver_readiness"]["shared_productization_ready"] is True
+    assert index["comparative_benchmark"]["daily_driver_readiness"]["open_product_gap"] == "long_chain_repo_closure_not_yet_proven"
+    assert index["comparative_benchmark"]["comparison_posture"]["status"] == "shared_productization_ready_but_daily_driver_proof_gap_remaining"
+    assert index["comparative_benchmark"]["comparison_posture"]["foundation_gap_remaining"] is False
+    assert "platform_breadth" in index["comparative_benchmark"]["comparison_posture"]["remaining_gap_classes"]
+    assert index["comparative_benchmark"]["comparison_posture_basis"]["shared_productization_contract_ready"] is True
+    assert index["comparative_benchmark"]["comparison_posture_basis"]["daily_driver_main_path_ready"] is False
+    assert index["comparative_benchmark"]["comparison_posture_basis"]["planner_candidate_surface_ready"] is True
+    assert index["comparative_benchmark"]["comparison_posture_basis"]["unified_adapter_contract_ready"] is True
+    assert "shared_contract_alignment" in index["comparative_benchmark"]["comparison_posture_basis"]["basis_surface_refs"]
+    assert "planner_candidate_surface_ready" in index["comparative_benchmark"]["comparison_posture_basis"]["basis_surface_refs"]
+    assert "unified_adapter_contract_ready" in index["comparative_benchmark"]["comparison_posture_basis"]["basis_surface_refs"]
+    assert "session_productization_surface" in index["comparative_benchmark"]["shared_evidence_surface"]
+    assert "native_tool_productization_surface" in index["comparative_benchmark"]["shared_evidence_surface"]
+    assert "adapter_productization_surface" in index["comparative_benchmark"]["shared_evidence_surface"]
+    assert "planner_autonomy_boundary" in index["comparative_benchmark"]["shared_evidence_surface"]
+    assert "planner_reasoning" in index["comparative_benchmark"]["shared_evidence_surface"]
+    assert index["comparative_benchmark"]["comparison_proof_strength"]["direct_proof_status"] == "foundational_productization_only"
+    assert index["comparative_benchmark"]["comparison_proof_strength"]["repeatability_ready"] is False
+    assert index["comparative_benchmark"]["comparison_proof_strength"]["planner_candidate_status"] == "native_first_candidate_surface_ready"
+    assert index["comparative_benchmark"]["comparison_proof_strength"]["adapter_unification_status"] == "same_contract_adapter_surface_ready"
+    assert index["comparative_benchmark"]["comparison_grade_assessment"]["status"] == "internal_productization_ready_but_repeatability_or_external_gap_remaining"
+    assert index["comparative_benchmark"]["comparison_grade_assessment"]["comparison_grade_ready"] is False
+    assert index["comparative_benchmark"]["comparison_grade_assessment"]["external_harness_ready"] is False
+    assert index["comparative_benchmark"]["comparison_grade_assessment"]["external_comparison_harness_surface"]["format"] == "agent_orchestrator.external_comparison_harness_surface.v1"
+    assert index["comparative_benchmark"]["external_comparison_harness_surface"]["harness_status"] == "missing_authoritative_opencode_harness"
+    assert index["comparative_benchmark"]["external_comparison_harness_surface"]["operator_action"] == "maintain_human_audit_until_external_harness_ready"
+    assert index["comparative_daily_driver_benchmark"] is None
+    assert index["comparative_benchmark"]["shared_contract_alignment"]["session_continuity_ready"] is True
+    assert index["comparative_benchmark"]["shared_contract_alignment"]["planner_evidence_ready"] is True
+    assert index["comparative_benchmark"]["shared_contract_alignment"]["adapter_contract_ready"] is True
+    assert index["comparative_benchmark"]["shared_contract_alignment"]["native_tool_usage_ready"] is True
+    assert index["comparative_benchmark"]["shared_productization_contract_ready"] is True
     assert "workspace_index" in index["comparative_benchmark"]["shared_evidence_surface"]
+    assert "adapter_shared_contract" in index["comparative_benchmark"]["shared_evidence_surface"]
     assert "cli_execution_summary" in index["comparative_benchmark"]["shared_evidence_surface"]
+    assert index["comparative_benchmark_digest"]["native_default_path"] is True
+    assert index["comparative_benchmark_digest"]["case_count"] == 1
+    assert index["comparative_benchmark_digest"]["productization_case_count"] == 1
+    assert index["comparative_benchmark_digest"]["daily_driver_main_path_ready"] is False
+    assert index["comparative_benchmark_digest"]["daily_driver_main_path_ready_cases"] == 0
+    assert index["comparative_benchmark_digest"]["comparison_status"] == "shared_productization_ready_but_daily_driver_proof_gap_remaining"
+    assert index["comparative_benchmark_digest"]["planner_candidate_surface_ready"] is True
+    assert index["comparative_benchmark_digest"]["planner_candidate_status"] == "native_first_candidate_surface_ready"
+    assert index["comparative_benchmark_digest"]["unified_adapter_contract_ready"] is True
+    assert index["comparative_benchmark_digest"]["adapter_unification_status"] == "same_contract_adapter_surface_ready"
+    assert index["comparative_benchmark_digest"]["evidence_scope"] == "bounded_internal_evidence_only"
+    assert index["comparative_benchmark_digest"]["direct_proof_status"] == "foundational_productization_only"
+    assert index["comparative_benchmark_digest"]["repeatability_status"] == "not_yet_proven"
+    assert index["comparative_benchmark_digest"]["stronger_task_families"] == []
+    assert index["comparative_benchmark_digest"]["repo_task_acceptance_families_proven"] == []
+    assert index["comparative_benchmark_digest"]["repo_task_acceptance_family_count"] is None
+    assert index["comparative_benchmark_digest"]["daily_driver_repo_task_families_proven"] == []
+    assert index["comparative_benchmark_digest"]["daily_driver_repo_task_family_count"] == 0
+    assert index["comparative_benchmark_digest"]["session_posture_cases"] == 1
+    assert index["comparative_benchmark_digest"]["comparison_grade_status"] == "internal_productization_ready_but_repeatability_or_external_gap_remaining"
+    assert index["comparative_benchmark_digest"]["comparison_grade_ready"] is False
+    assert index["comparative_benchmark_digest"]["external_harness_ready"] is False
+    assert index["comparative_benchmark_digest"]["external_harness_status"] == "missing_authoritative_opencode_harness"
+    assert index["comparative_planner_closure_summary"]["format"] == "agent_orchestrator.comparative_planner_closure_summary.v1"
+    assert index["comparative_planner_closure_summary"]["closure_mode"]
+    assert "mode=" in index["comparative_planner_closure_summary"]["summary"]
+    assert index["comparative_planner_autonomy_summary"]["format"] == "agent_orchestrator.comparative_planner_autonomy_summary.v1"
+    assert index["comparative_planner_autonomy_summary"]["native_first"] is True
+    assert index["comparative_planner_autonomy_summary"]["autonomy_boundary"]["requires_edit"] is True
+    assert index["comparative_planner_autonomy_summary"]["planner_reasoning"]["requires_verify"] is True
+    assert index["comparative_planner_candidate_summary"]["format"] == "agent_orchestrator.comparative_planner_candidate_summary.v1"
+    assert index["comparative_planner_candidate_summary"]["native_first"] is True
+    assert index["comparative_planner_candidate_summary"]["selected_strategy"]
+    assert index["comparative_planner_candidate_summary"]["workflow_projection_ready"] is True
+    assert isinstance(index["comparative_planner_candidate_summary"]["decision_candidates"], list)
+    assert index["comparative_planner_candidate_summary"]["action_coverage"]["autonomy_selected_action_count"] >= 1
+    assert index["comparative_benchmark_digest"]["operator_planner_decision_mode"] == "native_first_autonomous"
+    assert index["comparative_benchmark_digest"]["operator_planner_candidate_count"] >= 1
+    assert index["comparative_benchmark_digest"]["planner_candidate_autonomy_selected_action_count"] >= 1
+    assert index["comparative_native_tool_summary"]["format"] == "agent_orchestrator.comparative_native_tool_summary.v1"
+    assert index["comparative_native_tool_summary"]["tooling_posture"] == "daily_driver_ready"
+    assert index["comparative_native_tool_summary"]["verification_ready"] is True
+    assert "repo_map" in index["comparative_native_tool_summary"]["daily_driver_tools"]
+    assert "posture=daily_driver_ready" in index["comparative_native_tool_summary"]["summary"]
+    assert index["comparative_adapter_summary"]["format"] == "agent_orchestrator.comparative_adapter_summary.v1"
+    assert index["comparative_adapter_summary"]["surface_status"] == "same_contract_two_executors_governed"
+    assert index["comparative_adapter_summary"]["hot_plug_supported"] is True
+    assert index["comparative_adapter_summary"]["resume_contract_supported"] is True
+    assert "status=same_contract_two_executors_governed" in index["comparative_adapter_summary"]["summary"]
+    assert index["comparative_session_posture_summary"]["format"] == "agent_orchestrator.comparative_session_posture_summary.v1"
+    assert index["comparative_session_posture_summary"]["pause_expected"] in {True, False}
+    assert index["comparative_session_posture_summary"]["workflow_projection_ready"] in {True, False}
+    assert "primary=" in index["comparative_session_posture_summary"]["summary"]
+    assert index["comparative_session_continuity_summary"]["format"] == "agent_orchestrator.comparative_session_continuity_summary.v1"
+    assert index["comparative_session_continuity_summary"]["resume_supported"] is True
+    assert index["comparative_session_continuity_summary"]["resume_ready"] is True
+    assert index["comparative_session_continuity_summary"]["runtime_cost_ready"] is True
+    assert index["comparative_session_continuity_summary"]["workflow_projection_visible"] in {True, False}
+    assert index["comparative_session_continuity_summary"]["compaction_stage"] in {
+        "full_fidelity",
+        "light_compaction",
+        "observation_masking",
+        "summarization_ready",
+    }
+    assert index["comparative_session_continuity_summary"]["runtime_cost_provenance"]["duration_source"] in {
+        "native_tool_trace",
+        "unavailable",
+    }
+    assert "status=" in index["comparative_session_continuity_summary"]["summary"]
+    assert index["comparative_native_closure_summary"]["format"] == "agent_orchestrator.comparative_native_closure_summary.v1"
+    assert index["comparative_native_closure_summary"]["native_runtime_only"] is True
+    assert index["comparative_native_closure_summary"]["external_coding_agent_required"] is False
+    assert index["comparative_native_closure_summary"]["closure_status"] in {"completed", "blocked"}
+    assert index["comparative_native_closure_summary"]["proof_ready"] in {True, False}
+    assert "native_runtime_only=" in index["comparative_native_closure_summary"]["summary"]
+    assert index["operator_posture_digest"]["format"] == "agent_orchestrator.session_operator_posture_digest.v1"
+    assert index["operator_posture_digest"]["next_recommended_action"]
+    assert index["operator_posture_digest"]["summary"]
+    assert "operator_posture_approval_boundary_active" in index["comparative_benchmark_digest"]
+    assert "session_continuity_approval_boundary_active" in index["comparative_benchmark_digest"]
+    assert "session_continuity_governed_pause_resume_ready" in index["comparative_benchmark_digest"]
+    assert index["comparative_daily_driver_summary"]["format"] == "agent_orchestrator.comparative_daily_driver_summary.v1"
+    assert "status=" in index["comparative_daily_driver_summary"]["summary"]
+    assert index["comparative_benchmark_digest"]["external_harness_next_milestone"] == "authoritative_opencode_case_harness"
+    assert index["comparative_benchmark_digest"]["external_harness_operator_action"] == "maintain_human_audit_until_external_harness_ready"
+    assert index["comparative_benchmark_digest"]["external_harness_required_shared_surface_count"] == 5
+    assert index["comparative_benchmark_digest"]["external_harness_required_external_artifact_count"] == 3
+    assert index["comparative_benchmark_digest"]["external_harness_missing_external_artifact_count"] == 3
+    assert index["comparative_benchmark_digest"]["external_harness_missing_artifacts"] == [
+        "authoritative_opencode_case_harness",
+        "same_contract_executor_comparison",
+        "governed_recovery_and_cost_comparison",
+    ]
+    assert index["comparative_benchmark_digest"]["broader_repeatability_gap_families"] == [
+        "multi_family_daily_driver_repo_tasks"
+    ]
+    assert "clarify_boundary_digest" in index["comparative_benchmark_digest"]["shared_evidence_surface"]
+    assert "approval_boundary_digest" in index["comparative_benchmark_digest"]["shared_evidence_surface"]
+    assert "planner_autonomy_boundary" in index["comparative_benchmark_digest"]["shared_evidence_surface"]
+    assert "planner_reasoning" in index["comparative_benchmark_digest"]["shared_evidence_surface"]
+    assert "workspace_index" in index["comparative_benchmark_digest"]["shared_evidence_surface"]
+
+
+def test_workspace_index_optional_sections_surface_multi_family_daily_driver_benchmark() -> None:
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as d:
+        root = Path(d)
+        write_minimal_process_docs(root)
+        evidence_payload = capture_workflow_evidence(
+            [
+                WorkflowEvidenceCase(
+                    requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and append "team runbook updated" to docs/process/agent-team-operator-runbook.md',
+                    label="repo-task-acceptance",
+                    scenario_type="repo_task_acceptance",
+                ),
+                WorkflowEvidenceCase(
+                    requirement='Replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "hook-based compliance checks updated" to docs/process/agent-orchestrator-implementation-process.md',
+                    label="repo-task-acceptance-compliance",
+                    scenario_type="repo_task_acceptance",
+                ),
+                WorkflowEvidenceCase(
+                    requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "module manifest updated" to docs/process/module-manifest.md',
+                    label="repo-task-acceptance-helper",
+                    scenario_type="repo_task_acceptance",
+                ),
+                WorkflowEvidenceCase(
+                    requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "team runbook updated" to docs/process/agent-team-operator-runbook.md and append "module manifest updated" to docs/process/module-manifest.md and append "hook-based compliance checks updated" to docs/process/agent-orchestrator-implementation-process.md',
+                    label="repo-task-acceptance-long-chain-native-first",
+                    scenario_type="repo_task_acceptance",
+                ),
+                WorkflowEvidenceCase(
+                    requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "root map updated" to docs/process/root-map.md and append "context map updated" to docs/process/context-map.md and append "project index updated" to docs/process/project-index.md and append "native upgrade plan updated" to docs/architecture/native-coding-agent-upgrade-plan.md',
+                    label="repo-task-acceptance-workspace-index-long-chain",
+                    scenario_type="repo_task_acceptance",
+                ),
+                WorkflowEvidenceCase(
+                    requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "artifact contract updated" to docs/process/control-plane-artifact-contracts.md and append "dogfood evidence updated" to docs/process/native-coding-agent-dogfood-evidence.md and append "project index refreshed" to docs/process/project-index.md',
+                    label="repo-task-acceptance-evidence-contract-long-chain",
+                    scenario_type="repo_task_acceptance",
+                ),
+            ],
+            project_root=root,
+        )
+
+        summary = evidence_payload["summary"]
+        snapshot = WorkspaceStateSnapshot(
+            project_root=str(root),
+            plans=[],
+            runs=[],
+            jobs=[],
+            evidence={},
+            approvals=[],
+            provider_health=None,
+            dirty_state={},
+            memory_digest={},
+            external_cache={},
+        )
+        payload = workspace_index_optional_sections(
+            snapshot,
+            artifacts={
+                "execution_artifacts": {
+                    "summary": {
+                        "comparative_benchmark": summary["comparative_benchmark"],
+                        "comparative_benchmark_digest": summary["comparative_benchmark_digest"],
+                    }
+                }
+            },
+        )
+
+        assert (
+            payload["comparative_daily_driver_benchmark"]
+            == "official_catalog=docs/process/evidence-cases.json independent_daily_driver_families=6 status=multi_family_broad_daily_driver_proven"
+        )
 
 
 def test_runtime_event_stream_includes_execution_artifact_refs(tmp_path) -> None:

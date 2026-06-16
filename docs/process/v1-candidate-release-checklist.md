@@ -26,6 +26,7 @@ Use this checklist after the v1.x hardening evidence is current and before calli
 - Regenerate `docs/process/v1x-evidence-trend.md` from a saved baseline/current comparison.
 - Confirm report conclusions cover `planning_quality`, `rescue_quality`, `runtime_limitation`, and `fixed_template_advantage`.
 - Confirm trend output includes `current_version_assessment`, `current_is_better`, improvement signals, and limitation signals.
+- Confirm trend output also includes the `Comparative Proof Strength` section so direct-proof status and repeatability posture changes remain operator-visible.
 
 ## Workflow Regression Evidence
 

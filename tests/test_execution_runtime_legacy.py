@@ -42,6 +42,16 @@ def test_legacy_execution_runtime_runs_sync_requests() -> None:
     assert result.payload["adapter_contract"]["agent_kind"] == "legacy_provider_runtime"
     assert result.payload["adapter_contract"]["capability_surface"]["format"] == "agent_orchestrator.adapter_capability_surface.v1"
     assert result.payload["adapter_contract"]["capability_surface"]["comparability"]["comparison_mode"] == "same_contract_two_executors"
+    assert result.payload["adapter_contract"]["capability_surface"]["shared_contract"]["format"] == "agent_orchestrator.adapter_shared_contract.v1"
+    assert result.payload["adapter_contract"]["capability_surface"]["shared_contract"]["path_selection"]["default_path"] == "external"
+    assert result.payload["adapter_contract"]["capability_surface"]["shared_contract"]["continuity_support"]["resume_contract"] is False
+    assert result.payload["adapter_contract"]["capability_surface"]["shared_contract"]["recovery_contract"]["fallback_allowed"] is True
+    assert result.payload["adapter_contract"]["capability_surface"]["shared_contract"]["recovery_contract"]["resume_continuity_required"] is False
+    assert result.payload["adapter_contract"]["capability_surface"]["shared_contract"]["operator_recovery_surface"]["default_recovery_lane"] == "fallback_external"
+    assert result.payload["adapter_productization_surface"]["format"] == "agent_orchestrator.adapter_productization_surface.v1"
+    assert result.payload["adapter_productization_surface"]["surface_status"] == "same_contract_two_executors_governed"
+    assert result.payload["adapter_productization_surface"]["resume_contract_supported"] is False
+    assert result.payload["adapter_productization_surface"]["operator_recovery_surface"]["default_recovery_lane"] == "fallback_external"
     assert result.run_id
     assert result.status in {"completed", "failed", "blocked"}
     assert "run_id" in result.payload
@@ -69,6 +79,7 @@ def test_legacy_execution_runtime_starts_async_requests() -> None:
     assert result.status in {"queued", "running", "completed", "failed", "blocked"}
     assert result.payload["adapter_contract"]["adapter_family"] == "external_hot_plug"
     assert result.payload["adapter_contract"]["capability_surface"]["governance"]["hot_plug_supported"] is True
+    assert result.payload["adapter_productization_surface"]["format"] == "agent_orchestrator.adapter_productization_surface.v1"
     assert "run_id" in result.payload
     assert result.payload["turn_id"] == "turn-2"
 

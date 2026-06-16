@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Literal
 
 from agent_orchestrator.control_plane_approvals import ApprovalItem, ApprovalStore
+from agent_orchestrator.control_plane_posture import (
+    derive_planner_closure_posture_summary,
+    derive_session_continuity_outline_from_contract,
+    derive_session_planner_decision_from_payload,
+)
 from agent_orchestrator.control_plane_workspace import WorkspaceIndexStore
 from agent_orchestrator.adapters import EnvSlotFillConfig, _default_openai_compatible_transport, _extract_openai_message_content
 from agent_orchestrator.events import EventStore
@@ -21,6 +27,8 @@ from agent_orchestrator.execution.models import (
     ActionRequest,
     ActionResult,
     CompressedExecutionContext,
+    derive_adapter_capability_summary,
+    derive_adapter_productization_surface,
     ExecutionKernelContract,
     ExecutionRequest,
     ExecutionResumeContract,
@@ -37,6 +45,12 @@ from agent_orchestrator.intake import ExecutionMode
 from agent_orchestrator.memory import KnowledgeStore, MemoryStore
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode, get_policy
+from agent_orchestrator.productization_surface import (
+    build_comparative_completion_summary,
+    build_runtime_comparative_benchmark_digest,
+    build_runtime_comparative_benchmark_summary,
+    build_shared_productization_surface,
+)
 from agent_orchestrator.session import ScratchpadStore, SessionRuntime
 from agent_orchestrator.strategy import CompatibilityStrategyPlanner, NativeStrategyPlanner
 from agent_orchestrator.tasks import TaskContract
@@ -253,7 +267,12 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             context_selection=context_selection.to_dict(),
             edit_intent=edit_intent.to_dict(),
         )
-        kernel_result = _run_execution_kernel(self, request=request, edit_intent=edit_intent)
+        kernel_result = _run_execution_kernel(
+            self,
+            request=request,
+            edit_intent=edit_intent,
+            strategy_plan=strategy_plan,
+        )
         pending_approval = kernel_result.pending_approval
         applied_changes = kernel_result.applied_changes
         applied_change_payloads = [
@@ -357,6 +376,11 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             "status": status,
             "accepted": accepted,
         }
+        payload["adapter_productization_surface"] = _adapter_productization_surface(
+            adapter_contract=payload["adapter_contract"],
+        )
+        payload["adapter_capability_surface"] = _adapter_capability_surface(payload)
+        payload["adapter_capability"] = _adapter_capability_summary(payload)
         if request.session_id:
             payload["retrieved_memory"] = self.memory_store.search(request.requirement, session_id=request.session_id, limit=5)
         else:
@@ -380,7 +404,6 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             payload=payload,
             pending_approval=pending_approval,
         )
-        payload["session_continuity_contract"] = _session_continuity_contract(payload=payload)
         payload["context_engineering_contract"] = _context_engineering_contract(
             request=request,
             context_selection=payload["context_selection"],
@@ -431,6 +454,97 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
         payload["native_complex_repo_task_acceptance"] = _native_complex_repo_task_acceptance(
             request=request,
             payload=payload,
+        )
+        payload["native_tool_workflow_surface"] = _native_tool_workflow_surface(payload)
+        payload["native_tool_productization_surface"] = _native_tool_productization_surface(payload)
+        payload["session_continuity_contract"] = _session_continuity_contract(payload=payload)
+        payload["adapter_shared_contract"] = _adapter_shared_contract_summary_from_payload(payload)
+        payload["native_tool_usage"] = _native_tool_usage_summary(payload)
+        payload["resume_contract"] = _resume_contract(
+            request,
+            pending_approval,
+            steps[-1] if steps else None,
+            payload=payload,
+        )
+        payload["planner_decision"] = _session_planner_decision_from_payload(payload)
+        payload["continuity_outline"] = _session_continuity_outline_from_payload(payload)
+        payload["runtime_cost"] = {
+            "duration_seconds": (
+                payload["session_continuity_contract"].get("runtime_duration_seconds")
+                if isinstance(payload.get("session_continuity_contract"), dict)
+                else None
+            ),
+            "usage_cost_measurement_status": (
+                payload["session_continuity_contract"].get("usage_cost_measurement_status")
+                if isinstance(payload.get("session_continuity_contract"), dict)
+                else None
+            ),
+        }
+        payload["shared_productization_surface"] = build_shared_productization_surface(
+            session_productization_surface=(
+                payload["session_continuity_contract"].get("session_productization_surface", {})
+                if isinstance(payload.get("session_continuity_contract"), dict)
+                else {}
+            ),
+            native_tool_productization_surface=(
+                payload.get("native_tool_productization_surface", {})
+                if isinstance(payload.get("native_tool_productization_surface"), dict)
+                else {}
+            ),
+            native_tool_workflow_surface=(
+                payload.get("native_tool_workflow_surface", {})
+                if isinstance(payload.get("native_tool_workflow_surface"), dict)
+                else {}
+            ),
+            adapter_productization_surface=(
+                payload.get("adapter_productization_surface", {})
+                if isinstance(payload.get("adapter_productization_surface"), dict)
+                else {}
+            ),
+            planner_decision=payload.get("planner_decision", {})
+            if isinstance(payload.get("planner_decision"), dict)
+            else {},
+            continuity_outline=payload.get("continuity_outline", {})
+            if isinstance(payload.get("continuity_outline"), dict)
+            else {},
+            planner_closure_posture=(
+                payload.get("planner_closure_posture", {})
+                if isinstance(payload.get("planner_closure_posture"), dict)
+                else derive_planner_closure_posture_summary(
+                    planner_decision=(
+                        payload.get("planner_decision", {})
+                        if isinstance(payload.get("planner_decision"), dict)
+                        else {}
+                    ),
+                    continuity=(
+                        payload.get("continuity_outline", {})
+                        if isinstance(payload.get("continuity_outline"), dict)
+                        else {}
+                    ),
+                )
+            ),
+            runtime_cost=(
+                payload.get("runtime_cost", {}) if isinstance(payload.get("runtime_cost"), dict) else {}
+            ),
+            native_tool_usage=(
+                payload.get("native_tool_usage", {}) if isinstance(payload.get("native_tool_usage"), dict) else {}
+            ),
+            adapter_capability_surface=(
+                payload.get("adapter_capability_surface", {})
+                if isinstance(payload.get("adapter_capability_surface"), dict)
+                else {}
+            ),
+            comparative_shared_evidence_surface=(
+                payload["session_continuity_contract"].get("shared_evidence_surface", [])
+                if isinstance(payload.get("session_continuity_contract"), dict)
+                else []
+            ),
+        )
+        payload["comparative_benchmark"] = build_runtime_comparative_benchmark_summary(
+            _runtime_comparative_execution_artifact_summary(payload)
+        )
+        payload["comparative_benchmark_digest"] = build_runtime_comparative_benchmark_digest(
+            payload["comparative_benchmark"]
         )
         _persist_execution_state(
             self,
@@ -580,12 +694,33 @@ class _KernelPlannerContext:
     recent_observation_count: int
     verification_status: str | None
     repair_outcome: str | None
+    route_planner_intent: dict[str, object] = field(default_factory=dict)
+    planner_family: str = "native"
+    selected_strategy: str = "direct_edit"
+    planner_actions: list[str] = field(default_factory=list)
+    autonomy_surface: dict[str, object] = field(default_factory=dict)
+    control_surface: dict[str, object] = field(default_factory=dict)
+    delegation_contract: dict[str, object] = field(default_factory=dict)
+    operator_control: dict[str, object] = field(default_factory=dict)
+    tool_workflow_plan: dict[str, object] = field(default_factory=dict)
+    current_stage_workflow: dict[str, object] = field(default_factory=dict)
+    decision_evidence: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "stage_cursor": self.stage_cursor,
             "resume_kind": self.resume_kind,
             "route_risk_level": self.route_risk_level,
+            "planner_family": self.planner_family,
+            "selected_strategy": self.selected_strategy,
+            "route_planner_intent": dict(self.route_planner_intent),
+            "planner_actions": list(self.planner_actions),
+            "autonomy_surface": dict(self.autonomy_surface),
+            "control_surface": dict(self.control_surface),
+            "delegation_contract": dict(self.delegation_contract),
+            "operator_control": dict(self.operator_control),
+            "tool_workflow_plan": dict(self.tool_workflow_plan),
+            "current_stage_workflow": dict(self.current_stage_workflow),
             "edit_mode": self.edit_mode,
             "operation_count": self.operation_count,
             "operation_paths": list(self.operation_paths),
@@ -603,6 +738,7 @@ class _KernelPlannerContext:
             "recent_observation_count": self.recent_observation_count,
             "verification_status": self.verification_status,
             "repair_outcome": self.repair_outcome,
+            "decision_evidence_format": self.decision_evidence.get("format"),
         }
 
 
@@ -701,6 +837,12 @@ class _KernelActionDecision:
             "selected_source": self.selection.source,
             "planner_feasibility": self.planner_context.action_feasibility,
             "approval_required": self.planner_context.approval_required,
+            "workflow_projection_required": bool(self.planner_context.tool_workflow_plan.get("workflow_projection_required")),
+            "current_stage_required_tools": list(
+                self.planner_context.current_stage_workflow.get("required_tools", [])
+            )
+            if isinstance(self.planner_context.current_stage_workflow.get("required_tools"), list)
+            else [],
         }
 
 
@@ -718,6 +860,11 @@ class _KernelStageDecision:
             "selected_next_stage": self.selection.next_stage,
             "proposal_selected_candidate_id": self.next_stage_proposal.selected_candidate_id,
             "action_selected_type": self.action_selection.action_type if self.action_selection is not None else None,
+            "workflow_projection_required": bool(
+                self.action_selection is not None
+                and isinstance(self.action_selection.selected, dict)
+                and self.action_selection.selected.get("workflow_projection_required")
+            ),
         }
 
 
@@ -755,6 +902,7 @@ class _KernelStageStrategy:
         return _proposal_from_decision(
             current_stage=current_stage,
             decision=decision,
+            planner_context=planner_context,
         )
 
     def next_stage_decision(
@@ -858,6 +1006,7 @@ def _run_execution_kernel(
     *,
     request: ExecutionRequest,
     edit_intent,
+    strategy_plan=None,
 ) -> _KernelState:
     resume_state = _kernel_resume_state(runtime, request=request)
     stage_cursor: RuntimeStage = resume_state.stage_cursor
@@ -879,6 +1028,7 @@ def _run_execution_kernel(
             edit_intent=edit_intent,
             resume_state=resume_state,
             stage_cursor=stage_cursor,
+            strategy_plan=strategy_plan,
         )
         planner_context_trace.append(plan.planner_context.to_dict())
         next_stage_proposals.append(plan.next_stage_proposal.to_dict())
@@ -1011,6 +1161,7 @@ def _plan_kernel_stage(
     edit_intent,
     resume_state: _KernelResumeState,
     stage_cursor: RuntimeStage,
+    strategy_plan=None,
 ) -> _KernelStagePlan:
     planner_context = _planner_context_for_stage(
         runtime,
@@ -1018,6 +1169,7 @@ def _plan_kernel_stage(
         edit_intent=edit_intent,
         resume_state=resume_state,
         stage_cursor=stage_cursor,
+        strategy_plan=strategy_plan,
     )
     stage_strategy = _stage_strategy(stage_cursor)
     return stage_strategy.build_stage_plan(
@@ -1034,6 +1186,7 @@ def _planner_context_for_stage(
     edit_intent,
     resume_state: _KernelResumeState,
     stage_cursor: RuntimeStage,
+    strategy_plan=None,
 ) -> _KernelPlannerContext:
     operations = getattr(edit_intent, "operations", None)
     target_paths = getattr(edit_intent, "target_paths", None)
@@ -1051,6 +1204,42 @@ def _planner_context_for_stage(
         if isinstance(latest, dict):
             kind = latest.get("kind")
             latest_observation_kind = str(kind) if kind is not None else None
+    route_planner_intent = request.route.planner_intent if isinstance(request.route.planner_intent, dict) else {}
+    decision_evidence = (
+        strategy_plan.decision_evidence
+        if strategy_plan is not None and isinstance(getattr(strategy_plan, "decision_evidence", None), dict)
+        else {}
+    )
+    planner_actions = (
+        list(strategy_plan.planner_actions)
+        if strategy_plan is not None and isinstance(getattr(strategy_plan, "planner_actions", None), list)
+        else []
+    )
+    autonomy_surface = (
+        decision_evidence.get("autonomy_surface", {})
+        if isinstance(decision_evidence.get("autonomy_surface"), dict)
+        else {}
+    )
+    control_surface = (
+        decision_evidence.get("control_surface", {})
+        if isinstance(decision_evidence.get("control_surface"), dict)
+        else {}
+    )
+    delegation_contract = (
+        decision_evidence.get("delegation_contract", {})
+        if isinstance(decision_evidence.get("delegation_contract"), dict)
+        else {}
+    )
+    operator_control = (
+        decision_evidence.get("operator_control", {})
+        if isinstance(decision_evidence.get("operator_control"), dict)
+        else {}
+    )
+    tool_workflow_plan = (
+        decision_evidence.get("tool_workflow_plan", {})
+        if isinstance(decision_evidence.get("tool_workflow_plan"), dict)
+        else {}
+    )
     workspace_root = runtime.edit_executor.workspace_root
     operation_paths = [
         str(item.get("path", ""))
@@ -1084,6 +1273,7 @@ def _planner_context_for_stage(
         stage_cursor=stage_cursor,
         resume_kind=request.resume_kind or "fresh",
         route_risk_level=str(getattr(request.route, "risk_level", "unknown") or "unknown"),
+        route_planner_intent=dict(route_planner_intent),
         edit_mode=str(mode or "report_first"),
         operation_count=len(operations) if isinstance(operations, list) else 0,
         operation_paths=operation_paths,
@@ -1101,7 +1291,34 @@ def _planner_context_for_stage(
         recent_observation_count=len(resume_state.recent_observations),
         verification_status=str(resume_state.final_verification.get("status")) if resume_state.final_verification.get("status") is not None else None,
         repair_outcome=str(resume_state.repair_summary.get("outcome")) if resume_state.repair_summary.get("outcome") is not None else None,
+        planner_family=str(getattr(strategy_plan, "planner_family", "native") or "native"),
+        selected_strategy=str(getattr(getattr(strategy_plan, "strategy", None), "value", None) or getattr(strategy_plan, "strategy", "direct_edit")),
+        planner_actions=list(planner_actions),
+        autonomy_surface=dict(autonomy_surface),
+        control_surface=dict(control_surface),
+        delegation_contract=dict(delegation_contract),
+        operator_control=dict(operator_control),
+        tool_workflow_plan=dict(tool_workflow_plan),
+        current_stage_workflow=_current_stage_workflow(
+            tool_workflow_plan=tool_workflow_plan,
+            stage_cursor=stage_cursor,
+        ),
+        decision_evidence=dict(decision_evidence),
     )
+
+
+def _current_stage_workflow(
+    *,
+    tool_workflow_plan: dict[str, object],
+    stage_cursor: RuntimeStage,
+) -> dict[str, object]:
+    workflow_stages = (
+        tool_workflow_plan.get("workflow_stages", {})
+        if isinstance(tool_workflow_plan.get("workflow_stages"), dict)
+        else {}
+    )
+    stage_workflow = workflow_stages.get(stage_cursor, {}) if isinstance(workflow_stages.get(stage_cursor), dict) else {}
+    return dict(stage_workflow)
 
 
 def _execute_kernel_stage(
@@ -1151,6 +1368,36 @@ def _execute_edit_stage(
         applied_changes=applied_changes,
         plan=plan,
         resume_state=resume_state,
+    )
+
+
+def _execute_explore_stage(
+    runtime: CodingAgentExecutionRuntime,
+    request: ExecutionRequest,
+    edit_intent,
+    resume_state: _KernelResumeState,
+    plan: _KernelStagePlan,
+    applied_changes: list[object],
+) -> _KernelStageOutcome:
+    stage_strategy = plan.stage_strategy
+    action_selection = plan.action_selection
+    if action_selection is not None and action_selection.action_type == "pause":
+        return stage_strategy.pause_stage(
+            action_selection=action_selection,
+            plan=plan,
+            resume_state=resume_state,
+        )
+    if action_selection is not None and action_selection.action_type in {"handoff", "fallback"}:
+        return stage_strategy.block_stage(
+            action_selection=action_selection,
+            plan=plan,
+            resume_state=resume_state,
+        )
+    return stage_strategy.continue_stage(
+        next_stage=plan.next_stage_proposal.proposed_stage,
+        applied_changes=applied_changes,
+        repair_summary=dict(resume_state.repair_summary),
+        final_verification=dict(resume_state.final_verification),
     )
 
 
@@ -1269,12 +1516,7 @@ def _continue_without_side_effects_stage(
     plan: _KernelStagePlan,
     applied_changes: list[object],
 ) -> _KernelStageOutcome:
-    return _continue_stage_outcome(
-        next_stage=plan.next_stage_proposal.proposed_stage,
-        applied_changes=applied_changes,
-        repair_summary=dict(resume_state.repair_summary),
-        final_verification=dict(resume_state.final_verification),
-    )
+    return _execute_explore_stage(runtime, request, edit_intent, resume_state, plan, applied_changes)
 
 
 def _execute_verify_stage(
@@ -1287,6 +1529,46 @@ def _execute_verify_stage(
 ) -> _KernelStageOutcome:
     stage_strategy = plan.stage_strategy
     action_selection = plan.action_selection
+    if action_selection is not None and action_selection.action_type == "complete":
+        inherited_verification = dict(resume_state.final_verification)
+        if not inherited_verification:
+            inherited_verification = {
+                "status": "skipped",
+                "reason": "planner_omitted_verification",
+            }
+        inherited_status = str(inherited_verification.get("status") or "skipped")
+        status, accepted = _verify_terminal_status(
+            final_status=inherited_status,
+            edit_mode=edit_intent.mode,
+            applied_change_count=sum(
+                1
+                for item in applied_changes
+                if (getattr(item, "status", None) == "applied")
+                or (isinstance(item, dict) and item.get("status") == "applied")
+            ),
+        )
+        return stage_strategy.complete_stage(
+            plan=plan,
+            applied_changes=applied_changes,
+            repair_summary=(
+                dict(resume_state.repair_summary)
+                if dict(resume_state.repair_summary)
+                else {
+                    "outcome": "planner_skipped_verification",
+                    "attempt_count": 0,
+                    "retry_budget": 0,
+                    "attempts": [],
+                    "recovery_recommendation": {
+                        "action": "continue_native",
+                        "reason": "planner_control_surface",
+                        "human_review_recommended": False,
+                    },
+                }
+            ),
+            final_verification=inherited_verification,
+            status=status,
+            accepted=accepted,
+        )
     if action_selection is not None and action_selection.action_type == "pause":
         pending_approval = _approval_gate_for_verification(runtime, request=request, edit_intent=edit_intent)
         return stage_strategy.pause_stage(
@@ -1559,10 +1841,12 @@ def _explore_stage_strategy() -> _KernelStageStrategy:
         candidate_generator=_explore_candidates_via_strategy,
         ranking_enabled=_explore_ranking_enabled,
         rank_adjustment=_explore_rank_adjustment,
-        action_selector=_no_action_selection,
-        stage_selector=_proposal_stage_selection,
+        action_selector=_select_explore_action,
+        stage_selector=_explore_stage_selection,
         executor=_continue_without_side_effects_stage,
         outcomes=_stage_outcome_semantics(
+            pause=_paused_explore_outcome,
+            block=_blocked_explore_outcome,
             continue_outcome=_continue_stage_outcome,
         ),
     )
@@ -1728,8 +2012,9 @@ def _proposal_from_decision(
     *,
     current_stage: RuntimeStage,
     decision: _KernelNextStageDecision,
+    planner_context: _KernelPlannerContext | None = None,
 ) -> _KernelNextStageProposal:
-    return _KernelNextStageProposal(
+    proposal = _KernelNextStageProposal(
         current_stage=current_stage,
         proposed_stage=decision.selected_candidate.stage,
         disposition=decision.selected_candidate.disposition,
@@ -1737,6 +2022,12 @@ def _proposal_from_decision(
         candidates=decision.candidates,
         selected_candidate_id=decision.selected_candidate.candidate_id,
         selection=decision.to_dict(),
+    )
+    if planner_context is None:
+        return proposal
+    return _augment_proposal_candidates_with_planner_alternatives(
+        proposal,
+        planner_context=planner_context,
     )
 
 
@@ -1753,6 +2044,124 @@ def _candidate(
         disposition=disposition,
         reason=reason,
     )
+
+
+def _planner_governed_recovery_alternatives(
+    proposal: _KernelNextStageProposal,
+    *,
+    selected_action: str | None = None,
+) -> list[dict[str, object]]:
+    alternatives: list[dict[str, object]] = []
+    for candidate in proposal.candidates:
+        if not candidate.candidate_id.startswith("planner_"):
+            continue
+        action = None
+        if candidate.candidate_id == "planner_need_human_confirmation_pause":
+            action = "approval_pause"
+        elif candidate.candidate_id == "planner_external_handoff_block":
+            action = "handoff_external"
+        elif candidate.candidate_id == "planner_governed_fallback_block":
+            action = "fallback_external"
+        if action is None:
+            continue
+        alternatives.append(
+            {
+                "candidate_id": candidate.candidate_id,
+                "action": action,
+                "stage": candidate.stage,
+                "disposition": candidate.disposition,
+                "reason": candidate.reason,
+                "selected": action == selected_action,
+            }
+        )
+    if selected_action and all(item.get("action") != selected_action for item in alternatives):
+        selected_disposition = "pause" if selected_action in {"clarify_scope", "approval_pause"} else "block"
+        alternatives.insert(
+            0,
+            {
+                "candidate_id": f"selected_{selected_action}",
+                "action": selected_action,
+                "stage": proposal.current_stage,
+                "disposition": selected_disposition,
+                "reason": "Runtime selected this governed recovery lane from the native planner boundary.",
+                "selected": True,
+            },
+        )
+    return alternatives
+
+
+def _augment_proposal_candidates_with_planner_alternatives(
+    proposal: _KernelNextStageProposal,
+    *,
+    planner_context: _KernelPlannerContext,
+) -> _KernelNextStageProposal:
+    planner_alternatives = _planner_governed_alternative_candidates(planner_context)
+    if not planner_alternatives:
+        return proposal
+    existing_ids = {candidate.candidate_id for candidate in proposal.candidates}
+    merged_candidates = list(proposal.candidates)
+    for candidate in planner_alternatives:
+        if candidate.candidate_id in existing_ids:
+            continue
+        merged_candidates.append(candidate)
+        existing_ids.add(candidate.candidate_id)
+    selection = dict(proposal.selection)
+    selection["candidate_count"] = len(merged_candidates)
+    selection["planner_governed_alternative_count"] = len(merged_candidates) - len(proposal.candidates)
+    selection["planner_governed_alternatives"] = [candidate.candidate_id for candidate in merged_candidates if candidate.candidate_id.startswith("planner_")]
+    return _KernelNextStageProposal(
+        current_stage=proposal.current_stage,
+        proposed_stage=proposal.proposed_stage,
+        disposition=proposal.disposition,
+        reason=proposal.reason,
+        candidates=merged_candidates,
+        selected_candidate_id=proposal.selected_candidate_id,
+        selection=selection,
+    )
+
+
+def _planner_governed_alternative_candidates(
+    planner_context: _KernelPlannerContext,
+) -> list[_KernelNextStageCandidate]:
+    if planner_context.stage_cursor != "explore":
+        return []
+    evidence = planner_context.decision_evidence if isinstance(planner_context.decision_evidence, dict) else {}
+    candidate_evidence = evidence.get("decision_candidate_evidence", [])
+    if not isinstance(candidate_evidence, list):
+        return []
+    alternatives: list[_KernelNextStageCandidate] = []
+    for item in candidate_evidence:
+        if not isinstance(item, dict) or item.get("selected") is True:
+            continue
+        strategy = str(item.get("strategy") or "")
+        if strategy == "need_human_confirmation":
+            alternatives.append(
+                _candidate(
+                    candidate_id="planner_need_human_confirmation_pause",
+                    stage="explore",
+                    disposition="pause",
+                    reason="Native planner preserved an approval-boundary pause alternative before continuing beyond exploration.",
+                )
+            )
+        elif strategy == "external_handoff":
+            alternatives.append(
+                _candidate(
+                    candidate_id="planner_external_handoff_block",
+                    stage="explore",
+                    disposition="block",
+                    reason="Native planner preserved a governed external handoff alternative if bounded native execution exceeds its risk boundary.",
+                )
+            )
+        elif strategy == "governed_fallback":
+            alternatives.append(
+                _candidate(
+                    candidate_id="planner_governed_fallback_block",
+                    stage="explore",
+                    disposition="block",
+                    reason="Native planner preserved a governed external fallback alternative if the native path cannot continue safely.",
+                )
+            )
+    return alternatives
 
 
 def _candidate_pair(
@@ -1979,6 +2388,23 @@ def _edit_complete_candidate(
 def _explore_next_stage_candidates(
     planner_context: _KernelPlannerContext,
 ) -> list[_KernelNextStageCandidate]:
+    control_surface = (
+        planner_context.control_surface
+        if isinstance(planner_context.control_surface, dict)
+        else {}
+    )
+    if not _planner_stage_enabled(planner_context, "edit") and not bool(control_surface.get("continue_native", True)):
+        return _terminal_stage_candidates("explore")
+    if not _planner_stage_enabled(planner_context, "edit") and _planner_stage_enabled(planner_context, "verify"):
+        return _advance_or_complete_candidates(
+            advance_candidate=_candidate(
+                candidate_id="explore_to_verify_by_planner_contract",
+                stage="verify",
+                disposition="advance",
+                reason="Planner-owned tool workflow omitted bounded edit work and advanced directly toward verification.",
+            ),
+            complete_candidate=_explore_complete_candidate(planner_context=planner_context),
+        )
     complete_candidate = _explore_complete_candidate(planner_context=planner_context)
     return _advance_or_complete_candidates(
         advance_candidate=_candidate(
@@ -1989,6 +2415,173 @@ def _explore_next_stage_candidates(
         ),
         complete_candidate=complete_candidate,
     )
+
+
+def _explore_stage_selection(
+    action_selection: _KernelActionSelection | None,
+    next_stage_proposal: _KernelNextStageProposal,
+) -> _KernelStageSelection:
+    if action_selection is None:
+        return _select_next_stage(next_stage_proposal=next_stage_proposal)
+    if action_selection.action_type == "pause":
+        planner_actions = (
+            action_selection.selected.get("planner_actions", [])
+            if isinstance(action_selection.selected, dict)
+            and isinstance(action_selection.selected.get("planner_actions"), list)
+            else []
+        )
+        pause_reason = (
+            "Native planner requested an approval pause before proceeding beyond exploration."
+            if "approval_pause" in planner_actions
+            else "Native planner requested a clarification pause before proceeding beyond exploration."
+        )
+        return _KernelStageSelection(
+            stage="explore",
+            outcome="pause",
+            next_stage=next_stage_proposal.proposed_stage,
+            reason=pause_reason,
+        )
+    if action_selection.action_type in {"handoff", "fallback"}:
+        return _KernelStageSelection(
+            stage="explore",
+            outcome="block",
+            next_stage=next_stage_proposal.proposed_stage,
+            reason="Native planner selected a governed handoff or fallback before bounded execution could continue.",
+        )
+    return _select_next_stage(next_stage_proposal=next_stage_proposal)
+
+
+def _select_explore_action(planner_context: _KernelPlannerContext) -> _KernelActionSelection | None:
+    planner_actions = {
+        str(item)
+        for item in planner_context.planner_actions
+        if isinstance(item, str) and item
+    }
+    control_surface = (
+        planner_context.control_surface
+        if isinstance(planner_context.control_surface, dict)
+        else {}
+    )
+    delegation_contract = (
+        planner_context.delegation_contract
+        if isinstance(planner_context.delegation_contract, dict)
+        else {}
+    )
+    operator_control = (
+        planner_context.operator_control
+        if isinstance(planner_context.operator_control, dict)
+        else {}
+    )
+    intent = planner_context.route_planner_intent if isinstance(planner_context.route_planner_intent, dict) else {}
+    if "approval_pause" in planner_actions or bool(operator_control.get("approval_pause_state")):
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="explore",
+                action_type="pause",
+                source="planner_control_surface",
+                selected={
+                    "planner_actions": list(planner_context.planner_actions),
+                    "control_surface": dict(control_surface),
+                    "operator_control": dict(operator_control),
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                    "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
+                },
+                reason="Native planner requested an approval pause before the runtime advances beyond exploration.",
+            ),
+            planner_context=planner_context,
+        )
+    if "clarify" in planner_actions or bool(control_surface.get("clarify")) or bool(operator_control.get("clarify_pause_state")):
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="explore",
+                action_type="pause",
+                source="planner_control_surface",
+                selected={
+                    "planner_actions": list(planner_context.planner_actions),
+                    "control_surface": dict(control_surface),
+                    "operator_control": dict(operator_control),
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                    "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
+                },
+                reason="Native planner requested a clarification pause before the runtime advances beyond exploration.",
+            ),
+            planner_context=planner_context,
+        )
+    if "handoff_external" in planner_actions or bool(control_surface.get("handoff")):
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="explore",
+                action_type="handoff",
+                source="planner_control_surface",
+                selected={
+                    "planner_actions": list(planner_context.planner_actions),
+                    "delegation_contract": dict(delegation_contract),
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                    "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
+                },
+                reason="Native planner selected governed external handoff before continuing natively.",
+            ),
+            planner_context=planner_context,
+        )
+    if "fallback_external" in planner_actions or bool(control_surface.get("fallback")):
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="explore",
+                action_type="fallback",
+                source="planner_control_surface",
+                selected={
+                    "planner_actions": list(planner_context.planner_actions),
+                    "delegation_contract": dict(delegation_contract),
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                    "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
+                },
+                reason="Native planner selected governed fallback before continuing natively.",
+            ),
+            planner_context=planner_context,
+        )
+    if bool(intent.get("clarify")):
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="explore",
+                action_type="pause",
+                source="route_planner_intent",
+                selected={
+                    "route_planner_intent": dict(intent),
+                    "clarify_policy": planner_context.edit_mode,
+                },
+                reason="Route planner intent requested a clarification pause before the native path continues.",
+            ),
+            planner_context=planner_context,
+        )
+    if bool(intent.get("handoff")):
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="explore",
+                action_type="handoff",
+                source="route_planner_intent",
+                selected={
+                    "route_planner_intent": dict(intent),
+                    "handoff_reason": "route_requested_handoff",
+                },
+                reason="Route planner intent requested a governed external handoff before continuing natively.",
+            ),
+            planner_context=planner_context,
+        )
+    if bool(intent.get("fallback")):
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="explore",
+                action_type="fallback",
+                source="route_planner_intent",
+                selected={
+                    "route_planner_intent": dict(intent),
+                    "fallback_reason": "route_requested_fallback",
+                },
+                reason="Route planner intent requested a governed fallback before continuing natively.",
+            ),
+            planner_context=planner_context,
+        )
+    return None
 
 
 def _edit_next_stage_candidates(
@@ -2028,6 +2621,11 @@ def _edit_next_stage_candidates(
         planner_context=planner_context,
         variant="default",
     )
+    if planner_context.planner_actions and not _planner_stage_enabled(planner_context, "verify"):
+        return _advance_or_complete_candidates(
+            advance_candidate=complete_candidate,
+            complete_candidate=complete_candidate,
+        )
     return _advance_or_complete_candidates(
         advance_candidate=verify_candidate,
         complete_candidate=complete_candidate,
@@ -2039,6 +2637,21 @@ def _verify_next_stage_candidates(
     *,
     resume_state: _KernelResumeState,
 ) -> list[_KernelNextStageCandidate]:
+    if planner_context.planner_actions and not _planner_stage_enabled(planner_context, "verify"):
+        planner_complete = _verify_complete_candidate(
+            planner_context=planner_context,
+            variant="default",
+            reason="Planner-owned tool workflow omitted verification from the active bounded path, so verify can terminate without rerunning commands.",
+        )
+        return _complete_or_retry_candidates(
+            complete_candidate=planner_complete,
+            retry_candidate=_candidate(
+                candidate_id="verify_retry_same_stage",
+                stage="verify",
+                disposition="advance",
+                reason="Verification would only remain active if a future planner revision explicitly re-enables verify.",
+            ),
+        )
     if planner_context.approval_required and not planner_context.approval_resolved:
         approval_complete = _verify_complete_candidate(
             planner_context=planner_context,
@@ -2347,6 +2960,8 @@ def _select_edit_action(planner_context: _KernelPlannerContext) -> _KernelAction
                     "mode": planner_context.edit_mode,
                     "operation_count": planner_context.operation_count,
                     "pending_approval_stage": planner_context.pending_approval_stage,
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                    "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
                 },
                 reason="Edit action is paused until the required human approval is resolved.",
             ),
@@ -2361,6 +2976,7 @@ def _select_edit_action(planner_context: _KernelPlannerContext) -> _KernelAction
                 selected={
                     "mode": planner_context.edit_mode,
                     "operation_count": planner_context.operation_count,
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
                 },
                 reason="Direct-apply edit intent did not contain executable bounded operations.",
             ),
@@ -2381,6 +2997,7 @@ def _select_edit_action(planner_context: _KernelPlannerContext) -> _KernelAction
                     "operation_count": planner_context.operation_count,
                     "path": boundary_violation,
                     "boundary_policy": "workspace_root_only",
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
                 },
                 reason="Edit action was blocked before mutation because the selected file path escapes the workspace root.",
             ),
@@ -2394,6 +3011,8 @@ def _select_edit_action(planner_context: _KernelPlannerContext) -> _KernelAction
             selected={
                 "mode": planner_context.edit_mode,
                 "operation_count": planner_context.operation_count,
+                "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
             },
             reason="Edit action follows explicit bounded operations when present, otherwise stays in report-first preparation mode.",
         ),
@@ -2486,7 +3105,97 @@ def _blocked_edit_repair_summary(edit_selection: _KernelActionSelection) -> dict
     }
 
 
+def _paused_explore_outcome(
+    *,
+    action_selection: _KernelActionSelection,
+    plan: _KernelStagePlan,
+    resume_state: _KernelResumeState,
+) -> _KernelStageOutcome:
+    planner_actions = (
+        action_selection.selected.get("planner_actions", [])
+        if isinstance(action_selection.selected, dict)
+        and isinstance(action_selection.selected.get("planner_actions"), list)
+        else []
+    )
+    selected_pause_action = "approval_pause" if "approval_pause" in planner_actions else "clarify_scope"
+    governed_alternatives = _planner_governed_recovery_alternatives(
+        plan.next_stage_proposal,
+        selected_action=selected_pause_action,
+    )
+    return _kernel_terminal_outcome(
+        next_stage=plan.stage_cursor,
+        pending_approval=None,
+        applied_changes=[],
+        repair_summary={
+            "outcome": "approval_pause" if selected_pause_action == "approval_pause" else "clarify_pause",
+            "attempt_count": 0,
+            "retry_budget": 0,
+            "attempts": [],
+            "recovery_recommendation": {
+                "action": selected_pause_action,
+                "reason": action_selection.source,
+                "human_review_recommended": True,
+                "planner_governed_alternatives": governed_alternatives,
+            },
+        },
+        final_verification=dict(resume_state.final_verification),
+        status="blocked",
+        accepted=False,
+        should_stop=True,
+    )
+
+
+def _blocked_explore_outcome(
+    *,
+    action_selection: _KernelActionSelection,
+    plan: _KernelStagePlan,
+    resume_state: _KernelResumeState,
+) -> _KernelStageOutcome:
+    recovery_action = "handoff_external" if action_selection.action_type == "handoff" else "fallback_external"
+    governed_alternatives = _planner_governed_recovery_alternatives(
+        plan.next_stage_proposal,
+        selected_action=recovery_action,
+    )
+    return _kernel_terminal_outcome(
+        next_stage=plan.stage_cursor,
+        pending_approval=None,
+        applied_changes=[],
+        repair_summary={
+            "outcome": "planner_boundary_redirect",
+            "attempt_count": 0,
+            "retry_budget": 0,
+            "attempts": [],
+            "recovery_recommendation": {
+                "action": recovery_action,
+                "reason": action_selection.source,
+                "human_review_recommended": True,
+                "planner_governed_alternatives": governed_alternatives,
+            },
+        },
+        final_verification=dict(resume_state.final_verification),
+        status="blocked",
+        accepted=False,
+        should_stop=True,
+    )
+
+
 def _select_verify_action(planner_context: _KernelPlannerContext) -> _KernelActionSelection:
+    if planner_context.planner_actions and not _planner_stage_enabled(planner_context, "verify"):
+        return _action_selection_with_decision(
+            action_selection=_KernelActionSelection(
+                stage="verify",
+                action_type="complete",
+                source="planner_control_surface",
+                selected={
+                    "planner_actions": list(planner_context.planner_actions),
+                    "selected_strategy": planner_context.selected_strategy,
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                    "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
+                },
+                reason="Planner-owned tool workflow omitted verification from the active bounded path, so verify should complete without rerunning commands.",
+            ),
+            planner_context=planner_context,
+        )
     if planner_context.approval_required and not planner_context.approval_resolved:
         return _action_selection_with_decision(
             action_selection=_KernelActionSelection(
@@ -2496,6 +3205,7 @@ def _select_verify_action(planner_context: _KernelPlannerContext) -> _KernelActi
                 selected={
                     "pending_approval_stage": planner_context.pending_approval_stage,
                     "target_paths": list(planner_context.target_paths),
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
                 },
                 reason="Verification action is paused until the required human approval is resolved.",
             ),
@@ -2510,6 +3220,7 @@ def _select_verify_action(planner_context: _KernelPlannerContext) -> _KernelActi
                 selected={
                     "remaining_retry_budget": planner_context.remaining_retry_budget,
                     "latest_observation_kind": planner_context.latest_observation_kind,
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
                 },
                 reason="Verification is blocked because continuation state shows failure with no remaining retry budget.",
             ),
@@ -2521,7 +3232,11 @@ def _select_verify_action(planner_context: _KernelPlannerContext) -> _KernelActi
                 stage="verify",
                 action_type="run_command",
                 source="resume_context",
-                selected={"command": list(planner_context.verification_command)},
+                selected={
+                    "command": list(planner_context.verification_command),
+                    "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                    "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
+                },
                 reason="Verification reused the planned command from continuation state.",
             ),
             planner_context=planner_context,
@@ -2532,11 +3247,34 @@ def _select_verify_action(planner_context: _KernelPlannerContext) -> _KernelActi
             stage="verify",
             action_type="run_command",
             source="derived_from_targets",
-            selected={"command": list(derived)},
+            selected={
+                "command": list(derived),
+                "current_stage_workflow": dict(planner_context.current_stage_workflow),
+                "workflow_projection_required": bool(planner_context.tool_workflow_plan.get("workflow_projection_required")),
+            },
             reason="Verification command derived from bounded target paths in the current edit intent.",
         ),
         planner_context=planner_context,
     )
+
+
+def _planner_stage_enabled(
+    planner_context: _KernelPlannerContext,
+    stage_name: str,
+) -> bool:
+    workflow_stages = (
+        planner_context.tool_workflow_plan.get("workflow_stages", {})
+        if isinstance(planner_context.tool_workflow_plan.get("workflow_stages"), dict)
+        else {}
+    )
+    stage_workflow = workflow_stages.get(stage_name, {}) if isinstance(workflow_stages.get(stage_name), dict) else {}
+    if stage_workflow:
+        return stage_workflow.get("selected") is True
+    return stage_name in {
+        str(item)
+        for item in planner_context.planner_actions
+        if isinstance(item, str) and item
+    }
 
 
 def _remaining_retry_budget(repair_summary: dict[str, object]) -> int | None:
@@ -3168,8 +3906,23 @@ def _resume_reason_hint(resume_context: dict[str, object] | None) -> str | None:
         if isinstance(recommendation, dict):
             action = recommendation.get("action")
             reason = recommendation.get("reason")
+            alternatives = (
+                recommendation.get("planner_governed_alternatives", [])
+                if isinstance(recommendation.get("planner_governed_alternatives"), list)
+                else []
+            )
+            alternative_actions = [
+                str(item.get("action"))
+                for item in alternatives
+                if isinstance(item, dict) and item.get("action")
+            ]
             if action or reason:
-                return f"Resume context: action={action or 'continue'} reason={reason or 'n/a'}"
+                suffix = (
+                    f" alternatives={','.join(alternative_actions)}"
+                    if alternative_actions
+                    else ""
+                )
+                return f"Resume context: action={action or 'continue'} reason={reason or 'n/a'}{suffix}"
     observations = resume_context.get("recent_observations", [])
     if isinstance(observations, list) and observations:
         latest = observations[-1] if isinstance(observations[-1], dict) else {}
@@ -3338,8 +4091,18 @@ def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, obj
     adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
     verification = payload.get("verification", {}) if isinstance(payload.get("verification"), dict) else {}
     recovery_summary = payload.get("recovery_summary", {}) if isinstance(payload.get("recovery_summary"), dict) else {}
+    recovery_governed_alternatives = (
+        [dict(item) for item in recovery_summary.get("planner_governed_alternatives", []) if isinstance(item, dict)]
+        if isinstance(recovery_summary.get("planner_governed_alternatives"), list)
+        else []
+    )
     compressed_context = payload.get("compressed_context", {}) if isinstance(payload.get("compressed_context"), dict) else {}
     context_snapshot = payload.get("context_snapshot", {}) if isinstance(payload.get("context_snapshot"), dict) else {}
+    native_tool_surface = (
+        payload.get("native_tool_surface", {})
+        if isinstance(payload.get("native_tool_surface"), dict)
+        else {}
+    )
     context_task_contract = (
         context_snapshot.get("task_contract", {})
         if isinstance(context_snapshot.get("task_contract"), dict)
@@ -3350,9 +4113,29 @@ def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, obj
         if isinstance(payload.get("execution_history_summary"), dict)
         else {}
     )
+    native_repo_task_acceptance = (
+        payload.get("native_repo_task_acceptance", {})
+        if isinstance(payload.get("native_repo_task_acceptance"), dict)
+        else {}
+    )
+    native_complex_repo_task_acceptance = (
+        payload.get("native_complex_repo_task_acceptance", {})
+        if isinstance(payload.get("native_complex_repo_task_acceptance"), dict)
+        else {}
+    )
     recent_observations = (
         resume_context.get("recent_observations", [])
         if isinstance(resume_context.get("recent_observations"), list)
+        else []
+    )
+    native_tool_trace = (
+        payload.get("native_tool_trace", {})
+        if isinstance(payload.get("native_tool_trace"), dict)
+        else {}
+    )
+    trace_entries = (
+        native_tool_trace.get("trace", [])
+        if isinstance(native_tool_trace.get("trace"), list)
         else []
     )
     repair_summary = resume_context.get("repair_summary", {}) if isinstance(resume_context.get("repair_summary"), dict) else {}
@@ -3396,6 +4179,183 @@ def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, obj
         else []
     )
     resume_supported = bool(resume_context.get("resume_supported", step_loop_contract.get("resume_supported", True)))
+    runtime_duration_seconds = _runtime_duration_seconds_from_trace(payload)
+    usage_cost_measurement_status = _usage_cost_measurement_status(payload)
+    runtime_cost_provenance = {
+        "format": "agent_orchestrator.runtime_cost_provenance.v1",
+        "duration_source": "native_tool_trace" if runtime_duration_seconds is not None else "unavailable",
+        "usage_cost_source": "runtime_usage_payload"
+        if usage_cost_measurement_status == "measured"
+        else "placeholder_until_provider_reports",
+        "trace_entry_count": len(trace_entries),
+        "trace_time_span_ready": runtime_duration_seconds is not None,
+    }
+    repo_task_acceptance_ready = native_repo_task_acceptance.get("real_repo_task_acceptance_ready") is True
+    complex_repo_task_acceptance_ready = native_complex_repo_task_acceptance.get("complex_repo_task_ready") is True
+    long_chain_native_first_ready = repo_task_acceptance_ready and complex_repo_task_acceptance_ready
+    planner_decision = (
+        strategy_summary.get("decision_evidence", {})
+        if isinstance(strategy_summary.get("decision_evidence"), dict)
+        else {}
+    )
+    tool_workflow_plan = (
+        dict(planner_decision.get("tool_workflow_plan", {}))
+        if isinstance(planner_decision.get("tool_workflow_plan"), dict)
+        else {}
+    )
+    if not tool_workflow_plan:
+        selected_actions = (
+            list(planner_decision.get("selected_actions", []))
+            if isinstance(planner_decision.get("selected_actions"), list)
+            else []
+        )
+        workflow_stages_fallback: dict[str, object] = {}
+        daily_driver_tools: list[str] = []
+        for stage_name, required_tools in {
+            "explore": ["repo_map", "find_files", "search", "outline", "read"],
+            "edit": ["patch_preview", "structured_patch", "diff_preview"],
+            "verify": ["verify", "tool_trace"],
+        }.items():
+            selected = stage_name in selected_actions
+            workflow_stages_fallback[stage_name] = {
+                "selected": selected,
+                "required_tools": list(required_tools),
+                "projection_required": selected,
+            }
+            if selected:
+                for tool_name in required_tools:
+                    if tool_name not in daily_driver_tools:
+                        daily_driver_tools.append(tool_name)
+        tool_workflow_plan = {
+            "format": "agent_orchestrator.native_tool_workflow_plan.v1"
+            if str(planner_decision.get("planner_family") or "native") == "native"
+            else "agent_orchestrator.compatibility_tool_workflow_plan.v1",
+            "planner_family": planner_decision.get("planner_family") or "native",
+            "selected_strategy": planner_decision.get("selected_strategy"),
+            "workflow_stage_order": [
+                stage_name for stage_name in ("explore", "edit", "verify") if stage_name in selected_actions
+            ],
+            "workflow_stages": workflow_stages_fallback,
+            "daily_driver_path": {
+                "tools": daily_driver_tools,
+                "selected_stage_count": len([item for item in workflow_stages_fallback.values() if item.get("selected") is True]),
+            },
+            "workflow_projection_required": True,
+        }
+    workflow_stages = (
+        tool_workflow_plan.get("workflow_stages", {})
+        if isinstance(tool_workflow_plan.get("workflow_stages"), dict)
+        else {}
+    )
+    planner_context_trace = (
+        payload.get("planner_context_trace", [])
+        if isinstance(payload.get("planner_context_trace"), list)
+        else []
+    )
+    action_selection_trace = (
+        payload.get("action_selection_trace", [])
+        if isinstance(payload.get("action_selection_trace"), list)
+        else []
+    )
+    selected_workflow_stages = [
+        stage_name
+        for stage_name in ("explore", "edit", "verify")
+        if isinstance(workflow_stages.get(stage_name), dict) and workflow_stages.get(stage_name, {}).get("selected") is True
+    ]
+    trace_stage_alignment = {
+        stage_name: any(
+            isinstance(item, dict)
+            and item.get("stage_cursor") == stage_name
+            and isinstance(item.get("current_stage_workflow"), dict)
+            and item.get("current_stage_workflow", {}).get("selected") is True
+            for item in planner_context_trace
+        )
+        for stage_name in selected_workflow_stages
+    }
+    action_required_tool_alignment = {
+        stage_name: any(
+            isinstance(item, dict)
+            and item.get("stage") == stage_name
+            and isinstance(item.get("decision"), dict)
+            and all(
+                tool_name in item.get("decision", {}).get("current_stage_required_tools", [])
+                for tool_name in workflow_stages.get(stage_name, {}).get("required_tools", [])
+                if isinstance(tool_name, str)
+            )
+            for item in action_selection_trace
+        )
+        for stage_name in ("edit", "verify")
+        if isinstance(workflow_stages.get(stage_name), dict) and workflow_stages.get(stage_name, {}).get("selected") is True
+    }
+    adapter_capability_surface = (
+        adapter_contract.get("capability_surface", {})
+        if isinstance(adapter_contract.get("capability_surface"), dict)
+        else {}
+    )
+    adapter_governance = (
+        adapter_capability_surface.get("governance", {})
+        if isinstance(adapter_capability_surface.get("governance"), dict)
+        else {}
+    )
+    adapter_comparability = (
+        adapter_capability_surface.get("comparability", {})
+        if isinstance(adapter_capability_surface.get("comparability"), dict)
+        else {}
+    )
+    tool_surface_readiness = (
+        native_tool_surface.get("daily_driver_readiness", {})
+        if isinstance(native_tool_surface.get("daily_driver_readiness"), dict)
+        else {}
+    )
+    tool_surface_ready = all(
+        bool(tool_surface_readiness.get(key))
+        for key in [
+            "repo_exploration_ready",
+            "structured_patch_ready",
+            "patch_preview_ready",
+            "diff_preview_ready",
+            "verification_ready",
+        ]
+    )
+    planner_ready = (
+        planner_decision.get("format") == "agent_orchestrator.native_planner_decision.v1"
+        and planner_decision.get("selected_owner") == "native"
+        and bool(planner_decision.get("native_work_units"))
+    )
+    session_ready = bool(resume_supported) and runtime_duration_seconds is not None and bool(usage_cost_measurement_status)
+    adapter_ready = (
+        (
+            adapter_contract.get("comparison_mode") == "same_contract_two_executors"
+            or adapter_comparability.get("comparison_mode") == "same_contract_two_executors"
+        )
+        and bool(
+            adapter_contract.get("hot_plug_supported")
+            if adapter_contract.get("hot_plug_supported") is not None
+            else adapter_governance.get("hot_plug_supported")
+        )
+        and bool(
+            adapter_contract.get("fallback_governed")
+            if adapter_contract.get("fallback_governed") is not None
+            else adapter_governance.get("fallback_governed")
+        )
+    )
+    shared_productization_ready = all(
+        [
+            tool_surface_ready,
+            planner_ready,
+            session_ready,
+            adapter_ready,
+        ]
+    )
+    daily_driver_main_path_ready = shared_productization_ready and long_chain_native_first_ready
+    shared_evidence_surface = [
+        "runtime_payload",
+        "workspace_index",
+        "ui_execution_summary",
+        "cli_execution_summary",
+        "docs_evidence",
+        "comparative_completion_summary",
+    ]
     long_horizon_posture = {
         "resume_ready": resume_supported,
         "recovery_active": bool(repair_summary) or bool(recent_observations),
@@ -3403,7 +4363,316 @@ def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, obj
         "context_pressure": compaction_state.get("stage") in {"light_compaction", "observation_masking", "summarization_ready"},
         "summarization_ready": compaction_state.get("stage") == "summarization_ready",
         "pending_followup_count": len(pending_steps),
+        "resume_posture": (
+            "approval_reentry"
+            if resume_context.get("resume_kind") == "approval_resume"
+            else "same_task_resume"
+            if resume_context.get("resume_kind") == "resume_if_same_task"
+            else "fresh_entry"
+        ),
     }
+    continuity_pressure = {
+        "format": "agent_orchestrator.continuity_pressure.v1",
+        "observation_pressure": len(recent_observations),
+        "compaction_pressure": compaction_state.get("stage"),
+        "pending_followup_count": len(pending_steps),
+        "blocked_unit_count": len(blocked_units),
+        "summarization_pressure": bool(compaction_state.get("summarization_triggered"))
+        or compaction_state.get("stage") == "summarization_ready",
+        "pressure_level": (
+            "high"
+            if compaction_state.get("stage") == "summarization_ready" or len(pending_steps) >= 3
+            else "medium"
+            if compaction_state.get("stage") in {"light_compaction", "observation_masking"} or len(recent_observations) >= 2
+            else "low"
+        ),
+    }
+    workflow_resume_expectation = (
+        "resume_if_same_task"
+        if resume_supported and resume_context.get("resume_kind") in {None, "fresh", "resume_if_same_task"}
+        else "approval_pause"
+        if resume_context.get("resume_kind") == "approval_resume"
+        else resume_context.get("resume_kind")
+    )
+    recovery_lane = recovery_summary.get("reason")
+    workflow_active_stage = (
+        recovery_summary.get("action")
+        or step_loop_contract.get("current_disposition")
+        or step_loop_contract.get("current_stage")
+    )
+    if workflow_active_stage not in {"explore", "edit", "verify"}:
+        workflow_active_stage = next((item for item in selected_workflow_stages if item), None)
+    workflow_projection_ready = (
+        tool_workflow_plan.get("format") == "agent_orchestrator.native_tool_workflow_plan.v1"
+        and tool_workflow_plan.get("workflow_projection_required") is True
+        and all(trace_stage_alignment.get(stage_name) for stage_name in selected_workflow_stages)
+        and all(action_required_tool_alignment.get(stage_name) for stage_name in action_required_tool_alignment)
+    )
+    workflow_continuity = {
+        "format": "agent_orchestrator.session_workflow_continuity.v1",
+        "resume_kind": resume_context.get("resume_kind"),
+        "active_stage": workflow_active_stage,
+        "selected_workflow_stages": selected_workflow_stages,
+        "tool_workflow_plan": tool_workflow_plan,
+        "workflow_projection_ready": workflow_projection_ready,
+        "resume_alignment": {
+            "resume_kind": resume_context.get("resume_kind"),
+            "resume_posture": long_horizon_posture.get("resume_posture"),
+            "resume_expectation": workflow_resume_expectation,
+            "aligned": resume_supported and bool(selected_workflow_stages),
+        },
+        "recovery_alignment": {
+            "recovery_active": bool(repair_summary) or bool(recent_observations),
+            "runbook_recovery_lane": recovery_lane,
+            "latest_recovery_hint": compressed_context.get("latest_recovery_hint"),
+            "aligned": not bool(recovery_lane) or workflow_active_stage in {None, *selected_workflow_stages},
+        },
+        "shared_evidence_surface": list(dict.fromkeys([*shared_evidence_surface, "resume_contract"])),
+    }
+    continuity_snapshot = {
+        "format": "agent_orchestrator.session_continuity_snapshot.v1",
+        "artifact_backed": True,
+        "snapshot_status": "ready" if resume_supported else "limited",
+        "resume_anchor": {
+            "resume_kind": resume_context.get("resume_kind"),
+            "planned_verification_command_present": bool(resume_context.get("planned_verification_command")),
+            "recent_observation_count": len(recent_observations),
+            "repair_summary_present": bool(repair_summary),
+        },
+        "program_digest": {
+            "program_goal": (
+                task_contract.get("goal")
+                or context_task_contract.get("goal")
+                or strategy_summary.get("goal")
+                or payload.get("requirement")
+                or compressed_context.get("objective")
+                or active_milestone
+            ),
+            "active_milestone": active_milestone,
+            "completed_milestone_count": len(completed_steps),
+            "pending_followup_count": len(pending_steps),
+            "blocked_unit_count": len(blocked_units),
+        },
+        "compaction_digest": {
+            "compaction_stage": compaction_state.get("stage"),
+            "masked_observation_count": compaction_state.get("masked_count", 0),
+            "summarization_triggered": compaction_state.get("summarization_triggered", False),
+            "summarization_ready": compaction_state.get("stage") == "summarization_ready",
+        },
+        "runtime_cost": {
+            "runtime_duration_seconds": runtime_duration_seconds,
+            "usage_cost_measurement_status": usage_cost_measurement_status,
+        },
+        "runtime_cost_provenance": runtime_cost_provenance,
+        "continuity_pressure": continuity_pressure,
+        "shared_evidence_surface": shared_evidence_surface,
+    }
+    session_productization_surface = {
+        "format": "agent_orchestrator.session_productization_surface.v1",
+        "resume_supported": resume_supported,
+        "resume_kind": resume_context.get("resume_kind"),
+        "continuity_status": "ready" if resume_supported else "limited",
+        "compaction_stage": compaction_state.get("stage"),
+        "runtime_duration_seconds": runtime_duration_seconds,
+        "usage_cost_measurement_status": usage_cost_measurement_status,
+        "runtime_cost_provenance": runtime_cost_provenance,
+        "continuity_snapshot": continuity_snapshot,
+        "continuity_pressure": continuity_pressure,
+        "workflow_continuity": workflow_continuity,
+        "operator_continuity": {
+            "latest_recovery_hint": compressed_context.get("latest_recovery_hint"),
+            "next_recommended_action": (
+                recovery_summary.get("action")
+                or step_loop_contract.get("current_disposition")
+                or step_loop_contract.get("current_stage")
+            ),
+            "runbook_recovery_lane": recovery_summary.get("reason"),
+            "approval_pause_state": adapter_contract.get("approval_semantics", {}).get("approval_required")
+            if isinstance(adapter_contract.get("approval_semantics"), dict)
+            else None,
+            "clarify_pause_state": bool(payload.get("clarify_summary", {}).get("needs_clarification"))
+            if isinstance(payload.get("clarify_summary"), dict)
+            else False,
+            "resume_expectation": workflow_resume_expectation,
+            "resume_posture": long_horizon_posture.get("resume_posture"),
+            "planner_governed_alternatives": recovery_governed_alternatives,
+            "workflow_active_stage": workflow_active_stage,
+            "selected_workflow_stages": selected_workflow_stages,
+            "workflow_projection_ready": workflow_projection_ready,
+        },
+        "operator_posture_digest": {
+            "format": "agent_orchestrator.session_operator_posture_digest.v1",
+            "continuity_status": "ready" if resume_supported else "limited",
+            "compaction_stage": compaction_state.get("stage"),
+            "compaction_pressure": continuity_pressure.get("compaction_pressure"),
+            "context_pressure": long_horizon_posture.get("context_pressure"),
+            "runtime_duration_seconds": runtime_duration_seconds,
+            "usage_cost_measurement_status": usage_cost_measurement_status,
+            "runtime_cost_provenance": runtime_cost_provenance,
+            "next_recommended_action": (
+                recovery_summary.get("action")
+                or step_loop_contract.get("current_disposition")
+                or step_loop_contract.get("current_stage")
+            ),
+            "runbook_recovery_lane": recovery_summary.get("reason"),
+            "resume_expectation": workflow_resume_expectation,
+            "resume_posture": long_horizon_posture.get("resume_posture"),
+            "approval_pause_state": adapter_contract.get("approval_semantics", {}).get("approval_required")
+            if isinstance(adapter_contract.get("approval_semantics"), dict)
+            else None,
+            "clarify_pause_state": bool(payload.get("clarify_summary", {}).get("needs_clarification"))
+            if isinstance(payload.get("clarify_summary"), dict)
+            else False,
+            "workflow_active_stage": workflow_active_stage,
+            "selected_workflow_stages": selected_workflow_stages,
+            "workflow_projection_ready": workflow_projection_ready,
+            "tool_workflow_plan_format": tool_workflow_plan.get("format"),
+            "pause_expected": bool(
+                strategy_summary.get("decision_evidence", {}).get("posture", {}).get("pause_expected")
+            )
+            if isinstance(strategy_summary.get("decision_evidence"), dict)
+            and isinstance(strategy_summary.get("decision_evidence", {}).get("posture"), dict)
+            else False,
+            "handoff_expected": bool(
+                strategy_summary.get("decision_evidence", {}).get("posture", {}).get("handoff_expected")
+            )
+            if isinstance(strategy_summary.get("decision_evidence"), dict)
+            and isinstance(strategy_summary.get("decision_evidence", {}).get("posture"), dict)
+            else False,
+            "fallback_expected": bool(
+                strategy_summary.get("decision_evidence", {}).get("posture", {}).get("fallback_expected")
+            )
+            if isinstance(strategy_summary.get("decision_evidence"), dict)
+            and isinstance(strategy_summary.get("decision_evidence", {}).get("posture"), dict)
+            else False,
+            "latest_recovery_hint": compressed_context.get("latest_recovery_hint"),
+            "planner_governed_alternatives": recovery_governed_alternatives,
+            "summary": (
+                f"next_action={(recovery_summary.get('action') or step_loop_contract.get('current_disposition') or step_loop_contract.get('current_stage'))} "
+                f"recovery_lane={recovery_summary.get('reason')} "
+                f"resume_expectation={workflow_resume_expectation} "
+                f"resume_posture={long_horizon_posture.get('resume_posture')} "
+                f"approval_pause={(adapter_contract.get('approval_semantics', {}).get('approval_required') if isinstance(adapter_contract.get('approval_semantics'), dict) else None)} "
+                f"clarify_pause={(bool(payload.get('clarify_summary', {}).get('needs_clarification')) if isinstance(payload.get('clarify_summary'), dict) else False)} "
+                f"workflow_stage={workflow_active_stage} "
+                f"workflow_selected={','.join(str(item) for item in selected_workflow_stages) or 'none'} "
+                f"workflow_projection_ready={workflow_projection_ready} "
+                f"pause_expected={(bool(strategy_summary.get('decision_evidence', {}).get('posture', {}).get('pause_expected')) if isinstance(strategy_summary.get('decision_evidence'), dict) and isinstance(strategy_summary.get('decision_evidence', {}).get('posture'), dict) else False)} "
+                f"handoff_expected={(bool(strategy_summary.get('decision_evidence', {}).get('posture', {}).get('handoff_expected')) if isinstance(strategy_summary.get('decision_evidence'), dict) and isinstance(strategy_summary.get('decision_evidence', {}).get('posture'), dict) else False)} "
+                f"fallback_expected={(bool(strategy_summary.get('decision_evidence', {}).get('posture', {}).get('fallback_expected')) if isinstance(strategy_summary.get('decision_evidence'), dict) and isinstance(strategy_summary.get('decision_evidence', {}).get('posture'), dict) else False)} "
+                f"alternatives={','.join(str(item.get('action')) for item in recovery_governed_alternatives if item.get('action')) if recovery_governed_alternatives else 'none'} "
+                f"compaction_stage={compaction_state.get('stage')} "
+                f"compaction_pressure={continuity_pressure.get('compaction_pressure')}"
+            ),
+        },
+        "autonomy_posture": {
+            "pause_expected": bool(
+                strategy_summary.get("decision_evidence", {}).get("posture", {}).get("pause_expected")
+            )
+            if isinstance(strategy_summary.get("decision_evidence"), dict)
+            and isinstance(strategy_summary.get("decision_evidence", {}).get("posture"), dict)
+            else False,
+            "handoff_expected": bool(
+                strategy_summary.get("decision_evidence", {}).get("posture", {}).get("handoff_expected")
+            )
+            if isinstance(strategy_summary.get("decision_evidence"), dict)
+            and isinstance(strategy_summary.get("decision_evidence", {}).get("posture"), dict)
+            else False,
+            "fallback_expected": bool(
+                strategy_summary.get("decision_evidence", {}).get("posture", {}).get("fallback_expected")
+            )
+            if isinstance(strategy_summary.get("decision_evidence"), dict)
+            and isinstance(strategy_summary.get("decision_evidence", {}).get("posture"), dict)
+            else False,
+            "resume_posture": long_horizon_posture.get("resume_posture"),
+        },
+        "continuity_readiness": {
+            "resume_ready": resume_supported,
+            "runtime_cost_ready": runtime_duration_seconds is not None and bool(usage_cost_measurement_status),
+            "compaction_ready": bool(compaction_state.get("stage")),
+            "pressure_visible": bool(continuity_pressure.get("format")),
+            "recovery_ready": bool(recent_observations)
+            or bool(repair_summary)
+            or bool(resume_context.get("planned_verification_command")),
+            "workflow_resume_ready": bool(workflow_continuity.get("resume_alignment", {}).get("aligned")),
+            "workflow_projection_visible": bool(tool_workflow_plan) or workflow_projection_ready,
+            "workflow_recovery_aligned": bool(workflow_continuity.get("recovery_alignment", {}).get("aligned")),
+        },
+        "long_horizon_posture": long_horizon_posture,
+        "program_posture": {
+            "program_goal": (
+                task_contract.get("goal")
+                or context_task_contract.get("goal")
+                or strategy_summary.get("goal")
+                or payload.get("requirement")
+                or compressed_context.get("objective")
+                or active_milestone
+            ),
+            "active_milestone": active_milestone,
+            "completed_milestones": [str(item) for item in completed_steps if item not in {None, ""}],
+            "ready_next_units": ready_next_units,
+            "blocked_units": blocked_units,
+        },
+        "daily_driver_readiness": {
+            "tool_surface_ready": tool_surface_ready,
+            "planner_ready": planner_ready,
+            "session_ready": session_ready,
+            "adapter_ready": adapter_ready,
+            "shared_productization_ready": shared_productization_ready,
+            "long_chain_task_ready": long_chain_native_first_ready,
+            "daily_driver_main_path_ready": daily_driver_main_path_ready,
+            "open_product_gap": (
+                "platform_breadth_remaining"
+                if daily_driver_main_path_ready
+                else "long_chain_repo_closure_not_yet_proven"
+                if shared_productization_ready
+                else "productization_contract_incomplete"
+            ),
+        },
+        "shared_evidence_surface": shared_evidence_surface,
+    }
+    comparative_completion_summary = build_comparative_completion_summary(
+        benchmark_digest={
+            "comparison_status": (
+                "daily_driver_main_path_proven_breadth_gap_remaining"
+                if daily_driver_main_path_ready
+                else "shared_productization_ready_but_daily_driver_proof_gap_remaining"
+                if shared_productization_ready
+                else "foundational_gap_remaining"
+            ),
+            "comparison_grade_status": "runtime_evidence_pending",
+            "comparison_grade_ready": False,
+            "blocking_gap": "authoritative_external_comparison_not_yet_projected_into_runtime_contract",
+            "external_harness_operator_action": "inspect_workspace_or_evidence_benchmark_before_goal_closure",
+            "remaining_gap_classes": [
+                "external_comparison_harness",
+                "goal_level_closure_audit",
+            ],
+        },
+        comparative_benchmark={
+            "comparison_posture": {
+                "status": (
+                    "daily_driver_main_path_proven_breadth_gap_remaining"
+                    if daily_driver_main_path_ready
+                    else "shared_productization_ready_but_daily_driver_proof_gap_remaining"
+                    if shared_productization_ready
+                    else "foundational_gap_remaining"
+                ),
+                "remaining_gap_classes": [
+                    "external_comparison_harness",
+                    "goal_level_closure_audit",
+                ],
+            },
+            "comparison_grade_assessment": {
+                "status": "runtime_evidence_pending",
+                "comparison_grade_ready": False,
+                "blocking_gap": "authoritative_external_comparison_not_yet_projected_into_runtime_contract",
+                "external_comparison_harness_surface": {
+                    "operator_action": "inspect_workspace_or_evidence_benchmark_before_goal_closure",
+                },
+            },
+        },
+    )
     return {
         "format": "agent_orchestrator.session_continuity_contract.v1",
         "resume_supported": resume_supported,
@@ -3411,6 +4680,15 @@ def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, obj
         "compaction_stage": compaction_state.get("stage"),
         "masked_observation_count": compaction_state.get("masked_count", 0),
         "summarization_triggered": compaction_state.get("summarization_triggered", False),
+        "runtime_duration_seconds": runtime_duration_seconds,
+        "usage_cost_measurement_status": usage_cost_measurement_status,
+        "runtime_cost_provenance": runtime_cost_provenance,
+        "shared_evidence_surface": shared_evidence_surface,
+        "workflow_continuity": workflow_continuity,
+        "continuity_snapshot": continuity_snapshot,
+        "continuity_pressure": continuity_pressure,
+        "session_productization_surface": session_productization_surface,
+        "comparative_completion_summary": comparative_completion_summary,
         "long_horizon_posture": long_horizon_posture,
         "program_posture": {
             "program_goal": (
@@ -3436,7 +4714,11 @@ def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, obj
             "handoff_reason_code": path_selection.get("handoff_reason_code"),
             "fallback_reason_code": path_selection.get("fallback_reason_code"),
             "required_handoff_artifacts": required_handoff_artifacts,
-            "resume_expectation": resume_context.get("resume_kind"),
+            "resume_expectation": "resume_if_same_task"
+            if resume_supported and resume_context.get("resume_kind") in {None, "fresh", "resume_if_same_task"}
+            else "approval_pause"
+            if resume_context.get("resume_kind") == "approval_resume"
+            else resume_context.get("resume_kind"),
         },
         "program_continuity": {
             "resume_supported": resume_supported,
@@ -3444,6 +4726,34 @@ def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, obj
             "compaction_stage": compaction_state.get("stage"),
             "continuity_artifact_status": "ready" if resume_supported else "limited",
             "latest_recovery_hint": compressed_context.get("latest_recovery_hint"),
+            "repo_task_acceptance_ready": repo_task_acceptance_ready,
+            "complex_repo_task_acceptance_ready": complex_repo_task_acceptance_ready,
+            "long_chain_native_first_ready": long_chain_native_first_ready,
+            "closure_strength": (
+                "long_chain_native_first_ready"
+                if long_chain_native_first_ready
+                else "repo_task_acceptance_ready"
+                if repo_task_acceptance_ready
+                else "runtime_closure_only"
+            ),
+            "shared_evidence_surface": shared_evidence_surface,
+        },
+        "daily_driver_readiness": {
+            "tool_surface_ready": tool_surface_ready,
+            "planner_ready": planner_ready,
+            "session_ready": session_ready,
+            "adapter_ready": adapter_ready,
+            "shared_productization_ready": shared_productization_ready,
+            "long_chain_task_ready": long_chain_native_first_ready,
+            "daily_driver_main_path_ready": daily_driver_main_path_ready,
+            "open_product_gap": (
+                "platform_breadth_remaining"
+                if daily_driver_main_path_ready
+                else "long_chain_repo_closure_not_yet_proven"
+                if shared_productization_ready
+                else "productization_contract_incomplete"
+            ),
+            "shared_evidence_surface": shared_evidence_surface,
         },
         "milestone_verification": {
             "verification_status": verification.get("status"),
@@ -3466,6 +4776,188 @@ def _session_continuity_contract(*, payload: dict[str, object]) -> dict[str, obj
         },
         "latest_recovery_hint": compressed_context.get("latest_recovery_hint"),
     }
+
+
+def _native_tool_productization_surface(payload: dict[str, object]) -> dict[str, object]:
+    workflow_surface = _native_tool_workflow_surface(payload)
+    native_tool_surface = (
+        payload.get("native_tool_surface", {})
+        if isinstance(payload.get("native_tool_surface"), dict)
+        else {}
+    )
+    native_tool_trace = (
+        payload.get("native_tool_trace", {})
+        if isinstance(payload.get("native_tool_trace"), dict)
+        else {}
+    )
+    readiness = (
+        native_tool_surface.get("daily_driver_readiness", {})
+        if isinstance(native_tool_surface.get("daily_driver_readiness"), dict)
+        else {}
+    )
+    governance = (
+        native_tool_surface.get("governance", {})
+        if isinstance(native_tool_surface.get("governance"), dict)
+        else {}
+    )
+    trace_entries = (
+        native_tool_trace.get("trace", [])
+        if isinstance(native_tool_trace.get("trace"), list)
+        else []
+    )
+    recent_tools = [
+        item.get("tool")
+        for item in trace_entries[-5:]
+        if isinstance(item, dict) and item.get("tool")
+    ]
+    tool_count = len(native_tool_surface.get("tools", [])) if isinstance(native_tool_surface.get("tools"), list) else 0
+    trace_count = len(trace_entries)
+    operator_visibility_ready = tool_count >= 1 and trace_count >= 1
+    return {
+        "format": "agent_orchestrator.native_tool_productization_surface.v1",
+        "tool_count": tool_count,
+        "trace_count": trace_count,
+        "recent_tools": recent_tools,
+        "tooling_posture": (
+            "daily_driver_ready"
+            if operator_visibility_ready
+            and bool(readiness.get("repo_exploration_ready"))
+            and bool(readiness.get("bounded_read_search_ready"))
+            and bool(readiness.get("glob_ready"))
+            and bool(readiness.get("structured_patch_ready"))
+            and bool(readiness.get("diff_preview_ready"))
+            and bool(readiness.get("verification_ready"))
+            else "productization_gap_remaining"
+        ),
+        "operator_visibility_ready": operator_visibility_ready,
+        "usage_visibility_ready": trace_count >= 1,
+        "readiness": {
+            "repo_exploration_ready": bool(readiness.get("repo_exploration_ready")),
+            "bounded_read_search_ready": bool(readiness.get("bounded_read_search_ready")),
+            "structural_outline_ready": bool(readiness.get("structural_outline_ready")),
+            "glob_ready": bool(readiness.get("glob_ready")),
+            "structured_patch_ready": bool(readiness.get("structured_patch_ready")),
+            "patch_preview_ready": bool(readiness.get("patch_preview_ready")),
+            "diff_preview_ready": bool(readiness.get("diff_preview_ready")),
+            "verification_ready": bool(readiness.get("verification_ready")),
+            "artifact_backed": bool(readiness.get("artifact_backed")),
+        },
+        "governance_boundary": {
+            "boundary_policy": governance.get("boundary_policy"),
+            "approval_aware": governance.get("approval_aware"),
+            "artifact_backed": governance.get("artifact_backed"),
+        },
+        "workflow_surface": workflow_surface,
+        "shared_evidence_surface": [
+            "runtime_payload",
+            "workspace_index",
+            "ui_execution_summary",
+            "cli_execution_summary",
+            "evidence_report",
+        ],
+    }
+
+
+def _native_tool_workflow_surface(payload: dict[str, object]) -> dict[str, object]:
+    workflow_surface = (
+        payload.get("native_tool_workflow_surface", {})
+        if isinstance(payload.get("native_tool_workflow_surface"), dict)
+        else {}
+    )
+    if workflow_surface:
+        return workflow_surface
+    native_tool_surface = (
+        payload.get("native_tool_surface", {})
+        if isinstance(payload.get("native_tool_surface"), dict)
+        else {}
+    )
+    return (
+        native_tool_surface.get("workflow_surface", {})
+        if isinstance(native_tool_surface.get("workflow_surface"), dict)
+        else {}
+    )
+
+
+def _adapter_productization_surface(*, adapter_contract: dict[str, object]) -> dict[str, object]:
+    return derive_adapter_productization_surface(adapter_contract=adapter_contract)
+
+
+def _adapter_capability_surface(payload: dict[str, object]) -> dict[str, object]:
+    adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
+    capability_surface = (
+        adapter_contract.get("capability_surface", {})
+        if isinstance(adapter_contract.get("capability_surface"), dict)
+        else {}
+    )
+    return dict(capability_surface) if capability_surface else {}
+
+
+def _adapter_capability_summary(payload: dict[str, object]) -> dict[str, object]:
+    adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
+    return derive_adapter_capability_summary(
+        adapter_contract=adapter_contract,
+        adapter_capability_surface=_adapter_capability_surface(payload),
+    )
+
+
+def _session_planner_decision_from_payload(payload: dict[str, object]) -> dict[str, object]:
+    strategy_summary = payload.get("strategy_summary", {}) if isinstance(payload.get("strategy_summary"), dict) else {}
+    decision_evidence = (
+        strategy_summary.get("decision_evidence", {})
+        if isinstance(strategy_summary.get("decision_evidence"), dict)
+        else {}
+    )
+    operator_control = (
+        payload.get("session_continuity_contract", {}).get("operator_control", {})
+        if isinstance(payload.get("session_continuity_contract"), dict)
+        and isinstance(payload.get("session_continuity_contract", {}).get("operator_control"), dict)
+        else {}
+    )
+    return derive_session_planner_decision_from_payload(
+        strategy_summary=strategy_summary,
+        decision_evidence=decision_evidence,
+        operator_control=operator_control,
+    )
+
+
+def _session_continuity_outline_from_payload(payload: dict[str, object]) -> dict[str, object]:
+    continuity_contract = (
+        payload.get("session_continuity_contract", {})
+        if isinstance(payload.get("session_continuity_contract"), dict)
+        else {}
+    )
+    return derive_session_continuity_outline_from_contract(
+        continuity_contract=continuity_contract,
+        planner_family=(
+            payload.get("strategy_summary", {}).get("planner_family")
+            if isinstance(payload.get("strategy_summary"), dict)
+            else None
+        ),
+    )
+
+
+def _runtime_duration_seconds_from_trace(payload: dict[str, object]) -> float | None:
+    tool_trace = payload.get("native_tool_trace", {}) if isinstance(payload.get("native_tool_trace"), dict) else {}
+    trace = tool_trace.get("trace", []) if isinstance(tool_trace.get("trace"), list) else []
+    timestamps = [entry.get("timestamp") for entry in trace if isinstance(entry, dict)]
+    valid: list[datetime] = []
+    for value in timestamps:
+        if not isinstance(value, str):
+            continue
+        try:
+            valid.append(datetime.fromisoformat(value))
+        except ValueError:
+            continue
+    if len(valid) < 2:
+        return None
+    return round((max(valid) - min(valid)).total_seconds(), 6)
+
+
+def _usage_cost_measurement_status(payload: dict[str, object]) -> str:
+    usage = payload.get("usage", {})
+    if isinstance(usage, dict) and usage:
+        return "measured"
+    return "placeholder"
 
 
 def _summarize_compacted_history(
@@ -4074,7 +5566,9 @@ def _persist_execution_state(
             }
             for step in steps
         ],
-        "resume_contract": _resume_contract(request, pending_approval, current_step),
+        "resume_contract": payload.get("resume_contract")
+        if isinstance(payload.get("resume_contract"), dict)
+        else _resume_contract(request, pending_approval, current_step, payload=payload),
         "execution_history_summary": payload.get("execution_history_summary"),
         "compressed_context": payload.get("compressed_context"),
         "next_step_contract": payload.get("next_step_contract"),
@@ -4118,13 +5612,37 @@ def _record_execution_artifacts(
             "artifact_count": artifact_summary.get("artifact_count", 0),
             "artifacts": artifacts,
             "native_tool_surface": payload.get("native_tool_surface"),
+            "native_tool_workflow_surface": payload.get("native_tool_workflow_surface"),
+            "native_tool_usage": payload.get("native_tool_usage"),
+            "native_tool_productization_surface": payload.get("native_tool_productization_surface"),
+            "adapter_capability_surface": payload.get("adapter_capability_surface"),
+            "adapter_capability": payload.get("adapter_capability"),
+            "adapter_shared_contract": payload.get("adapter_shared_contract"),
+            "adapter_productization_surface": payload.get("adapter_productization_surface"),
+            "shared_productization_surface": payload.get("shared_productization_surface"),
+            "comparative_benchmark": payload.get("comparative_benchmark"),
+            "comparative_benchmark_digest": payload.get("comparative_benchmark_digest"),
             "native_tool_trace": payload.get("native_tool_trace"),
             "repo_report": payload.get("repo_report"),
-            "adapter_contract": payload.get("adapter_contract"),
-            "path_selection": payload.get("path_selection"),
-            "compressed_context": payload.get("compressed_context"),
-            "compaction_state": payload.get("compaction_state"),
+        "strategy_summary": payload.get("strategy_summary"),
+        "planner_shared_contract": payload.get("strategy_summary", {}).get("decision_evidence")
+        if isinstance(payload.get("strategy_summary"), dict)
+        and isinstance(payload.get("strategy_summary", {}).get("decision_evidence"), dict)
+        else None,
+        "planner_decision": payload.get("context_snapshot", {}).get("planner_decision")
+        if isinstance(payload.get("context_snapshot"), dict)
+        and isinstance(payload.get("context_snapshot", {}).get("planner_decision"), dict)
+        else None,
+        "continuity_outline": payload.get("context_snapshot", {}).get("continuity_outline")
+        if isinstance(payload.get("context_snapshot"), dict)
+        and isinstance(payload.get("context_snapshot", {}).get("continuity_outline"), dict)
+        else None,
+        "adapter_contract": payload.get("adapter_contract"),
+        "path_selection": payload.get("path_selection"),
+        "compressed_context": payload.get("compressed_context"),
+        "compaction_state": payload.get("compaction_state"),
             "session_continuity_contract": payload.get("session_continuity_contract"),
+            "resume_contract": payload.get("resume_contract"),
             "context_engineering_contract": payload.get("context_engineering_contract"),
             "resume_context": payload.get("resume_context"),
             "step_loop_contract": payload.get("step_loop_contract"),
@@ -4151,12 +5669,32 @@ def _path_selection_payload(request: ExecutionRequest) -> dict[str, object]:
     fallback_reason_code = getattr(request.route, "fallback_reason_code", None) or (
         "native_runtime_unavailable" if default_path == "native" else "external_runtime_unavailable"
     )
+    planner_intent = getattr(request.route, "planner_intent", None)
+    if not isinstance(planner_intent, dict) or not planner_intent:
+        planner_intent = {
+            "version": "agent_orchestrator.route_planner_intent.v1",
+            "explore": False,
+            "clarify": False,
+            "edit": default_path == "native",
+            "verify": default_path == "native",
+            "pause": False,
+            "handoff": default_path == "external" and operating_boundary == "external_preferred",
+            "fallback": default_path != "native" and operating_boundary != "external_preferred",
+            "priority": ["edit", "verify"] if default_path == "native" else ["handoff"],
+            "native_first": default_path == "native",
+            "requires_confirmation": bool(getattr(request.route, "requires_human_confirmation", False)),
+            "risk_level": getattr(request.route, "risk_level", None),
+        }
     return {
         "default_path": default_path,
         "operating_boundary": operating_boundary,
         "selection_reason": selection_reason,
         "handoff_reason_code": handoff_reason_code,
         "fallback_reason_code": fallback_reason_code,
+        "native_coverage_class": getattr(request.route, "native_coverage_class", None),
+        "learning_consumed": bool(getattr(request.route, "learning_consumed", False)),
+        "learning_source_count": int(getattr(request.route, "learning_source_count", 0) or 0),
+        "planner_intent": dict(planner_intent),
     }
 
 
@@ -4171,6 +5709,82 @@ def _shared_adapter_capability_surface(
     recovery_surfaces: list[str],
     runtime_metadata: dict[str, object],
 ) -> dict[str, object]:
+    shared_evidence_surface = [
+        "runtime_payload",
+        "workspace_index",
+        "ui_execution_summary",
+        "cli_execution_summary",
+        "evidence_report",
+        "session_continuity",
+        "session_productization_surface",
+        "planner_closure_posture",
+        "native_tool_workflow_surface",
+        "native_tool_productization_surface",
+        "adapter_shared_contract",
+    ]
+    operator_recovery_surface = {
+        "format": "agent_orchestrator.adapter_operator_recovery_surface.v1",
+        "governed_lanes": [
+            "continue_execution",
+            "approval_pause" if approval_pause_supported else "continue_execution",
+            "fallback_external",
+            "handoff_external",
+        ],
+        "default_recovery_lane": "approval_pause" if approval_pause_supported else "continue_execution",
+        "continuity_expectation": "resume_contract_required" if "resume_contract" in recovery_surfaces else "fresh_or_external_reentry",
+        "evidence_backed_lanes": list(evidence_outputs),
+        "operator_visible": True,
+    }
+    shared_contract = {
+        "format": "agent_orchestrator.adapter_shared_contract.v1",
+        "comparison_mode": "same_contract_two_executors",
+        "path_selection": dict(path_selection),
+        "approval_semantics": {
+            "approval_required": approval_required,
+            "approval_pause_supported": approval_pause_supported,
+        },
+        "evidence_outputs": list(evidence_outputs),
+        "recovery_surfaces": list(recovery_surfaces),
+        "continuity_support": {
+            "resume_contract": "resume_contract" in recovery_surfaces,
+            "approval_pause_state": "approval_pause_state" in recovery_surfaces,
+        },
+        "shared_evidence_surface": list(shared_evidence_surface),
+        "operator_visibility_contract": {
+            "format": "agent_orchestrator.adapter_operator_visibility_contract.v1",
+            "session_surface_required": True,
+            "planner_surface_required": True,
+            "tool_surface_required": True,
+            "comparative_surface_required": True,
+            "required_surfaces": [
+                "session_continuity",
+                "session_productization_surface",
+                "planner_closure_posture",
+                "native_tool_workflow_surface",
+                "native_tool_productization_surface",
+                "workspace_index",
+                "ui_execution_summary",
+                "cli_execution_summary",
+                "evidence_report",
+            ],
+        },
+        "tooling_contract": {
+            "format": "agent_orchestrator.adapter_tooling_contract.v1",
+            "explore_surface_required": True,
+            "edit_surface_required": True,
+            "verify_surface_required": True,
+            "workflow_projection_required": True,
+        },
+        "operator_recovery_surface": operator_recovery_surface,
+        "recovery_contract": {
+            "continue_allowed": True,
+            "scope_realign_required": False,
+            "fallback_allowed": True,
+            "handoff_allowed": True,
+            "remaining_budget_preserved": True,
+            "resume_continuity_required": "resume_contract" in recovery_surfaces,
+        },
+    }
     return {
         "format": "agent_orchestrator.adapter_capability_surface.v1",
         "adapter_family": adapter_family,
@@ -4185,11 +5799,151 @@ def _shared_adapter_capability_surface(
         },
         "evidence_outputs": list(evidence_outputs),
         "recovery_surfaces": list(recovery_surfaces),
+        "shared_evidence_surface": list(shared_evidence_surface),
+        "operator_recovery_surface": operator_recovery_surface,
+        "shared_contract": shared_contract,
         "comparability": {
             "shared_with_external": True,
             "shared_with_native": True,
             "comparison_mode": "same_contract_two_executors",
         },
+    }
+
+
+def _adapter_shared_contract_summary_from_payload(payload: dict[str, object]) -> dict[str, object]:
+    adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
+    capability_surface = (
+        adapter_contract.get("capability_surface", {})
+        if isinstance(adapter_contract.get("capability_surface"), dict)
+        else {}
+    )
+    shared_contract = (
+        capability_surface.get("shared_contract", {})
+        if isinstance(capability_surface.get("shared_contract"), dict)
+        else {}
+    )
+    path_selection = payload.get("path_selection", {}) if isinstance(payload.get("path_selection"), dict) else {}
+    return {
+        "adapter_family": adapter_contract.get("adapter_family"),
+        "agent_kind": adapter_contract.get("agent_kind"),
+        "format": "agent_orchestrator.adapter_shared_contract.v1",
+        "comparison_mode": (
+            capability_surface.get("comparability", {}).get("comparison_mode")
+            if isinstance(capability_surface.get("comparability"), dict)
+            else None
+        ),
+        "default_path": path_selection.get("default_path"),
+        "operating_boundary": path_selection.get("operating_boundary"),
+        "selection_reason": path_selection.get("selection_reason"),
+        "handoff_reason_code": path_selection.get("handoff_reason_code"),
+        "fallback_reason_code": path_selection.get("fallback_reason_code"),
+        "native_coverage_class": path_selection.get("native_coverage_class"),
+        "learning_consumed": path_selection.get("learning_consumed"),
+        "learning_source_count": path_selection.get("learning_source_count"),
+        "approval_required": adapter_contract.get("approval_semantics", {}).get("approval_required")
+        if isinstance(adapter_contract.get("approval_semantics"), dict)
+        else None,
+        "approval_pause_supported": adapter_contract.get("approval_semantics", {}).get("approval_pause_supported")
+        if isinstance(adapter_contract.get("approval_semantics"), dict)
+        else None,
+        "hot_plug_supported": (
+            capability_surface.get("governance", {}).get("hot_plug_supported")
+            if isinstance(capability_surface.get("governance"), dict)
+            else None
+        ),
+        "fallback_governed": (
+            capability_surface.get("governance", {}).get("fallback_governed")
+            if isinstance(capability_surface.get("governance"), dict)
+            else None
+        ),
+        "evidence_outputs": list(adapter_contract.get("evidence_outputs", []))
+        if isinstance(adapter_contract.get("evidence_outputs"), list)
+        else [],
+        "recovery_surfaces": list(adapter_contract.get("recovery_surfaces", []))
+        if isinstance(adapter_contract.get("recovery_surfaces"), list)
+        else [],
+        "recovery_contract": dict(shared_contract.get("recovery_contract", {}))
+        if isinstance(shared_contract.get("recovery_contract"), dict)
+        else {},
+        "continuity_support": dict(shared_contract.get("continuity_support", {}))
+        if isinstance(shared_contract.get("continuity_support"), dict)
+        else {},
+        "shared_evidence_surface": list(shared_contract.get("shared_evidence_surface", []))
+        if isinstance(shared_contract.get("shared_evidence_surface"), list)
+        else [],
+        "operator_visibility_contract": dict(shared_contract.get("operator_visibility_contract", {}))
+        if isinstance(shared_contract.get("operator_visibility_contract"), dict)
+        else {},
+        "tooling_contract": dict(shared_contract.get("tooling_contract", {}))
+        if isinstance(shared_contract.get("tooling_contract"), dict)
+        else {},
+        "operator_recovery_surface": dict(shared_contract.get("operator_recovery_surface", {}))
+        if isinstance(shared_contract.get("operator_recovery_surface"), dict)
+        else {},
+        "shared_contract_format": shared_contract.get("format"),
+        "shared_contract_resume_supported": shared_contract.get("continuity_support", {}).get("resume_contract")
+        if isinstance(shared_contract.get("continuity_support"), dict)
+        else None,
+    }
+
+
+def _native_tool_usage_summary(payload: dict[str, object]) -> dict[str, object]:
+    native_tool_trace = (
+        payload.get("native_tool_trace", {})
+        if isinstance(payload.get("native_tool_trace"), dict)
+        else {}
+    )
+    trace_entries = (
+        native_tool_trace.get("trace", [])
+        if isinstance(native_tool_trace.get("trace"), list)
+        else []
+    )
+    native_tool_surface = (
+        payload.get("native_tool_surface", {})
+        if isinstance(payload.get("native_tool_surface"), dict)
+        else {}
+    )
+    return {
+        "tool_count": len(native_tool_surface.get("tools", []))
+        if isinstance(native_tool_surface.get("tools"), list)
+        else 0,
+        "trace_count": len(trace_entries),
+        "recent_tools": [
+            item.get("tool")
+            for item in trace_entries[-5:]
+            if isinstance(item, dict) and item.get("tool")
+        ],
+    }
+
+
+def _runtime_comparative_execution_artifact_summary(payload: dict[str, object]) -> dict[str, object]:
+    continuity_contract = (
+        payload.get("session_continuity_contract", {})
+        if isinstance(payload.get("session_continuity_contract"), dict)
+        else {}
+    )
+    return {
+        "native_task_proof": payload.get("native_task_proof", {}),
+        "native_repo_task_acceptance": payload.get("native_repo_task_acceptance", {}),
+        "native_complex_repo_task_acceptance": payload.get("native_complex_repo_task_acceptance", {}),
+        "adapter_shared_contract": payload.get("adapter_shared_contract", {}),
+        "session_continuity": {
+            "continuity_snapshot": continuity_contract.get("continuity_snapshot", {}),
+            "session_productization_surface": continuity_contract.get("session_productization_surface", {}),
+            "program_continuity": continuity_contract.get("program_continuity", {}),
+            "daily_driver_readiness": continuity_contract.get("daily_driver_readiness", {}),
+        },
+        "native_tool_workflow_surface": payload.get("native_tool_workflow_surface", {}),
+        "native_tool_productization_surface": payload.get("native_tool_productization_surface", {}),
+        "adapter_productization_surface": payload.get("adapter_productization_surface", {}),
+        "planner_shared_contract": payload.get("strategy_summary", {}).get("decision_evidence", {})
+        if isinstance(payload.get("strategy_summary"), dict)
+        and isinstance(payload.get("strategy_summary", {}).get("decision_evidence"), dict)
+        else {},
+        "native_tool_usage": payload.get("native_tool_usage", {}),
+        "planner_decision": payload.get("planner_decision", {}),
+        "continuity_outline": payload.get("continuity_outline", {}),
+        "runtime_cost": payload.get("runtime_cost", {}),
     }
 
 
@@ -4439,12 +6193,78 @@ def _native_complex_repo_task_acceptance(
     ]
     verification_command = verification.get("command", []) if isinstance(verification.get("command"), list) else []
     verification_artifact = verification.get("artifact", {}) if isinstance(verification.get("artifact"), dict) else {}
+    strategy_summary = payload.get("strategy_summary", {}) if isinstance(payload.get("strategy_summary"), dict) else {}
+    planner_shared_contract = (
+        strategy_summary.get("decision_evidence", {})
+        if isinstance(strategy_summary.get("decision_evidence"), dict)
+        else {}
+    )
+    tool_workflow_plan = (
+        planner_shared_contract.get("tool_workflow_plan", {})
+        if isinstance(planner_shared_contract.get("tool_workflow_plan"), dict)
+        else {}
+    )
+    workflow_stages = (
+        tool_workflow_plan.get("workflow_stages", {})
+        if isinstance(tool_workflow_plan.get("workflow_stages"), dict)
+        else {}
+    )
+    planner_context_trace = (
+        payload.get("planner_context_trace", [])
+        if isinstance(payload.get("planner_context_trace"), list)
+        else []
+    )
+    action_selection_trace = (
+        payload.get("action_selection_trace", [])
+        if isinstance(payload.get("action_selection_trace"), list)
+        else []
+    )
     trace_entries = native_tool_trace.get("trace", []) if isinstance(native_tool_trace.get("trace"), list) else []
     explored_tools = [
         item.get("tool")
         for item in trace_entries
-        if isinstance(item, dict) and item.get("tool") in {"read", "search", "glob", "repo_map"}
+        if isinstance(item, dict) and item.get("tool") in {"repo_map", "find_files", "search", "outline", "read", "glob"}
     ]
+    edit_workflow_tools = [
+        item.get("tool")
+        for item in trace_entries
+        if isinstance(item, dict) and item.get("tool") in {"patch_preview", "structured_patch", "diff_preview"}
+    ]
+    verification_tools = [
+        item.get("tool")
+        for item in trace_entries
+        if isinstance(item, dict) and item.get("tool") in {"verify", "tool_trace"}
+    ]
+    selected_workflow_stages = [
+        stage_name
+        for stage_name in ("explore", "edit", "verify")
+        if isinstance(workflow_stages.get(stage_name), dict) and workflow_stages.get(stage_name, {}).get("selected") is True
+    ]
+    trace_stage_alignment = {
+        stage_name: any(
+            isinstance(item, dict)
+            and item.get("stage_cursor") == stage_name
+            and isinstance(item.get("current_stage_workflow"), dict)
+            and item.get("current_stage_workflow", {}).get("selected") is True
+            for item in planner_context_trace
+        )
+        for stage_name in selected_workflow_stages
+    }
+    action_required_tool_alignment = {
+        stage_name: any(
+            isinstance(item, dict)
+            and item.get("stage") == stage_name
+            and isinstance(item.get("decision"), dict)
+            and all(
+                tool_name in item.get("decision", {}).get("current_stage_required_tools", [])
+                for tool_name in workflow_stages.get(stage_name, {}).get("required_tools", [])
+                if isinstance(tool_name, str)
+            )
+            for item in action_selection_trace
+        )
+        for stage_name in ("edit", "verify")
+        if isinstance(workflow_stages.get(stage_name), dict) and workflow_stages.get(stage_name, {}).get("selected") is True
+    }
     complex_checks = {
         "multi_target_exploration_present": {
             "passed": len(target_paths) >= 3,
@@ -4474,10 +6294,46 @@ def _native_complex_repo_task_acceptance(
             },
         },
         "native_exploration_trace_visible": {
-            "passed": len(explored_tools) >= 3 and any(tool in explored_tools for tool in {"search", "read"}),
+            "passed": len(explored_tools) >= 4
+            and all(tool in explored_tools for tool in {"find_files", "search", "outline", "read"}),
             "evidence": {
                 "explored_tools": explored_tools,
                 "trace_count": len(trace_entries),
+            },
+        },
+        "governed_edit_workflow_trace_visible": {
+            "passed": all(tool in edit_workflow_tools for tool in {"patch_preview", "structured_patch", "diff_preview"}),
+            "evidence": {
+                "edit_workflow_tools": edit_workflow_tools,
+                "trace_count": len(trace_entries),
+            },
+        },
+        "verification_workflow_trace_visible": {
+            "passed": "verify" in verification_tools,
+            "evidence": {
+                "verification_tools": verification_tools,
+                "trace_count": len(trace_entries),
+            },
+        },
+        "planner_workflow_contract_visible": {
+            "passed": tool_workflow_plan.get("format") == "agent_orchestrator.native_tool_workflow_plan.v1"
+            and tool_workflow_plan.get("workflow_projection_required") is True
+            and selected_workflow_stages == ["explore", "edit", "verify"],
+            "evidence": {
+                "tool_workflow_plan": tool_workflow_plan,
+                "selected_workflow_stages": selected_workflow_stages,
+            },
+        },
+        "planner_workflow_runtime_alignment_visible": {
+            "passed": bool(trace_stage_alignment)
+            and all(trace_stage_alignment.values())
+            and bool(action_required_tool_alignment)
+            and all(action_required_tool_alignment.values()),
+            "evidence": {
+                "trace_stage_alignment": trace_stage_alignment,
+                "action_required_tool_alignment": action_required_tool_alignment,
+                "planner_context_trace_count": len(planner_context_trace),
+                "action_selection_trace_count": len(action_selection_trace),
             },
         },
     }
@@ -4565,8 +6421,46 @@ def _resume_contract(
     request: ExecutionRequest,
     pending_approval: dict[str, object] | None,
     current_step: ExecutionStep | None,
+    *,
+    payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     metadata = request.session_metadata if isinstance(request.session_metadata, dict) else {}
+    payload = payload if isinstance(payload, dict) else {}
+    continuity_contract = (
+        payload.get("session_continuity_contract", {})
+        if isinstance(payload.get("session_continuity_contract"), dict)
+        else {}
+    )
+    continuity_snapshot = (
+        continuity_contract.get("continuity_snapshot", {})
+        if isinstance(continuity_contract.get("continuity_snapshot"), dict)
+        else {}
+    )
+    program_posture = (
+        continuity_contract.get("program_posture", {})
+        if isinstance(continuity_contract.get("program_posture"), dict)
+        else {}
+    )
+    native_tool_usage = (
+        payload.get("native_tool_usage", {})
+        if isinstance(payload.get("native_tool_usage"), dict)
+        else {}
+    )
+    session_productization_surface = (
+        continuity_contract.get("session_productization_surface", {})
+        if isinstance(continuity_contract.get("session_productization_surface"), dict)
+        else {}
+    )
+    workflow_continuity = (
+        continuity_contract.get("workflow_continuity", {})
+        if isinstance(continuity_contract.get("workflow_continuity"), dict)
+        else {}
+    )
+    operator_posture_digest = (
+        session_productization_surface.get("operator_posture_digest", {})
+        if isinstance(session_productization_surface.get("operator_posture_digest"), dict)
+        else {}
+    )
     return ExecutionResumeContract(
         resume_kind=request.resume_kind or "fresh",
         run_id=_runtime_run_id(request),
@@ -4577,6 +6471,14 @@ def _resume_contract(
         approved_approval_id=str(metadata.get("approved_approval_id")) if metadata.get("approved_approval_id") is not None else None,
         pending_approval=dict(pending_approval) if isinstance(pending_approval, dict) else None,
         resume_supported=True,
+        continuity_snapshot=continuity_snapshot,
+        program_posture=program_posture,
+        workflow_continuity=workflow_continuity,
+        native_tool_usage=native_tool_usage,
+        operator_posture_digest=operator_posture_digest,
+        shared_evidence_surface=list(continuity_contract.get("shared_evidence_surface", []))
+        if isinstance(continuity_contract.get("shared_evidence_surface"), list)
+        else [],
     ).to_dict()
 
 

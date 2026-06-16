@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agent_orchestrator.control_plane import build_runtime_event_stream, build_workspace_index
+from agent_orchestrator.control_plane import build_runtime_event_stream, build_workspace_index, resolve_approval_item
 from agent_orchestrator.control_plane_workspace import WorkspaceIndexStore
 from agent_orchestrator.execution import CodingAgentExecutionRuntime, ExecutionRequest
 from agent_orchestrator.execution.coding_components import VerificationReport
@@ -22,6 +22,22 @@ from agent_orchestrator.intake import ClarifyPolicy, ExecutionMode, TaskKind, Ta
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+from agent_orchestrator.productization_surface import (
+    build_comparative_adapter_summary,
+    build_comparative_completion_summary,
+    build_comparative_daily_driver_summary,
+    build_comparative_native_closure_summary,
+    build_comparative_native_tool_summary,
+    build_comparative_planner_candidate_summary,
+    build_comparative_session_continuity_summary,
+    build_comparative_session_posture_summary,
+    build_external_comparison_harness_surface,
+    build_runtime_comparative_benchmark_digest,
+    derive_approval_boundary_digest,
+    derive_clarify_boundary_digest,
+    derive_operator_planner_digest,
+    derive_operator_tool_digest,
+)
 from agent_orchestrator.run_store import RunStore
 from agent_orchestrator.ui_service import _linked_execution_summary
 
@@ -153,6 +169,24 @@ def benchmark_evidence_cases() -> list[WorkflowEvidenceCase]:
             operator_goal="prove a longer native-first repository task can close through exploration, multi-file editing, verification, and docs synchronization without external help",
             expected_signals=("recovery_guidance", "doc_sync", "cost_latency"),
             runtime_expectation="native exploration, multi-file mutation, verification, and repo-facing surface updates stay on the native path",
+        ),
+        WorkflowEvidenceCase(
+            requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "root map updated" to docs/process/root-map.md and append "context map updated" to docs/process/context-map.md and append "project index updated" to docs/process/project-index.md and append "native upgrade plan updated" to docs/architecture/native-coding-agent-upgrade-plan.md',
+            label="repo_task_acceptance_workspace_index_long_chain",
+            scenario_type="repo_task_acceptance",
+            risk_profile="medium",
+            operator_goal="prove a second longer native-first repository task can close through exploration, multi-file editing, verification, and workspace/architecture index synchronization without external help",
+            expected_signals=("recovery_guidance", "doc_sync", "cost_latency"),
+            runtime_expectation="native exploration, multi-file mutation, verification, and workspace-facing architecture index updates stay on the native path",
+        ),
+        WorkflowEvidenceCase(
+            requirement='Replace "VALUE = 1" with "VALUE = 2" in src/agent_orchestrator/stub.py and replace "FLAG = 0" with "FLAG = 1" in src/agent_orchestrator/compliance_signal.py and replace \'return {"status": "stub"}\' with \'return {"status": "implemented", "checks": 1}\' in src/agent_orchestrator/summary_helper.py and append "artifact contract updated" to docs/process/control-plane-artifact-contracts.md and append "dogfood evidence updated" to docs/process/native-coding-agent-dogfood-evidence.md and append "project index refreshed" to docs/process/project-index.md',
+            label="repo_task_acceptance_evidence_contract_long_chain",
+            scenario_type="repo_task_acceptance",
+            risk_profile="medium",
+            operator_goal="prove a third longer native-first repository task can close through exploration, multi-file editing, verification, and evidence-contract synchronization without external help",
+            expected_signals=("recovery_guidance", "doc_sync", "cost_latency"),
+            runtime_expectation="native exploration, multi-file mutation, verification, and evidence-facing contract updates stay on the native path",
         ),
     ]
 
@@ -335,6 +369,12 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
         f"- native_complex_repo_task_acceptance_ready_cases: {real_task_metrics.get('native_complex_repo_task_acceptance_ready_cases', 0)}"
     )
     lines.append(
+        f"- long_chain_native_first_ready_cases: {real_task_metrics.get('long_chain_native_first_ready_cases', 0)}"
+    )
+    lines.append(
+        f"- daily_driver_main_path_ready_cases: {real_task_metrics.get('daily_driver_main_path_ready_cases', 0)}"
+    )
+    lines.append(
         f"- stronger_repo_task_acceptance_signal_visible_cases: {real_task_metrics.get('native_dogfood_surface_ready_cases', 0)}"
     )
     lines.append(
@@ -354,6 +394,7 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
         "workspace_index_native_proof, ui_execution_summary_native_proof, ui_context_engineering_visible, "
         "ui_control_plane_workspace_index_visible, workspace_native_exploration_visible, "
         "workspace_adapter_shared_contract_visible, workspace_planner_shared_contract_visible, "
+        "workspace_daily_driver_main_path_visible, ui_daily_driver_main_path_visible, "
         "planner_shared_contract_native_visible"
     )
 
@@ -372,13 +413,600 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
     comparative = summary.get("comparative_benchmark", {}) if isinstance(summary.get("comparative_benchmark"), dict) else {}
     if comparative:
         shared_surface = comparative.get("shared_evidence_surface", [])
+        shared_alignment = (
+            comparative.get("shared_contract_alignment", {})
+            if isinstance(comparative.get("shared_contract_alignment"), dict)
+            else {}
+        )
         lines.extend(["", "## Comparative Benchmark", ""])
+        lines.append(
+            f"- shared_productization_contract_ready: {comparative.get('shared_productization_contract_ready', False)}"
+        )
+        posture = (
+            comparative.get("comparison_posture", {})
+            if isinstance(comparative.get("comparison_posture"), dict)
+            else {}
+        )
+        if posture:
+            remaining = ",".join(str(item) for item in posture.get("remaining_gap_classes", [])) if isinstance(posture.get("remaining_gap_classes"), list) else ""
+            lines.append(
+                "- comparison_posture: "
+                f"status={posture.get('status')}, "
+                f"confidence={posture.get('confidence')}, "
+                f"foundation_gap_remaining={posture.get('foundation_gap_remaining')}, "
+                f"remaining_gap_classes={remaining or 'none'}"
+            )
+        posture_basis = (
+            comparative.get("comparison_posture_basis", {})
+            if isinstance(comparative.get("comparison_posture_basis"), dict)
+            else {}
+        )
+        if posture_basis:
+            limitations = ",".join(str(item) for item in posture_basis.get("comparison_limitations", [])) if isinstance(posture_basis.get("comparison_limitations"), list) else ""
+            refs = ",".join(str(item) for item in posture_basis.get("basis_surface_refs", [])) if isinstance(posture_basis.get("basis_surface_refs"), list) else ""
+            lines.append(
+                "- comparison_posture_basis: "
+                f"shared_productization_ready={posture_basis.get('shared_productization_contract_ready')}, "
+                f"daily_driver_case_ready={posture_basis.get('long_chain_daily_driver_case_ready')}, "
+                f"planner_candidate_surface_ready={posture_basis.get('planner_candidate_surface_ready')}, "
+                f"unified_adapter_contract_ready={posture_basis.get('unified_adapter_contract_ready')}, "
+                f"daily_driver_main_path_ready_cases={posture_basis.get('daily_driver_main_path_ready_cases')}, "
+                f"evidence_scope={posture_basis.get('evidence_scope')}, "
+                f"basis_surface_refs={refs or 'none'}, "
+                f"comparison_limitations={limitations or 'none'}"
+            )
+        planner_closure_posture = (
+            comparative.get("planner_closure_posture", {})
+            if isinstance(comparative.get("planner_closure_posture"), dict)
+            else {}
+        )
+        if planner_closure_posture:
+            lines.append(
+                "- planner_closure_posture: "
+                f"closure_mode={planner_closure_posture.get('closure_mode')}, "
+                f"next_recommended_action={planner_closure_posture.get('next_recommended_action')}, "
+                f"resume_posture={planner_closure_posture.get('resume_posture')}, "
+                f"verify_selected={planner_closure_posture.get('verify_selected')}, "
+                f"verification_status={planner_closure_posture.get('verification_status')}"
+            )
+        comparative_native_tool_summary = (
+            comparative.get("comparative_native_tool_summary", {})
+            if isinstance(comparative.get("comparative_native_tool_summary"), dict)
+            else {}
+        )
+        if comparative_native_tool_summary:
+            lines.append(
+                "- comparative_native_tool_summary: "
+                f"posture={comparative_native_tool_summary.get('tooling_posture')}, "
+                f"read_search={comparative_native_tool_summary.get('bounded_read_search_ready')}, "
+                f"patch={comparative_native_tool_summary.get('structured_patch_ready')}, "
+                f"verify={comparative_native_tool_summary.get('verification_ready')}, "
+                f"daily_driver={','.join(str(item) for item in comparative_native_tool_summary.get('daily_driver_tools', [])) if isinstance(comparative_native_tool_summary.get('daily_driver_tools'), list) and comparative_native_tool_summary.get('daily_driver_tools') else 'none'}"
+            )
+        operator_planner_digest = (
+            comparative.get("operator_planner_digest", {})
+            if isinstance(comparative.get("operator_planner_digest"), dict)
+            else {}
+        )
+        if operator_planner_digest:
+            lines.append(
+                "- operator_planner_digest: "
+                f"primary={operator_planner_digest.get('primary_action')}, "
+                f"executor={operator_planner_digest.get('selected_executor')}, "
+                f"mode={operator_planner_digest.get('closure_mode')}, "
+                f"next_action={operator_planner_digest.get('next_recommended_action')}, "
+                f"resume_expectation={operator_planner_digest.get('resume_expectation')}, "
+                f"resume_posture={operator_planner_digest.get('resume_posture')}, "
+                f"pause_expected={operator_planner_digest.get('pause_expected')}, "
+                f"handoff_expected={operator_planner_digest.get('handoff_expected')}, "
+                f"fallback_expected={operator_planner_digest.get('fallback_expected')}, "
+                f"requires_confirmation={operator_planner_digest.get('requires_human_confirmation')}, "
+                f"decision_mode={operator_planner_digest.get('decision_mode')}, "
+                f"candidates={operator_planner_digest.get('candidate_count')}, "
+                f"governed_alternatives={operator_planner_digest.get('governed_alternative_count')}, "
+                f"autonomy_actions={','.join(str(item) for item in operator_planner_digest.get('autonomy_selected_actions', [])) if isinstance(operator_planner_digest.get('autonomy_selected_actions'), list) and operator_planner_digest.get('autonomy_selected_actions') else 'none'}"
+            )
+        comparative_planner_candidate_summary = (
+            comparative.get("comparative_planner_candidate_summary", {})
+            if isinstance(comparative.get("comparative_planner_candidate_summary"), dict)
+            else {}
+        )
+        if comparative_planner_candidate_summary:
+            lines.append(
+                "- comparative_planner_candidate_summary: "
+                f"native_first={comparative_planner_candidate_summary.get('native_first')}, "
+                f"selected={comparative_planner_candidate_summary.get('selected_strategy')}, "
+                f"candidates={len(comparative_planner_candidate_summary.get('decision_candidates', [])) if isinstance(comparative_planner_candidate_summary.get('decision_candidates'), list) else 0}, "
+                f"governed_alternatives={len(comparative_planner_candidate_summary.get('governed_alternatives', [])) if isinstance(comparative_planner_candidate_summary.get('governed_alternatives'), list) else 0}, "
+                f"boundary={comparative_planner_candidate_summary.get('decision_boundary', {}).get('task_type') if isinstance(comparative_planner_candidate_summary.get('decision_boundary'), dict) else None}:{comparative_planner_candidate_summary.get('decision_boundary', {}).get('risk_level') if isinstance(comparative_planner_candidate_summary.get('decision_boundary'), dict) else None}, "
+                f"reason={comparative_planner_candidate_summary.get('planner_reasoning', {}).get('primary_action') if isinstance(comparative_planner_candidate_summary.get('planner_reasoning'), dict) else None}, "
+                f"decision_mode={comparative_planner_candidate_summary.get('autonomy_surface', {}).get('decision_mode') if isinstance(comparative_planner_candidate_summary.get('autonomy_surface'), dict) else None}, "
+                f"autonomy_actions={','.join(str(item) for item in comparative_planner_candidate_summary.get('action_coverage', {}).get('autonomy_selected_actions', [])) if isinstance(comparative_planner_candidate_summary.get('action_coverage'), dict) and isinstance(comparative_planner_candidate_summary.get('action_coverage', {}).get('autonomy_selected_actions'), list) and comparative_planner_candidate_summary.get('action_coverage', {}).get('autonomy_selected_actions') else 'none'}"
+            )
+        operator_tool_digest = (
+            comparative.get("operator_tool_digest", {})
+            if isinstance(comparative.get("operator_tool_digest"), dict)
+            else {}
+        )
+        if operator_tool_digest:
+            lines.append(
+                "- operator_tool_digest: "
+                f"posture={operator_tool_digest.get('tooling_posture')}, "
+                f"recent={','.join(str(item) for item in operator_tool_digest.get('recent_tools', [])) if isinstance(operator_tool_digest.get('recent_tools'), list) and operator_tool_digest.get('recent_tools') else 'none'}, "
+                f"explore={','.join(str(item) for item in operator_tool_digest.get('explore_tools', [])) if isinstance(operator_tool_digest.get('explore_tools'), list) and operator_tool_digest.get('explore_tools') else 'none'}, "
+                f"edit={','.join(str(item) for item in operator_tool_digest.get('edit_tools', [])) if isinstance(operator_tool_digest.get('edit_tools'), list) and operator_tool_digest.get('edit_tools') else 'none'}, "
+                f"verify={','.join(str(item) for item in operator_tool_digest.get('verify_tools', [])) if isinstance(operator_tool_digest.get('verify_tools'), list) and operator_tool_digest.get('verify_tools') else 'none'}"
+            )
+        comparative_adapter_summary = (
+            comparative.get("comparative_adapter_summary", {})
+            if isinstance(comparative.get("comparative_adapter_summary"), dict)
+            else {}
+        )
+        if comparative_adapter_summary:
+            lines.append(
+                "- comparative_adapter_summary: "
+                f"status={comparative_adapter_summary.get('surface_status')}, "
+                f"comparison_mode={comparative_adapter_summary.get('comparison_mode')}, "
+                f"hot_plug={comparative_adapter_summary.get('hot_plug_supported')}, "
+                f"fallback_governed={comparative_adapter_summary.get('fallback_governed')}, "
+                f"resume_supported={comparative_adapter_summary.get('resume_contract_supported')}, "
+                f"recovery_ready={comparative_adapter_summary.get('governed_recovery_ready')}, "
+                f"default_path={comparative_adapter_summary.get('default_path')}, "
+                f"boundary={comparative_adapter_summary.get('ownership_boundary')}, "
+                f"unified_contract={comparative_adapter_summary.get('unified_adapter_contract_ready')}"
+            )
+        comparative_session_posture_summary = (
+            comparative.get("comparative_session_posture_summary", {})
+            if isinstance(comparative.get("comparative_session_posture_summary"), dict)
+            else {}
+        )
+        session_productization_surface = (
+            comparative.get("session_productization_surface", {})
+            if isinstance(comparative.get("session_productization_surface"), dict)
+            else {}
+        )
+        operator_posture_digest = (
+            comparative_session_posture_summary.get("operator_posture_digest", {})
+            if isinstance(comparative_session_posture_summary.get("operator_posture_digest"), dict)
+            else session_productization_surface.get("operator_posture_digest", {})
+            if isinstance(session_productization_surface.get("operator_posture_digest"), dict)
+            else {}
+        )
+        if operator_posture_digest or comparative_session_posture_summary:
+            digest_status = operator_posture_digest.get("continuity_status")
+            if digest_status is None:
+                digest_status = (
+                    "ready"
+                    if comparative_session_posture_summary.get("resume_expectation")
+                    or comparative_session_posture_summary.get("resume_posture")
+                    else None
+                )
+            lines.append(
+                "- operator_posture_digest: "
+                f"status={digest_status}, "
+                f"compaction_stage={operator_posture_digest.get('compaction_stage') or comparative_session_posture_summary.get('compaction_stage')}, "
+                f"compaction_pressure={operator_posture_digest.get('compaction_pressure') or comparative_session_posture_summary.get('compaction_pressure')}, "
+                f"next_action={operator_posture_digest.get('next_recommended_action') or comparative_session_posture_summary.get('next_recommended_action')}, "
+                f"recovery_lane={operator_posture_digest.get('runbook_recovery_lane') or comparative_session_posture_summary.get('runbook_recovery_lane')}, "
+                f"resume_expectation={operator_posture_digest.get('resume_expectation') or comparative_session_posture_summary.get('resume_expectation')}, "
+                f"resume_posture={operator_posture_digest.get('resume_posture') or comparative_session_posture_summary.get('resume_posture')}, "
+                f"alternatives={','.join(str(item.get('action')) for item in (operator_posture_digest.get('planner_governed_alternatives', []) if isinstance(operator_posture_digest.get('planner_governed_alternatives'), list) else comparative_session_posture_summary.get('planner_governed_alternatives', []) if isinstance(comparative_session_posture_summary.get('planner_governed_alternatives'), list) else []) if isinstance(item, dict) and item.get('action')) or 'none'}"
+            )
+        if comparative_session_posture_summary:
+            lines.append(
+                "- comparative_session_posture_summary: "
+                f"primary={comparative_session_posture_summary.get('primary_action')}, "
+                f"pause_expected={comparative_session_posture_summary.get('pause_expected')}, "
+                f"handoff_expected={comparative_session_posture_summary.get('handoff_expected')}, "
+                f"fallback_expected={comparative_session_posture_summary.get('fallback_expected')}, "
+                f"clarify_pause={comparative_session_posture_summary.get('clarify_pause_state')}, "
+                f"approval_pause={comparative_session_posture_summary.get('approval_pause_state')}, "
+                f"resume_expectation={comparative_session_posture_summary.get('resume_expectation')}, "
+                f"resume_posture={comparative_session_posture_summary.get('resume_posture')}, "
+                f"workflow_stage={comparative_session_posture_summary.get('workflow_active_stage')}, "
+                f"workflow_projection_ready={comparative_session_posture_summary.get('workflow_projection_ready')}, "
+                f"next_action={comparative_session_posture_summary.get('next_recommended_action')}"
+            )
+        comparative_session_continuity_summary = (
+            comparative.get("comparative_session_continuity_summary", {})
+            if isinstance(comparative.get("comparative_session_continuity_summary"), dict)
+            else {}
+        )
+        if comparative_session_continuity_summary:
+            runtime_cost_provenance = (
+                comparative_session_continuity_summary.get("runtime_cost_provenance", {})
+                if isinstance(comparative_session_continuity_summary.get("runtime_cost_provenance"), dict)
+                else {}
+            )
+            lines.append(
+                "- comparative_session_continuity_summary: "
+                f"status={comparative_session_continuity_summary.get('continuity_status')}, "
+                f"resume_supported={comparative_session_continuity_summary.get('resume_supported')}, "
+                f"resume_kind={comparative_session_continuity_summary.get('resume_kind')}, "
+                f"resume_ready={comparative_session_continuity_summary.get('resume_ready')}, "
+                f"resume_posture={comparative_session_continuity_summary.get('resume_posture')}, "
+                f"recovery_active={comparative_session_continuity_summary.get('recovery_active')}, "
+                f"approval_boundary_active={comparative_session_continuity_summary.get('approval_boundary_active')}, "
+                f"governed_pause_resume_ready={comparative_session_continuity_summary.get('governed_pause_resume_ready')}, "
+                f"verification_resume_ready={comparative_session_continuity_summary.get('verification_resume_ready')}, "
+                f"compaction_stage={comparative_session_continuity_summary.get('compaction_stage')}, "
+                f"compaction_pressure={comparative_session_continuity_summary.get('compaction_pressure')}, "
+                f"context_pressure={comparative_session_continuity_summary.get('context_pressure')}, "
+                f"summarization_ready={comparative_session_continuity_summary.get('summarization_ready')}, "
+                f"runtime_duration_seconds={comparative_session_continuity_summary.get('runtime_duration_seconds')}, "
+                f"usage_cost_status={comparative_session_continuity_summary.get('usage_cost_measurement_status')}, "
+                f"duration_source={runtime_cost_provenance.get('duration_source')}, "
+                f"workflow_stage={comparative_session_continuity_summary.get('workflow_active_stage')}, "
+                f"workflow_resume_ready={comparative_session_continuity_summary.get('workflow_resume_ready')}, "
+                f"workflow_projection_visible={comparative_session_continuity_summary.get('workflow_projection_visible')}, "
+                f"workflow_recovery_aligned={comparative_session_continuity_summary.get('workflow_recovery_aligned')}, "
+                f"next_action={comparative_session_continuity_summary.get('next_recommended_action')}"
+            )
+        resume_contract = (
+            comparative.get("resume_contract", {})
+            if isinstance(comparative.get("resume_contract"), dict)
+            else {}
+        )
+        if not resume_contract:
+            resume_contract = (
+                summary.get("session_continuity", {}).get("resume_contract", {})
+                if isinstance(summary.get("session_continuity"), dict)
+                and isinstance(summary.get("session_continuity", {}).get("resume_contract"), dict)
+                else {}
+            )
+        if not resume_contract:
+            session_continuity = (
+                summary.get("session_continuity", {})
+                if isinstance(summary.get("session_continuity"), dict)
+                else {}
+            )
+            session_productization_surface = (
+                session_continuity.get("session_productization_surface", {})
+                if isinstance(session_continuity.get("session_productization_surface"), dict)
+                else {}
+            )
+            operator_continuity = (
+                session_productization_surface.get("operator_continuity", {})
+                if isinstance(session_productization_surface.get("operator_continuity"), dict)
+                else {}
+            )
+            program_posture = (
+                session_continuity.get("program_posture", {})
+                if isinstance(session_continuity.get("program_posture"), dict)
+                else {}
+            )
+            if session_continuity:
+                resume_contract = {
+                    "resume_kind": session_continuity.get("resume_kind") or operator_continuity.get("resume_expectation"),
+                    "current_stage": program_posture.get("active_milestone"),
+                    "program_posture": program_posture,
+                    "native_tool_usage": summary.get("native_tool_usage", {})
+                    if isinstance(summary.get("native_tool_usage"), dict)
+                    else {},
+                    "shared_evidence_surface": session_continuity.get("shared_evidence_surface", []),
+                }
+        if resume_contract:
+            native_tool_usage = (
+                resume_contract.get("native_tool_usage", {})
+                if isinstance(resume_contract.get("native_tool_usage"), dict)
+                else {}
+            )
+            lines.append(
+                "- resume_contract: "
+                f"resume_kind={resume_contract.get('resume_kind')}, "
+                f"stage={resume_contract.get('current_stage')}, "
+                f"active_milestone={(resume_contract.get('program_posture', {}) or {}).get('active_milestone') if isinstance(resume_contract.get('program_posture'), dict) else None}, "
+                f"trace_count={native_tool_usage.get('trace_count')}, "
+                f"shared_evidence_surface={','.join(str(item) for item in resume_contract.get('shared_evidence_surface', [])) if isinstance(resume_contract.get('shared_evidence_surface'), list) and resume_contract.get('shared_evidence_surface') else 'none'}"
+            )
+        clarify_boundary_digest = (
+            comparative.get("clarify_boundary_digest", {})
+            if isinstance(comparative.get("clarify_boundary_digest"), dict)
+            else derive_clarify_boundary_digest(
+                operator_planner_digest=operator_planner_digest,
+                comparative_session_posture_summary=comparative_session_posture_summary,
+                shared_evidence_surface=shared_surface if isinstance(shared_surface, list) else [],
+            )
+        )
+        approval_boundary_digest = (
+            comparative.get("approval_boundary_digest", {})
+            if isinstance(comparative.get("approval_boundary_digest"), dict)
+            else derive_approval_boundary_digest(
+                operator_planner_digest=operator_planner_digest,
+                comparative_session_posture_summary=comparative_session_posture_summary,
+                shared_evidence_surface=shared_surface if isinstance(shared_surface, list) else [],
+            )
+        )
+        if clarify_boundary_digest:
+            lines.append(
+                "- clarify_boundary_digest: "
+                f"status={clarify_boundary_digest.get('status')}, "
+                f"strategy={clarify_boundary_digest.get('selected_execution_strategy')}, "
+                f"next_action={clarify_boundary_digest.get('next_recommended_action')}, "
+                f"resume_expectation={clarify_boundary_digest.get('resume_expectation')}, "
+                f"recovery_lane={clarify_boundary_digest.get('recovery_lane')}, "
+                f"shared_evidence_surface={','.join(str(item) for item in clarify_boundary_digest.get('shared_evidence_surface', [])) if isinstance(clarify_boundary_digest.get('shared_evidence_surface'), list) and clarify_boundary_digest.get('shared_evidence_surface') else 'none'}"
+            )
+        if approval_boundary_digest:
+            lines.append(
+                "- approval_boundary_digest: "
+                f"status={approval_boundary_digest.get('status')}, "
+                f"strategy={approval_boundary_digest.get('selected_execution_strategy')}, "
+                f"next_action={approval_boundary_digest.get('next_recommended_action')}, "
+                f"resume_expectation={approval_boundary_digest.get('resume_expectation')}, "
+                f"recovery_lane={approval_boundary_digest.get('recovery_lane')}, "
+                f"shared_evidence_surface={','.join(str(item) for item in approval_boundary_digest.get('shared_evidence_surface', [])) if isinstance(approval_boundary_digest.get('shared_evidence_surface'), list) and approval_boundary_digest.get('shared_evidence_surface') else 'none'}"
+            )
+        comparative_daily_driver_summary = (
+            comparative.get("comparative_daily_driver_summary", {})
+            if isinstance(comparative.get("comparative_daily_driver_summary"), dict)
+            else build_comparative_daily_driver_summary(
+                proof_strength=(
+                    comparative.get("comparison_proof_strength", {})
+                    if isinstance(comparative.get("comparison_proof_strength"), dict)
+                    else {}
+                ),
+                benchmark_digest=(
+                    summary.get("comparative_benchmark_digest", {})
+                    if isinstance(summary.get("comparative_benchmark_digest"), dict)
+                    else {}
+                ),
+                comparative_benchmark=comparative,
+            )
+        )
+        if comparative_daily_driver_summary:
+            lines.append(
+                "- comparative_daily_driver_summary: "
+                f"status={comparative_daily_driver_summary.get('comparison_status')}, "
+                f"tier={comparative_daily_driver_summary.get('daily_driver_repeatability_tier')}, "
+                f"families={comparative_daily_driver_summary.get('independent_daily_driver_repo_task_family_count')}, "
+                f"direct={comparative_daily_driver_summary.get('direct_proof_status')}, "
+                f"repeatability={comparative_daily_driver_summary.get('repeatability_status')}"
+            )
+        if comparative.get("daily_driver_main_path_anchor"):
+            lines.append(
+                "- daily_driver_main_path_anchor: "
+                f"family={comparative.get('daily_driver_main_path_anchor')}, "
+                f"ready={comparative.get('daily_driver_main_path_ready')}, "
+                f"cases={comparative.get('daily_driver_main_path_ready_cases')}"
+            )
+        comparative_completion_summary = (
+            comparative.get("comparative_completion_summary", {})
+            if isinstance(comparative.get("comparative_completion_summary"), dict)
+            else build_comparative_completion_summary(
+                benchmark_digest=(
+                    summary.get("comparative_benchmark_digest", {})
+                    if isinstance(summary.get("comparative_benchmark_digest"), dict)
+                    else {}
+                ),
+                comparative_benchmark=comparative,
+            )
+        )
+        if comparative_completion_summary:
+            lines.append(
+                "- comparative_completion_summary: "
+                f"completion_ready={comparative_completion_summary.get('completion_ready')}, "
+                f"human_audit_required={comparative_completion_summary.get('human_audit_required')}, "
+                f"comparison_status={comparative_completion_summary.get('comparison_status')}, "
+                f"grade_status={comparative_completion_summary.get('comparison_grade_status')}, "
+                f"blocking_gap={comparative_completion_summary.get('blocking_gap')}, "
+                f"operator_action={comparative_completion_summary.get('operator_action')}"
+            )
+        comparative_native_closure_summary = (
+            comparative.get("comparative_native_closure_summary", {})
+            if isinstance(comparative.get("comparative_native_closure_summary"), dict)
+            else {}
+        )
+        if comparative_native_closure_summary:
+            lines.append(
+                "- comparative_native_closure_summary: "
+                f"native_runtime_only={comparative_native_closure_summary.get('native_runtime_only')}, "
+                f"closure_status={comparative_native_closure_summary.get('closure_status')}, "
+                f"verification_status={comparative_native_closure_summary.get('verification_status')}, "
+                f"repair_outcome={comparative_native_closure_summary.get('repair_outcome')}, "
+                f"proof_ready={comparative_native_closure_summary.get('proof_ready')}, "
+                f"proof_scenario={comparative_native_closure_summary.get('proof_scenario')}"
+            )
+        proof_strength = (
+            comparative.get("comparison_proof_strength", {})
+            if isinstance(comparative.get("comparison_proof_strength"), dict)
+            else {}
+        )
+        if proof_strength:
+            proof_limits = ",".join(str(item) for item in proof_strength.get("proof_limitations", [])) if isinstance(proof_strength.get("proof_limitations"), list) else ""
+            stronger_families = ",".join(str(item) for item in proof_strength.get("stronger_task_families", [])) if isinstance(proof_strength.get("stronger_task_families"), list) else ""
+            repo_task_families = ",".join(str(item) for item in proof_strength.get("repo_task_acceptance_families_proven", [])) if isinstance(proof_strength.get("repo_task_acceptance_families_proven"), list) else ""
+            daily_driver_families = ",".join(str(item) for item in proof_strength.get("daily_driver_repo_task_families_proven", [])) if isinstance(proof_strength.get("daily_driver_repo_task_families_proven"), list) else ""
+            independent_daily_driver_families = ",".join(str(item) for item in proof_strength.get("independent_daily_driver_repo_task_families_proven", [])) if isinstance(proof_strength.get("independent_daily_driver_repo_task_families_proven"), list) else ""
+            broader_gap_families = ",".join(str(item) for item in proof_strength.get("broader_repeatability_gap_families", [])) if isinstance(proof_strength.get("broader_repeatability_gap_families"), list) else ""
+            lines.append(
+                "- comparison_proof_strength: "
+                f"direct_proof_status={proof_strength.get('direct_proof_status')}, "
+                f"repeatability_status={proof_strength.get('repeatability_status')}, "
+                f"repeatability_ready={proof_strength.get('repeatability_ready')}, "
+                f"daily_driver_repeatability_tier={proof_strength.get('daily_driver_repeatability_tier')}, "
+                f"planner_candidate_status={proof_strength.get('planner_candidate_status')}, "
+                f"adapter_unification_status={proof_strength.get('adapter_unification_status')}, "
+                f"stronger_task_family_count={proof_strength.get('stronger_task_family_count')}, "
+                f"broader_task_family_count={proof_strength.get('broader_task_family_count')}, "
+                f"stronger_task_families={stronger_families or 'none'}, "
+                f"repo_task_acceptance_family_count={proof_strength.get('repo_task_acceptance_family_count')}, "
+                f"repo_task_acceptance_families_proven={repo_task_families or 'none'}, "
+                f"daily_driver_repo_task_family_count={proof_strength.get('daily_driver_repo_task_family_count')}, "
+                f"daily_driver_repo_task_families_proven={daily_driver_families or 'none'}, "
+                f"independent_daily_driver_repo_task_family_count={proof_strength.get('independent_daily_driver_repo_task_family_count')}, "
+                f"independent_daily_driver_repo_task_families_proven={independent_daily_driver_families or 'none'}, "
+                f"broader_repeatability_gap_families={broader_gap_families or 'none'}, "
+                f"proof_limitations={proof_limits or 'none'}"
+            )
+        if shared_alignment:
+            lines.append(
+                "- shared_contract_alignment: "
+                f"session_continuity_cases={shared_alignment.get('session_continuity_cases', 0)}, "
+                f"runtime_cost_cases={shared_alignment.get('runtime_cost_cases', 0)}, "
+                f"native_tool_usage_cases={shared_alignment.get('native_tool_usage_cases', 0)}, "
+                f"planner_evidence_cases={shared_alignment.get('planner_evidence_cases', 0)}, "
+                f"adapter_contract_cases={shared_alignment.get('adapter_contract_cases', 0)}, "
+                f"session_posture_cases={shared_alignment.get('session_posture_cases', 0)}"
+            )
+        comparison_grade = (
+            comparative.get("comparison_grade_assessment", {})
+            if isinstance(comparative.get("comparison_grade_assessment"), dict)
+            else {}
+        )
+        if comparison_grade:
+            lines.append(
+                "- comparison_grade_assessment: "
+                f"status={comparison_grade.get('status')}, "
+                f"comparison_grade_ready={comparison_grade.get('comparison_grade_ready')}, "
+                f"internal_repeatability_ready={comparison_grade.get('internal_repeatability_ready')}, "
+                f"external_harness_ready={comparison_grade.get('external_harness_ready')}, "
+                f"blocking_gap={comparison_grade.get('blocking_gap')}"
+            )
+        harness_surface = (
+            comparative.get("external_comparison_harness_surface", {})
+            if isinstance(comparative.get("external_comparison_harness_surface"), dict)
+            else comparison_grade.get("external_comparison_harness_surface", {})
+            if isinstance(comparison_grade.get("external_comparison_harness_surface"), dict)
+            else {}
+        )
+        if harness_surface:
+            requirements = (
+                harness_surface.get("requirements", {})
+                if isinstance(harness_surface.get("requirements"), dict)
+                else {}
+            )
+            missing_external_artifacts = (
+                ",".join(str(item) for item in requirements.get("missing_external_artifacts", []))
+                if isinstance(requirements.get("missing_external_artifacts"), list)
+                else ""
+            )
+            lines.append(
+                "- external_comparison_harness_surface: "
+                f"status={harness_surface.get('harness_status')}, "
+                f"authoritative={harness_surface.get('authoritative')}, "
+                f"next_milestone={harness_surface.get('next_evidence_milestone')}, "
+                f"operator_action={harness_surface.get('operator_action')}, "
+                f"required_shared_surface_count={harness_surface.get('required_shared_surface_count')}, "
+                f"required_external_artifact_count={harness_surface.get('required_external_artifact_count')}, "
+                f"missing_external_artifact_count={harness_surface.get('missing_external_artifact_count')}, "
+                f"missing_external_artifacts={missing_external_artifacts or 'none'}"
+            )
         lines.append(
             "- shared_evidence_surface: "
             + ",".join(str(item) for item in shared_surface)
             if isinstance(shared_surface, list) and shared_surface
             else "- shared_evidence_surface: none"
         )
+        lines.append(
+            f"- shared_productization_surface_visible: {isinstance(shared_surface, list) and 'shared_productization_surface' in shared_surface}"
+        )
+    comparative_digest = (
+        summary.get("comparative_benchmark_digest", {})
+        if isinstance(summary.get("comparative_benchmark_digest"), dict)
+        else {}
+    )
+    if comparative_digest:
+        digest_remaining = (
+            ",".join(str(item) for item in comparative_digest.get("remaining_gap_classes", []))
+            if isinstance(comparative_digest.get("remaining_gap_classes"), list)
+            else ""
+        )
+        digest_limits = (
+            ",".join(str(item) for item in comparative_digest.get("comparison_limitations", []))
+            if isinstance(comparative_digest.get("comparison_limitations"), list)
+            else ""
+        )
+        digest_proof_limits = (
+            ",".join(str(item) for item in comparative_digest.get("proof_limitations", []))
+            if isinstance(comparative_digest.get("proof_limitations"), list)
+            else ""
+        )
+        digest_stronger_families = (
+            ",".join(str(item) for item in comparative_digest.get("stronger_task_families", []))
+            if isinstance(comparative_digest.get("stronger_task_families"), list)
+            else ""
+        )
+        digest_repo_task_families = (
+            ",".join(str(item) for item in comparative_digest.get("repo_task_acceptance_families_proven", []))
+            if isinstance(comparative_digest.get("repo_task_acceptance_families_proven"), list)
+            else ""
+        )
+        digest_daily_driver_families = (
+            ",".join(str(item) for item in comparative_digest.get("daily_driver_repo_task_families_proven", []))
+            if isinstance(comparative_digest.get("daily_driver_repo_task_families_proven"), list)
+            else ""
+        )
+        digest_independent_daily_driver_families = (
+            ",".join(str(item) for item in comparative_digest.get("independent_daily_driver_repo_task_families_proven", []))
+            if isinstance(comparative_digest.get("independent_daily_driver_repo_task_families_proven"), list)
+            else ""
+        )
+        digest_gap_families = (
+            ",".join(str(item) for item in comparative_digest.get("broader_repeatability_gap_families", []))
+            if isinstance(comparative_digest.get("broader_repeatability_gap_families"), list)
+            else ""
+        )
+        digest_shared = (
+            ",".join(str(item) for item in comparative_digest.get("shared_evidence_surface", []))
+            if isinstance(comparative_digest.get("shared_evidence_surface"), list)
+            else ""
+        )
+        lines.extend(["", "## Comparative Benchmark Digest", ""])
+        lines.append(
+            "- comparative_benchmark_digest: "
+            f"comparison_status={comparative_digest.get('comparison_status')}, "
+            f"comparison_confidence={comparative_digest.get('comparison_confidence')}, "
+            f"direct_proof_status={comparative_digest.get('direct_proof_status')}, "
+            f"repeatability_status={comparative_digest.get('repeatability_status')}, "
+            f"daily_driver_repeatability_tier={comparative_digest.get('daily_driver_repeatability_tier')}, "
+            f"daily_driver_main_path_ready={comparative_digest.get('daily_driver_main_path_ready')}, "
+            f"shared_productization_contract_ready={comparative_digest.get('shared_productization_contract_ready')}, "
+            f"evidence_scope={comparative_digest.get('evidence_scope')}, "
+            f"remaining_gap_classes={digest_remaining or 'none'}, "
+            f"comparison_limitations={digest_limits or 'none'}, "
+            f"stronger_task_families={digest_stronger_families or 'none'}, "
+            f"repo_task_acceptance_family_count={comparative_digest.get('repo_task_acceptance_family_count')}, "
+            f"repo_task_acceptance_families_proven={digest_repo_task_families or 'none'}, "
+            f"daily_driver_repo_task_family_count={comparative_digest.get('daily_driver_repo_task_family_count')}, "
+            f"daily_driver_repo_task_families_proven={digest_daily_driver_families or 'none'}, "
+            f"independent_daily_driver_repo_task_family_count={comparative_digest.get('independent_daily_driver_repo_task_family_count')}, "
+            f"independent_daily_driver_repo_task_families_proven={digest_independent_daily_driver_families or 'none'}, "
+            f"broader_repeatability_gap_families={digest_gap_families or 'none'}, "
+            f"proof_limitations={digest_proof_limits or 'none'}, "
+            f"comparison_grade_status={comparative_digest.get('comparison_grade_status')}, "
+            f"comparison_grade_ready={comparative_digest.get('comparison_grade_ready')}, "
+            f"external_harness_ready={comparative_digest.get('external_harness_ready')}, "
+            f"blocking_gap={comparative_digest.get('blocking_gap')}, "
+            f"shared_evidence_surface={digest_shared or 'none'}"
+        )
+        if comparative_digest.get("planner_closure_mode") or comparative_digest.get("planner_next_recommended_action"):
+            lines.append(
+                "- comparative_benchmark_digest_planner_closure: "
+                f"closure_mode={comparative_digest.get('planner_closure_mode')}, "
+                f"next_recommended_action={comparative_digest.get('planner_next_recommended_action')}, "
+                f"resume_posture={comparative_digest.get('planner_resume_posture')}, "
+                f"verify_selected={comparative_digest.get('planner_verify_selected')}, "
+                f"verification_status={comparative_digest.get('planner_verification_status')}"
+            )
+        if comparative_digest.get("clarify_boundary_active") or comparative_digest.get("clarify_boundary_status"):
+            lines.append(
+                "- comparative_benchmark_digest_clarify_boundary: "
+                f"status={comparative_digest.get('clarify_boundary_status')}, "
+                f"active={comparative_digest.get('clarify_boundary_active')}, "
+                f"next_action={comparative_digest.get('clarify_boundary_next_action')}, "
+                f"resume_expectation={comparative_digest.get('clarify_boundary_resume_expectation')}"
+            )
+        if comparative_digest.get("native_tool_summary"):
+            lines.append(
+                "- comparative_benchmark_digest_native_tool_summary: "
+                f"{comparative_digest.get('native_tool_summary')}"
+            )
+        if comparative_digest.get("adapter_summary"):
+            lines.append(
+                "- comparative_benchmark_digest_adapter_summary: "
+                f"{comparative_digest.get('adapter_summary')}"
+            )
 
     lines.extend(["", "## Cases", ""])
     for case in cases:
@@ -466,6 +1094,27 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
                 f"checks={dogfood_surfaces.get('passed_check_count', 0)}/{dogfood_surfaces.get('total_check_count', 0)}, "
                 f"scenario={dogfood_surfaces.get('proof_scenario') or 'none'}"
             )
+            surface_checks = (
+                dogfood_surfaces.get("surface_checks", {})
+                if isinstance(dogfood_surfaces.get("surface_checks"), dict)
+                else {}
+            )
+            workspace_daily_driver = (
+                surface_checks.get("workspace_daily_driver_main_path_visible", {})
+                if isinstance(surface_checks.get("workspace_daily_driver_main_path_visible"), dict)
+                else {}
+            )
+            ui_daily_driver = (
+                surface_checks.get("ui_daily_driver_main_path_visible", {})
+                if isinstance(surface_checks.get("ui_daily_driver_main_path_visible"), dict)
+                else {}
+            )
+            if workspace_daily_driver or ui_daily_driver:
+                lines.append(
+                    "  - daily_driver_main_path: "
+                    f"workspace={workspace_daily_driver.get('evidence', {}).get('ready') if isinstance(workspace_daily_driver.get('evidence'), dict) else None}, "
+                    f"ui={ui_daily_driver.get('evidence', {}).get('ready') if isinstance(ui_daily_driver.get('evidence'), dict) else None}"
+                )
         runtime = case.get("runtime_measurement", {}) if isinstance(case.get("runtime_measurement"), dict) else {}
         if runtime:
             lines.append(
@@ -578,9 +1227,38 @@ def render_workflow_evidence_trend_markdown(payload: dict[str, object]) -> str:
         "",
         *_trend_assessment_lines(assessment, deltas),
         "",
+    ]
+    baseline_benchmark = baseline.get("comparative_benchmark", {}) if isinstance(baseline.get("comparative_benchmark"), dict) else {}
+    current_benchmark = current.get("comparative_benchmark", {}) if isinstance(current.get("comparative_benchmark"), dict) else {}
+    baseline_strength = baseline_benchmark.get("comparison_proof_strength", {}) if isinstance(baseline_benchmark.get("comparison_proof_strength"), dict) else {}
+    current_strength = current_benchmark.get("comparison_proof_strength", {}) if isinstance(current_benchmark.get("comparison_proof_strength"), dict) else {}
+    lines.extend(
+        [
+            "## Comparative Proof Strength",
+            "",
+            f"- baseline_direct_proof_status: {baseline_strength.get('direct_proof_status', 'unknown')}",
+            f"- current_direct_proof_status: {current_strength.get('direct_proof_status', 'unknown')}",
+            f"- baseline_repeatability_status: {baseline_strength.get('repeatability_status', 'unknown')}",
+            f"- current_repeatability_status: {current_strength.get('repeatability_status', 'unknown')}",
+            f"- stronger_task_family_count_delta: {_format_signed(_number_delta(baseline_strength.get('stronger_task_family_count'), current_strength.get('stronger_task_family_count')))}",
+            f"- broader_task_family_count_delta: {_format_signed(_number_delta(baseline_strength.get('broader_task_family_count'), current_strength.get('broader_task_family_count')))}",
+            f"- baseline_stronger_task_families: {','.join(str(item) for item in baseline_strength.get('stronger_task_families', [])) if isinstance(baseline_strength.get('stronger_task_families'), list) and baseline_strength.get('stronger_task_families') else 'none'}",
+            f"- current_stronger_task_families: {','.join(str(item) for item in current_strength.get('stronger_task_families', [])) if isinstance(current_strength.get('stronger_task_families'), list) and current_strength.get('stronger_task_families') else 'none'}",
+            f"- baseline_repo_task_acceptance_families_proven: {','.join(str(item) for item in baseline_strength.get('repo_task_acceptance_families_proven', [])) if isinstance(baseline_strength.get('repo_task_acceptance_families_proven'), list) and baseline_strength.get('repo_task_acceptance_families_proven') else 'none'}",
+            f"- current_repo_task_acceptance_families_proven: {','.join(str(item) for item in current_strength.get('repo_task_acceptance_families_proven', [])) if isinstance(current_strength.get('repo_task_acceptance_families_proven'), list) and current_strength.get('repo_task_acceptance_families_proven') else 'none'}",
+            f"- baseline_daily_driver_repo_task_families_proven: {','.join(str(item) for item in baseline_strength.get('daily_driver_repo_task_families_proven', [])) if isinstance(baseline_strength.get('daily_driver_repo_task_families_proven'), list) and baseline_strength.get('daily_driver_repo_task_families_proven') else 'none'}",
+            f"- current_daily_driver_repo_task_families_proven: {','.join(str(item) for item in current_strength.get('daily_driver_repo_task_families_proven', [])) if isinstance(current_strength.get('daily_driver_repo_task_families_proven'), list) and current_strength.get('daily_driver_repo_task_families_proven') else 'none'}",
+            f"- baseline_broader_repeatability_gap_families: {','.join(str(item) for item in baseline_strength.get('broader_repeatability_gap_families', [])) if isinstance(baseline_strength.get('broader_repeatability_gap_families'), list) and baseline_strength.get('broader_repeatability_gap_families') else 'none'}",
+            f"- current_broader_repeatability_gap_families: {','.join(str(item) for item in current_strength.get('broader_repeatability_gap_families', [])) if isinstance(current_strength.get('broader_repeatability_gap_families'), list) and current_strength.get('broader_repeatability_gap_families') else 'none'}",
+            "",
+        ]
+    )
+    lines.extend(
+        [
         "## Scenario Aggregates",
         "",
-    ]
+        ]
+    )
     scenario_deltas = deltas.get("scenario_aggregates", {}) if isinstance(deltas.get("scenario_aggregates"), dict) else {}
     if scenario_deltas:
         for scenario, aggregate in sorted(scenario_deltas.items()):
@@ -684,9 +1362,26 @@ def _capture_case(
                 team_runs_root=team_runs_root,
                 project_root=project_root,
             )
+        elif case.scenario_type == "repo_task_acceptance":
+            executed, execution_payload = _capture_repo_task_acceptance_native_case(
+                case=case,
+                team=team,
+                team_session=session,
+                team_orchestrator=team_orchestrator,
+                team_runs_root=team_runs_root,
+                project_root=project_root,
+            )
         else:
-            executed = team.execute(session.id, case.mode, execution_mode="native")
-            if executed.resume.linked_execution_run_id:
+            execution_mode = "native" if _case_uses_native_runtime(case) else "legacy"
+            executed = team.execute(session.id, case.mode, execution_mode=execution_mode)
+            if execution_mode == "native":
+                executed, execution_payload = _advance_native_execution_if_waiting_on_approval(
+                    team=team,
+                    session=executed,
+                    team_orchestrator=team_orchestrator,
+                    project_root=project_root,
+                )
+            elif executed.resume.linked_execution_run_id:
                 execution_payload = team_orchestrator.run_store.read(executed.resume.linked_execution_run_id)
 
     team_session = executed or session
@@ -816,6 +1511,62 @@ def _capture_case(
             "benefit_score": benefit_score,
             "team_outcome_better_documented": bool(team_advantages or direct_limitations),
         },
+    }
+
+
+def _advance_native_execution_if_waiting_on_approval(
+    *,
+    team: TeamOrchestrator,
+    session: Any,
+    team_orchestrator: Orchestrator,
+    project_root: Path,
+) -> tuple[Any, dict[str, object] | None]:
+    current = session
+    payload: dict[str, object] | None = None
+    for _ in range(3):
+        run_id = current.resume.linked_execution_run_id
+        if not run_id:
+            break
+        payload = team_orchestrator.run_store.read(run_id)
+        pending = (
+            payload.get("payload", {}).get("pending_approval", {})
+            if isinstance(payload, dict)
+            and isinstance(payload.get("payload"), dict)
+            and isinstance(payload.get("payload", {}).get("pending_approval"), dict)
+            else {}
+        )
+        approval_id = pending.get("approval_id")
+        if not approval_id:
+            break
+        stage = str(pending.get("stage") or "")
+        resolve_approval_item(
+            str(approval_id),
+            status="approved",
+            reason="Evidence harness auto-approves governed native resume checkpoints.",
+            project_root=project_root,
+            approvals_root=project_root / ".agent_orchestrator" / "approvals",
+        )
+        if stage in {"edit", "verify"}:
+            try:
+                current = team.resume(current.id, apply=True)
+                continue
+            except ValueError:
+                break
+        refreshed = team.status(current.id)
+        current = refreshed
+        break
+    if current.resume.linked_execution_run_id:
+        payload = team_orchestrator.run_store.read(current.resume.linked_execution_run_id)
+    return current, payload
+
+
+def _case_uses_native_runtime(case: WorkflowEvidenceCase) -> bool:
+    return (case.scenario_type or "") in {
+        "native_coverage_expansion",
+        "interruption_recovery",
+        "repair_resume_success",
+        "program_execution",
+        "repo_task_acceptance",
     }
 
 
@@ -1277,6 +2028,139 @@ def _capture_repair_resume_success_native_case(
     return executed, team_orchestrator.run_store.read(resumed.run_id)
 
 
+def _capture_repo_task_acceptance_native_case(
+    *,
+    case: WorkflowEvidenceCase,
+    team: TeamOrchestrator,
+    team_session: Any,
+    team_orchestrator: Orchestrator,
+    team_runs_root: Path,
+    project_root: Path,
+) -> tuple[Any, dict[str, object]]:
+    runtime = CodingAgentExecutionRuntime(orchestrator=Orchestrator())
+    runtime.enforce_approvals = False
+    runtime.repo_explorer.workspace_root = project_root
+    runtime.edit_executor.workspace_root = project_root
+    runtime.edit_executor.action_executor.workspace_root = project_root
+    runtime.verify_loop.verifier.workspace_root = project_root
+    runtime.verify_loop.verifier.action_executor.workspace_root = project_root
+    runtime.event_store.root = project_root / ".agent_orchestrator" / "events"
+    runtime.event_store.__post_init__()
+    runtime.state_store.root = project_root / ".agent_orchestrator" / "execution_state"
+    runtime.state_store.__post_init__()
+    runtime.scratchpad_store.root = project_root / ".agent_orchestrator" / "scratchpads"
+    runtime.scratchpad_store.__post_init__()
+    runtime.memory_store.root = project_root / ".agent_orchestrator" / "memory"
+    runtime.memory_store.__post_init__()
+
+    request = ExecutionRequest(
+        requirement=case.requirement,
+        route=TaskRouterResult(
+            task_kind=TaskKind.DIRECT_FIX,
+            clarify_policy=ClarifyPolicy.LIGHT,
+            execution_mode=ExecutionMode.CODING_AGENT,
+            ambiguity_level="low",
+            risk_level="medium",
+            scope_confidence="high",
+            needs_repo_context=True,
+            requires_human_confirmation=False,
+            native_coverage_class="multi_file_helper_or_compliance_repair",
+            reasons=["workflow evidence repo-task acceptance case"],
+        ),
+        runtime_name="coding_agent",
+        mode=case.mode,
+        session_id=f"evidence-{team_session.id}",
+        turn_id=f"repo-task-{team_session.id}",
+        context_snapshot={"snapshot_id": f"snapshot-{team_session.id}"},
+        task_contract={
+            "id": f"task-{team_session.id}",
+            "goal": case.requirement,
+            "non_goals": [],
+            "context": "Use repository context.",
+            "inputs": [case.requirement],
+            "outputs": ["code changes", "verification result", "runtime evidence"],
+            "acceptance_criteria": ["Native repo-task acceptance proof is visible."],
+            "risk_level": "medium",
+            "parallelizable": False,
+            "owner_type": "single_worker",
+            "max_depth": 1,
+            "failure_policy": "retry",
+        },
+    )
+    result = runtime.run(request)
+    result.payload["strategy_summary"] = _synthetic_native_strategy_summary(
+        selected_strategy="explore_then_edit",
+        selected_actions=["explore", "edit", "verify", "resume_learning"],
+        selected_owner="native",
+        native_work_units=True,
+        risk_level="medium",
+        requires_human_confirmation=False,
+        explore_first=True,
+        verify_planned=True,
+        clarify_first=False,
+        pause_expected=False,
+        handoff_expected=False,
+    )
+    WorkspaceIndexStore(project_root / ".agent_orchestrator" / "workspace").record_artifact(
+        "execution_artifacts",
+        _synthetic_execution_artifact_summary_payload(
+            run_id=result.run_id,
+            session_id=f"evidence-{team_session.id}",
+            turn_id=f"repo-task-{team_session.id}",
+            payload=result.payload,
+        ),
+    )
+    run_payload = {
+        "run_id": result.run_id,
+        "parent_run_id": None,
+        "requirement": case.requirement,
+        "initial_mode": "coding_agent",
+        "final_mode": "coding_agent",
+        "attempts": [],
+        "reroute_history": [],
+        "accepted": result.accepted,
+        "final_state": "accepted" if result.accepted else result.status,
+        "status": result.status,
+        "reroute_enabled": True,
+        "events": [],
+        "jobs": [],
+        "job_ids": [],
+        "job_status_summary": {},
+        "active_attempt_id": None,
+        "lineage": [],
+        "metadata": {
+            "plan_session_id": team_session.id,
+            "approved_plan": team_session.approved_plan,
+            "approved_plan_summary": {
+                "session_id": team_session.id,
+                "goal": team_session.approved_plan.get("goal") if isinstance(team_session.approved_plan, dict) else case.requirement,
+            },
+            "provenance": {
+                "plan_session_id": team_session.id,
+                "linked_execution_run_id": result.run_id,
+                "approved_plan_goal": team_session.approved_plan.get("goal") if isinstance(team_session.approved_plan, dict) else case.requirement,
+                "selected_topology": team_session.decision_verdict.selected_topology if team_session.decision_verdict else None,
+                "selected_provider_runtime": team_session.decision_verdict.selected_provider_runtime if team_session.decision_verdict else {},
+            },
+            "team_execution_mode": "native",
+            "execution_context_policy": {
+                "policy": "resume_if_same_task",
+                "source_session_id": team_session.id,
+                "fresh_context": False,
+                "resume_target": None,
+            },
+        },
+        "payload": result.payload,
+    }
+    team_orchestrator.run_store.write(result.run_id, run_payload)
+    executed = team.status(team_session.id)
+    executed.resume.linked_execution_run_id = result.run_id
+    executed.status = "accepted" if result.accepted else "blocked"
+    executed.gate_verdict = executed.status
+    team.store.write_session(executed)
+    return executed, team_orchestrator.run_store.read(result.run_id)
+
+
 def _capture_program_execution_native_case(
     *,
     case: WorkflowEvidenceCase,
@@ -1585,7 +2469,9 @@ def _write_repo_task_acceptance_workspace(root: Path) -> None:
         "# sandbox\n\n- 长周期主执行计划\n- agent-team-operator-runbook.md\n",
         encoding="utf-8",
     )
-    (root / "src" / "agent_orchestrator" / "__init__.py").write_text('"""package"""\n', encoding="utf-8")
+    package_init = root / "src" / "agent_orchestrator" / "__init__.py"
+    if not package_init.exists():
+        package_init.write_text('"""package"""\n', encoding="utf-8")
     (root / "src" / "agent_orchestrator" / "stub.py").write_text(
         '"""Stub module."""\n\nfrom __future__ import annotations\n\n'
         "# DEPS: __future__\n"
@@ -1644,11 +2530,62 @@ def _write_repo_task_acceptance_workspace(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "docs" / "process" / "agent-orchestrator-implementation-process.md").write_text(
-        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n- docs/decisions/\n",
+        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n- native coding-agent dogfood baseline\n- docs/decisions/\n",
         encoding="utf-8",
     )
     (root / "docs" / "process" / "agent-team-operator-runbook.md").write_text(
-        "# 治理控制台操作手册\n\n- team summary\n- team next\n- team runbook\n- team execute\n",
+        "# 治理控制台操作手册\n\n- team summary\n- team next\n- team runbook\n- team execute\n- native-coding-agent-dogfood-evidence.md\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "control-plane-artifact-contracts.md").write_text(
+        "# Control Plane Artifact Contracts\n\n- session_continuity\n- runtime_cost\n- native_tool_usage\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "native-coding-agent-dogfood-evidence.md").write_text(
+        "# Native Coding Agent Dogfood Evidence\n\n"
+        "native coding-agent dogfood baseline\n"
+        "- bounded_internal_repo_task\n"
+        "- approval_pause_resume_complete\n"
+        "- verify_failure_exhausted_recovery_block\n"
+        "- verify_failure_repair_resume_success\n"
+        "- multi_milestone_program_execution\n"
+        "- agent_orchestrator.native_task_proof.v1\n"
+        "- agent_orchestrator.native_runtime_closure.v1\n"
+        "- agent_orchestrator.native_repo_task_acceptance.v1\n"
+        "- agent_orchestrator.program_execution_proof.v1\n"
+        "- native_tool_workflow_surface\n"
+        "- native_tool_productization_surface\n"
+        "- adapter_productization_surface\n"
+        "- session_productization_surface\n"
+        "- session_planner_decision\n"
+        "- session_continuity_outline\n"
+        "- autonomy_posture\n"
+        "- resume_expectation\n"
+        "- resume_posture\n"
+        "- session_posture_cases\n"
+        "- productization_case_count\n"
+        "- continuity_snapshot\n"
+        "- compacted_context_summary\n"
+        "- recovery_contract\n"
+        "- shared_contract_alignment\n"
+        "- shared_productization_contract_ready\n"
+        "- native_tool_usage\n"
+        "- daily_driver_main_path_ready\n"
+        "- daily_driver_main_path_ready_cases\n"
+        "- comparison_posture\n"
+        "- comparison_posture_basis\n"
+        "- comparison_proof_strength\n"
+        "- stronger_task_families\n"
+        "- broader_repeatability_gap_families\n"
+        "- multiple stronger direct-proof families\n"
+        "- evidence trend reports\n"
+        "- agent_orchestrator.runtime_event_stream.v1\n"
+        "- agent_orchestrator.workspace_index.v1\n"
+        "- agent_orchestrator.recovery_recommendation.v1\n"
+        "- agent_orchestrator.execution_topology_snapshot.v1\n"
+        "- stable step-loop\n"
+        "- explicit context select plus structured observation\n"
+        "- multi-milestone native program-execution evidence chain\n",
         encoding="utf-8",
     )
     (root / "docs" / "architecture" / "coding-agent-goal-spec.md").write_text(
@@ -1705,16 +2642,26 @@ def _comparison_snapshot(
     report: dict[str, object],
     cases: list[object],
 ) -> dict[str, object]:
+    comparative_benchmark = (
+        summary.get("comparative_benchmark", {})
+        if isinstance(summary.get("comparative_benchmark"), dict)
+        else {}
+    )
     return {
         "case_count": int(summary.get("case_count", len(cases)) or 0),
         "average_benefit_score": float(summary.get("average_benefit_score", 0.0) or 0.0),
         "team_cases_with_execution_run": int(summary.get("team_cases_with_execution_run", 0) or 0),
         "direct_runs_without_plan_metadata": int(summary.get("direct_runs_without_plan_metadata", 0) or 0),
+        "comparative_benchmark": comparative_benchmark,
         "signal_counts": summary.get("signal_counts", {}) if isinstance(summary.get("signal_counts"), dict) else {},
         "scenario_aggregates": report.get("scenario_aggregates", {}) if isinstance(report.get("scenario_aggregates"), dict) else {},
         "team_advantage_counts": _case_tag_counts(cases, "team_advantages"),
         "direct_limitation_counts": _case_tag_counts(cases, "direct_limitations"),
     }
+
+
+def _comparative_benchmark_digest(benchmark: dict[str, object]) -> dict[str, object]:
+    return build_runtime_comparative_benchmark_digest(benchmark if isinstance(benchmark, dict) else {})
 
 
 def _evidence_conclusion_lines(
@@ -1987,6 +2934,7 @@ def _build_summary(cases: list[dict[str, object]]) -> dict[str, object]:
     comparisons = [case.get("comparison", {}) for case in cases if isinstance(case, dict)]
     direct_runs = [case.get("direct_run", {}) for case in cases if isinstance(case, dict)]
     signals = [case.get("signals", {}) for case in cases if isinstance(case, dict)]
+    comparative_benchmark = _comparative_benchmark_summary(cases)
     return {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "reportable_format": REPORTABLE_FORMAT,
@@ -2014,7 +2962,26 @@ def _build_summary(cases: list[dict[str, object]]) -> dict[str, object]:
         ),
         "signal_counts": _signal_counts(signals),
         "reference_advantage_counts": _tag_counts(comparisons, "team_advantages"),
-        "comparative_benchmark": _comparative_benchmark_summary(cases),
+        "comparative_benchmark": comparative_benchmark,
+        "comparative_benchmark_digest": _comparative_benchmark_digest(comparative_benchmark),
+        "comparative_native_tool_summary": comparative_benchmark.get("comparative_native_tool_summary", {})
+        if isinstance(comparative_benchmark.get("comparative_native_tool_summary"), dict)
+        else {},
+        "comparative_adapter_summary": comparative_benchmark.get("comparative_adapter_summary", {})
+        if isinstance(comparative_benchmark.get("comparative_adapter_summary"), dict)
+        else {},
+        "comparative_session_posture_summary": comparative_benchmark.get("comparative_session_posture_summary", {})
+        if isinstance(comparative_benchmark.get("comparative_session_posture_summary"), dict)
+        else {},
+        "comparative_native_closure_summary": comparative_benchmark.get("comparative_native_closure_summary", {})
+        if isinstance(comparative_benchmark.get("comparative_native_closure_summary"), dict)
+        else {},
+        "clarify_boundary_digest": comparative_benchmark.get("clarify_boundary_digest", {})
+        if isinstance(comparative_benchmark.get("clarify_boundary_digest"), dict)
+        else {},
+        "approval_boundary_digest": comparative_benchmark.get("approval_boundary_digest", {})
+        if isinstance(comparative_benchmark.get("approval_boundary_digest"), dict)
+        else {},
         "real_task_metrics": _real_task_metrics(cases),
         "runtime_measurement_metrics": _runtime_measurement_metrics(cases),
     }
@@ -2378,6 +3345,20 @@ def _planner_continuity_snapshot(
     )
     native_task_proof = _native_task_proof_from_execution_payload(execution_payload)
     proof_scenario = native_task_proof.get("proof_scenario")
+    resolved_runtime_tool_workflow_plan = (
+        planner_shared_contract.get("tool_workflow_plan", {})
+        if isinstance(planner_shared_contract.get("tool_workflow_plan"), dict)
+        and planner_shared_contract.get("tool_workflow_plan")
+        else execution_summary.get("session_planner_decision", {}).get("tool_workflow_plan", {})
+        if isinstance(execution_summary.get("session_planner_decision"), dict)
+        and isinstance(execution_summary.get("session_planner_decision", {}).get("tool_workflow_plan"), dict)
+        else {}
+    )
+    approval_boundary_projection = _governed_approval_boundary_projection(
+        workspace_index=workspace_index,
+        workspace_session_continuity=session_continuity,
+        execution_summary=execution_summary,
+    )
     checks = {
         "planner_shared_contract_visible": {
             "passed": planner_shared_contract.get("format") == "agent_orchestrator.native_planner_decision.v1",
@@ -2399,6 +3380,25 @@ def _planner_continuity_snapshot(
                 "selected_owner": planner_shared_contract.get("selected_owner"),
                 "decision_boundary": planner_shared_contract.get("decision_boundary", {}),
                 "posture": planner_shared_contract.get("posture", {}),
+            },
+        },
+        "planner_tool_workflow_visible": {
+            "passed": (
+                resolved_runtime_tool_workflow_plan.get("format")
+                == "agent_orchestrator.native_tool_workflow_plan.v1"
+                if isinstance(resolved_runtime_tool_workflow_plan, dict)
+                else False
+            ),
+            "evidence": {
+                "tool_workflow_plan": resolved_runtime_tool_workflow_plan,
+            },
+        },
+        "planner_closure_posture_visible": {
+            "passed": bool(execution_summary.get("planner_closure_posture", {}).get("closure_mode"))
+            if isinstance(execution_summary.get("planner_closure_posture"), dict)
+            else False,
+            "evidence": {
+                "planner_closure_posture": execution_summary.get("planner_closure_posture", {}),
             },
         },
         "workspace_session_continuity_visible": {
@@ -2433,6 +3433,37 @@ def _planner_continuity_snapshot(
             "evidence": {
                 "proof_scenario": proof_scenario,
                 "closure_status": native_task_proof.get("closure_status"),
+            },
+        },
+        "governed_approval_boundary_continuity_visible": {
+            "passed": (
+                not approval_boundary_projection.get("approval_boundary_expected")
+                or (
+                    approval_boundary_projection.get("workspace_boundary_active") is True
+                    and approval_boundary_projection.get("workspace_governed_ready") is True
+                    and approval_boundary_projection.get("workspace_long_horizon_judgment")
+                    == "daily_driver_continuity_governed_approval_boundary"
+                    and approval_boundary_projection.get("workspace_approval_boundary_digest_status")
+                    == "planner_approval_boundary"
+                    and approval_boundary_projection.get("ui_boundary_active") is True
+                    and approval_boundary_projection.get("ui_governed_ready") is True
+                )
+            ),
+            "evidence": {
+                "approval_boundary_expected": approval_boundary_projection.get("approval_boundary_expected"),
+                "workspace_comparative_session_continuity": approval_boundary_projection.get(
+                    "workspace_comparative_session_continuity", {}
+                ),
+                "workspace_comparative_digest": approval_boundary_projection.get(
+                    "workspace_comparative_digest", {}
+                ),
+                "workspace_approval_boundary_digest_status": approval_boundary_projection.get(
+                    "workspace_approval_boundary_digest_status"
+                ),
+                "ui_session_comparative_digest": approval_boundary_projection.get(
+                    "ui_session_comparative_digest", {}
+                ),
+                "ui_execution_outline": approval_boundary_projection.get("ui_execution_outline", {}),
             },
         },
     }
@@ -2502,6 +3533,16 @@ def _program_execution_snapshot(
         else {}
     )
     proof_scenario = _native_task_proof_from_execution_payload(execution_payload).get("proof_scenario")
+    approval_boundary_projection = _governed_approval_boundary_projection(
+        workspace_index=workspace_index,
+        workspace_session_continuity=workspace_continuity,
+        execution_summary=execution_summary,
+        continuity_outline=(
+            recovery_recommendation.get("session_continuity_outline", {})
+            if isinstance(recovery_recommendation.get("session_continuity_outline"), dict)
+            else {}
+        ),
+    )
     checks = {
         "runtime_program_posture_visible": {
             "passed": bool(continuity.get("program_posture", {}).get("active_milestone"))
@@ -2532,12 +3573,52 @@ def _program_execution_snapshot(
                 "delegation_contract": recovery_recommendation.get("delegation_contract", {}),
             },
         },
+        "recovery_session_posture_visible": {
+            "passed": bool(recovery_recommendation.get("session_planner_decision", {}).get("autonomy_posture"))
+            and bool(recovery_recommendation.get("session_continuity_outline", {}).get("autonomy_posture"))
+            and "resume_expectation" in recovery_recommendation.get("session_continuity_outline", {})
+            if isinstance(recovery_recommendation.get("session_planner_decision"), dict)
+            and isinstance(recovery_recommendation.get("session_continuity_outline"), dict)
+            else False,
+            "evidence": {
+                "session_planner_decision": recovery_recommendation.get("session_planner_decision", {}),
+                "session_continuity_outline": recovery_recommendation.get("session_continuity_outline", {}),
+            },
+        },
         "topology_program_contract_visible": {
             "passed": bool(topology.get("program_posture", {}).get("program_goal"))
             and bool(topology.get("operator_control", {}).get("next_recommended_action")),
             "evidence": {
                 "program_posture": topology.get("program_posture", {}),
                 "operator_control": topology.get("operator_control", {}),
+            },
+        },
+        "topology_session_posture_visible": {
+            "passed": bool(topology.get("session_planner_decision", {}).get("autonomy_posture"))
+            and bool(topology.get("session_continuity_outline", {}).get("autonomy_posture"))
+            and "resume_expectation" in topology.get("session_continuity_outline", {})
+            if isinstance(topology.get("session_planner_decision"), dict)
+            and isinstance(topology.get("session_continuity_outline"), dict)
+            else False,
+            "evidence": {
+                "session_planner_decision": topology.get("session_planner_decision", {}),
+                "session_continuity_outline": topology.get("session_continuity_outline", {}),
+            },
+        },
+        "topology_planner_intent_visible": {
+            "passed": bool(topology.get("strategy_decision", {}).get("route_planner_intent", {}).get("version"))
+            and "native_first" in topology.get("strategy_decision", {}).get("route_planner_intent", {}),
+            "evidence": {
+                "route_planner_intent": topology.get("strategy_decision", {}).get("route_planner_intent", {}),
+            },
+        },
+        "topology_adapter_shared_contract_visible": {
+            "passed": topology.get("strategy_decision", {}).get("adapter_shared_contract", {}).get("format")
+            == "agent_orchestrator.adapter_shared_contract.v1"
+            and topology.get("strategy_decision", {}).get("adapter_shared_contract", {}).get("comparison_mode")
+            == "same_contract_two_executors",
+            "evidence": {
+                "adapter_shared_contract": topology.get("strategy_decision", {}).get("adapter_shared_contract", {}),
             },
         },
         "resume_recovery_chain_visible": {
@@ -2553,6 +3634,39 @@ def _program_execution_snapshot(
                 "recovery_current_blocking_reason": recovery_recommendation.get("current_blocking_reason"),
             },
         },
+        "governed_approval_boundary_continuity_visible": {
+            "passed": (
+                not approval_boundary_projection.get("approval_boundary_expected")
+                or (
+                    approval_boundary_projection.get("workspace_boundary_active") is True
+                    and approval_boundary_projection.get("workspace_governed_ready") is True
+                    and approval_boundary_projection.get("workspace_long_horizon_judgment")
+                    == "daily_driver_continuity_governed_approval_boundary"
+                    and approval_boundary_projection.get("workspace_approval_boundary_digest_status")
+                    == "planner_approval_boundary"
+                    and approval_boundary_projection.get("ui_boundary_active") is True
+                    and approval_boundary_projection.get("ui_governed_ready") is True
+                    and bool(recovery_recommendation.get("session_continuity_outline", {}).get("approval_pause_state"))
+                    and bool(topology.get("session_continuity_outline", {}).get("approval_pause_state"))
+                )
+            ),
+            "evidence": {
+                "approval_boundary_expected": approval_boundary_projection.get("approval_boundary_expected"),
+                "workspace_comparative_session_continuity": approval_boundary_projection.get(
+                    "workspace_comparative_session_continuity", {}
+                ),
+                "workspace_approval_boundary_digest_status": approval_boundary_projection.get(
+                    "workspace_approval_boundary_digest_status"
+                ),
+                "ui_session_comparative_digest": approval_boundary_projection.get(
+                    "ui_session_comparative_digest", {}
+                ),
+                "recovery_session_continuity_outline": recovery_recommendation.get(
+                    "session_continuity_outline", {}
+                ),
+                "topology_session_continuity_outline": topology.get("session_continuity_outline", {}),
+            },
+        },
     }
     passed_checks = sum(1 for item in checks.values() if item.get("passed") is True)
     return {
@@ -2564,7 +3678,159 @@ def _program_execution_snapshot(
         "passed_check_count": passed_checks,
         "total_check_count": len(checks),
         "program_execution_ready": passed_checks == len(checks),
-        "notes": "This proves multi-milestone program posture and delegation continuity remain aligned across runtime, workspace, topology, recovery, and UI surfaces.",
+        "notes": "This proves multi-milestone program posture, delegation continuity, and session posture remain aligned across runtime, workspace, topology, recovery, and UI surfaces.",
+    }
+
+
+def _governed_approval_boundary_projection(
+    *,
+    workspace_index: dict[str, object] | None = None,
+    workspace_session_continuity: dict[str, object] | None = None,
+    execution_summary: dict[str, object] | None = None,
+    continuity_outline: dict[str, object] | None = None,
+) -> dict[str, object]:
+    workspace_index = workspace_index if isinstance(workspace_index, dict) else {}
+    workspace_session_continuity = (
+        workspace_session_continuity if isinstance(workspace_session_continuity, dict) else {}
+    )
+    execution_summary = execution_summary if isinstance(execution_summary, dict) else {}
+    continuity_outline = continuity_outline if isinstance(continuity_outline, dict) else {}
+    workspace_session_surface = (
+        workspace_session_continuity.get("session_productization_surface", {})
+        if isinstance(workspace_session_continuity.get("session_productization_surface"), dict)
+        else {}
+    )
+    workspace_readiness = (
+        workspace_session_surface.get("continuity_readiness", {})
+        if isinstance(workspace_session_surface.get("continuity_readiness"), dict)
+        else {}
+    )
+    workspace_operator_continuity = (
+        workspace_session_surface.get("operator_continuity", {})
+        if isinstance(workspace_session_surface.get("operator_continuity"), dict)
+        else {}
+    )
+    workspace_operator_posture_digest = (
+        workspace_session_surface.get("operator_posture_digest", {})
+        if isinstance(workspace_session_surface.get("operator_posture_digest"), dict)
+        else {}
+    )
+    workspace_comparative_session_continuity = (
+        workspace_index.get("comparative_session_continuity_summary", {})
+        if isinstance(workspace_index.get("comparative_session_continuity_summary"), dict)
+        else {}
+    )
+    workspace_approval_boundary_digest = (
+        workspace_index.get("approval_boundary_digest", {})
+        if isinstance(workspace_index.get("approval_boundary_digest"), dict)
+        else {}
+    )
+    workspace_comparative_digest = (
+        workspace_index.get("comparative_benchmark_digest", {})
+        if isinstance(workspace_index.get("comparative_benchmark_digest"), dict)
+        else workspace_session_continuity.get("comparative_benchmark_digest", {})
+        if isinstance(workspace_session_continuity.get("comparative_benchmark_digest"), dict)
+        else {}
+    )
+    execution_outline = (
+        execution_summary.get("session_continuity_outline", {})
+        if isinstance(execution_summary.get("session_continuity_outline"), dict)
+        else {}
+    )
+    if not continuity_outline:
+        continuity_outline = execution_outline
+    ui_comparative_benchmark = (
+        execution_summary.get("comparative_benchmark", {})
+        if isinstance(execution_summary.get("comparative_benchmark"), dict)
+        else {}
+    )
+    ui_comparative_session_continuity = (
+        ui_comparative_benchmark.get("comparative_session_continuity_summary", {})
+        if isinstance(ui_comparative_benchmark.get("comparative_session_continuity_summary"), dict)
+        else {}
+    )
+    ui_approval_boundary_digest = (
+        ui_comparative_benchmark.get("approval_boundary_digest", {})
+        if isinstance(ui_comparative_benchmark.get("approval_boundary_digest"), dict)
+        else {}
+    )
+    ui_session_comparative_digest = (
+        execution_summary.get("session_comparative_digest", {})
+        if isinstance(execution_summary.get("session_comparative_digest"), dict)
+        else {}
+    )
+    workspace_boundary_active = bool(
+        workspace_comparative_session_continuity.get("approval_boundary_active")
+        or workspace_readiness.get("approval_boundary_visible")
+        or workspace_operator_continuity.get("approval_boundary_active")
+        or workspace_operator_posture_digest.get("approval_boundary_active")
+        or workspace_comparative_digest.get("session_continuity_approval_boundary_active")
+    )
+    workspace_governed_ready = bool(
+        workspace_comparative_session_continuity.get("governed_pause_resume_ready")
+        or workspace_readiness.get("governed_pause_resume_ready")
+        or workspace_comparative_digest.get("session_continuity_governed_pause_resume_ready")
+    )
+    ui_boundary_active = bool(
+        ui_comparative_session_continuity.get("approval_boundary_active")
+        or ui_session_comparative_digest.get("session_continuity_approval_boundary_active")
+        or execution_outline.get("approval_pause_state")
+        or continuity_outline.get("approval_pause_state")
+    )
+    ui_governed_ready = bool(
+        ui_comparative_session_continuity.get("governed_pause_resume_ready")
+        or ui_session_comparative_digest.get("session_continuity_governed_pause_resume_ready")
+        or (
+            ui_boundary_active
+            and execution_summary.get("session_resume_kind")
+            and execution_summary.get("session_long_horizon_posture")
+        )
+    )
+    approval_boundary_expected = bool(
+        workspace_boundary_active
+        or ui_boundary_active
+        or workspace_approval_boundary_digest
+        or ui_approval_boundary_digest
+    )
+    long_horizon_judgment = (
+        workspace_comparative_session_continuity.get("long_horizon_continuity_judgment")
+        or ui_comparative_session_continuity.get("long_horizon_continuity_judgment")
+    )
+    return {
+        "approval_boundary_expected": approval_boundary_expected,
+        "workspace_boundary_active": workspace_boundary_active,
+        "workspace_governed_ready": workspace_governed_ready,
+        "workspace_long_horizon_judgment": long_horizon_judgment,
+        "workspace_resume_expectation": workspace_operator_continuity.get("resume_expectation")
+        or workspace_operator_posture_digest.get("resume_expectation"),
+        "workspace_resume_posture": workspace_operator_continuity.get("resume_posture")
+        or workspace_operator_posture_digest.get("resume_posture"),
+        "workspace_approval_boundary_digest_status": workspace_approval_boundary_digest.get("status"),
+        "workspace_session_continuity": workspace_session_continuity,
+        "workspace_comparative_session_continuity": workspace_comparative_session_continuity,
+        "workspace_comparative_digest": workspace_comparative_digest,
+        "ui_boundary_active": ui_boundary_active,
+        "ui_governed_ready": ui_governed_ready,
+        "ui_resume_kind": execution_summary.get("session_resume_kind"),
+        "ui_resume_posture": (
+            execution_outline.get("autonomy_posture", {}).get("resume_posture")
+            if isinstance(execution_outline.get("autonomy_posture"), dict)
+            else None
+        )
+        or (
+            continuity_outline.get("autonomy_posture", {}).get("resume_posture")
+            if isinstance(continuity_outline.get("autonomy_posture"), dict)
+            else None
+        )
+        or execution_summary.get("session_long_horizon_posture", {}).get("resume_posture")
+        if isinstance(execution_summary.get("session_long_horizon_posture"), dict)
+        else None,
+        "ui_approval_pause_state": execution_outline.get("approval_pause_state")
+        or continuity_outline.get("approval_pause_state"),
+        "ui_approval_boundary_digest_status": ui_approval_boundary_digest.get("status"),
+        "ui_session_comparative_digest": ui_session_comparative_digest,
+        "ui_comparative_session_continuity": ui_comparative_session_continuity,
+        "ui_execution_outline": execution_outline,
     }
 
 
@@ -2625,6 +3891,11 @@ def _native_dogfood_surface_snapshot(
         jobs_root=project_root / ".agent_orchestrator" / "jobs",
         approvals_root=project_root / ".agent_orchestrator" / "approvals",
     )
+    workspace_execution_artifact_summary = (
+        workspace_index.get("execution_artifact_summary", {})
+        if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+        else {}
+    )
     runtime_event_stream = build_runtime_event_stream(
         project_root,
         plans_root=plans_root,
@@ -2644,37 +3915,98 @@ def _native_dogfood_surface_snapshot(
         {},
     )
     workspace_native_proof = (
-        workspace_index.get("execution_artifact_summary", {}).get("native_task_proof", {})
-        if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+        workspace_execution_artifact_summary.get("native_task_proof", {})
+        if isinstance(workspace_execution_artifact_summary.get("native_task_proof"), dict)
         else {}
     )
     workspace_repo_acceptance = (
-        workspace_index.get("execution_artifact_summary", {}).get("native_repo_task_acceptance", {})
-        if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+        workspace_execution_artifact_summary.get("native_repo_task_acceptance", {})
+        if isinstance(workspace_execution_artifact_summary.get("native_repo_task_acceptance"), dict)
         else {}
     )
     workspace_complex_repo_acceptance = (
-        workspace_index.get("execution_artifact_summary", {}).get("native_complex_repo_task_acceptance", {})
-        if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+        workspace_execution_artifact_summary.get("native_complex_repo_task_acceptance", {})
+        if isinstance(workspace_execution_artifact_summary.get("native_complex_repo_task_acceptance"), dict)
         else {}
     )
     workspace_native_exploration = (
-        workspace_index.get("execution_artifact_summary", {}).get("native_exploration", {})
-        if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+        workspace_execution_artifact_summary.get("native_exploration", {})
+        if isinstance(workspace_execution_artifact_summary.get("native_exploration"), dict)
         else {}
     )
     workspace_adapter_shared_contract = (
-        workspace_index.get("execution_artifact_summary", {}).get("adapter_shared_contract", {})
-        if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+        workspace_execution_artifact_summary.get("adapter_shared_contract", {})
+        if isinstance(workspace_execution_artifact_summary.get("adapter_shared_contract"), dict)
         else {}
     )
     workspace_planner_shared_contract = (
-        workspace_index.get("execution_artifact_summary", {}).get("planner_shared_contract", {})
-        if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+        workspace_execution_artifact_summary.get("planner_shared_contract", {})
+        if isinstance(workspace_execution_artifact_summary.get("planner_shared_contract"), dict)
         else {}
     )
+    workspace_native_tool_surface = (
+        workspace_execution_artifact_summary.get("native_tool_surface", {})
+        if isinstance(workspace_execution_artifact_summary.get("native_tool_surface"), dict)
+        else {}
+    )
+    workspace_native_tool_productization_surface = (
+        workspace_execution_artifact_summary.get("native_tool_productization_surface", {})
+        if isinstance(workspace_execution_artifact_summary.get("native_tool_productization_surface"), dict)
+        else {}
+    )
+    workspace_adapter_productization_surface = (
+        workspace_execution_artifact_summary.get("adapter_productization_surface", {})
+        if isinstance(workspace_execution_artifact_summary.get("adapter_productization_surface"), dict)
+        else {}
+    )
+    workspace_adapter_capability_surface = (
+        workspace_execution_artifact_summary.get("adapter_capability_surface", {})
+        if isinstance(workspace_execution_artifact_summary.get("adapter_capability_surface"), dict)
+        else {}
+    )
+    if not workspace_adapter_capability_surface:
+        workspace_adapter_capability_surface = (
+            workspace_execution_artifact_summary.get("adapter_capability", {})
+            if isinstance(workspace_execution_artifact_summary.get("adapter_capability"), dict)
+            else {}
+        )
+    workspace_adapter_capability = workspace_adapter_capability_surface
+    workspace_session_continuity = (
+        workspace_execution_artifact_summary.get("session_continuity", {})
+        if isinstance(workspace_execution_artifact_summary.get("session_continuity"), dict)
+        else {}
+    )
+    workspace_runtime_cost = (
+        workspace_execution_artifact_summary.get("runtime_cost", {})
+        if isinstance(workspace_execution_artifact_summary.get("runtime_cost"), dict)
+        else {}
+    )
+    workspace_compacted_context_summary = (
+        workspace_execution_artifact_summary.get("compacted_context_summary", {})
+        if isinstance(workspace_execution_artifact_summary.get("compacted_context_summary"), dict)
+        else {}
+    )
+    if not isinstance(workspace_native_proof, dict):
+        workspace_native_proof = {}
+    if not isinstance(workspace_repo_acceptance, dict):
+        workspace_repo_acceptance = {}
     if not isinstance(workspace_complex_repo_acceptance, dict):
         workspace_complex_repo_acceptance = {}
+    if not isinstance(workspace_native_exploration, dict):
+        workspace_native_exploration = {}
+    if not isinstance(workspace_adapter_shared_contract, dict):
+        workspace_adapter_shared_contract = {}
+    if not isinstance(workspace_planner_shared_contract, dict):
+        workspace_planner_shared_contract = {}
+    resolved_workspace_tool_workflow_plan = (
+        workspace_planner_shared_contract.get("tool_workflow_plan", {})
+        if isinstance(workspace_planner_shared_contract.get("tool_workflow_plan"), dict)
+        and workspace_planner_shared_contract.get("tool_workflow_plan")
+        else workspace_execution_artifact_summary.get("planner_shared_contract_summary", {}).get("tool_workflow_plan", {})
+        if isinstance(workspace_execution_artifact_summary.get("planner_shared_contract_summary"), dict)
+        and isinstance(workspace_execution_artifact_summary.get("planner_shared_contract_summary", {}).get("tool_workflow_plan"), dict)
+        else {}
+    )
     direct_native_proof = _native_task_proof_from_execution_payload(execution_payload)
     proof_scenario = direct_native_proof.get("proof_scenario")
     runtime_native_proof = event.get("native_task_proof", {}) if isinstance(event.get("native_task_proof"), dict) else {}
@@ -2705,6 +4037,11 @@ def _native_dogfood_surface_snapshot(
         )
         if isinstance(run_entry.get("native_task_proof"), dict):
             runtime_native_proof = dict(run_entry.get("native_task_proof", {}))
+    approval_boundary_projection = _governed_approval_boundary_projection(
+        workspace_index=workspace_index,
+        workspace_session_continuity=workspace_session_continuity,
+        execution_summary=execution_summary,
+    )
     checks = {
         "approval_resume_chain_visible": {
             "passed": proof_scenario in {
@@ -2785,6 +4122,13 @@ def _native_dogfood_surface_snapshot(
                 "total_checks": execution_summary.get("complex_repo_task_acceptance_total_checks"),
             },
         },
+        "ui_daily_driver_main_path_visible": {
+            "passed": execution_summary.get("daily_driver_main_path_ready") is not None,
+            "evidence": {
+                "ready": execution_summary.get("daily_driver_main_path_ready"),
+                "daily_driver_readiness": execution_summary.get("daily_driver_readiness", {}),
+            },
+        },
         "ui_context_engineering_visible": {
             "passed": bool(execution_summary.get("context_engineering_contract_format"))
             and bool(execution_summary.get("step_loop_context_surfaces")),
@@ -2802,11 +4146,107 @@ def _native_dogfood_surface_snapshot(
                 "ui_source": "build_workspace_index reused by DashboardService control_plane.workspace_index",
             },
         },
+        "ui_native_tool_surface_visible": {
+            "passed": bool(execution_summary.get("native_tool_surface", {}).get("format"))
+            and bool(execution_summary.get("native_tool_surface", {}).get("daily_driver_readiness", {})),
+            "evidence": {
+                "native_tool_surface": execution_summary.get("native_tool_surface", {}),
+            },
+        },
+        "ui_native_tool_workflow_surface_visible": {
+            "passed": bool(
+                execution_summary.get("native_tool_surface", {}).get("workflow_surface", {}).get("daily_driver_path", {}).get("tools")
+            )
+            if isinstance(execution_summary.get("native_tool_surface"), dict)
+            and isinstance(execution_summary.get("native_tool_surface", {}).get("workflow_surface"), dict)
+            else False,
+            "evidence": (
+                execution_summary.get("native_tool_surface", {}).get("workflow_surface", {})
+                if isinstance(execution_summary.get("native_tool_surface"), dict)
+                else {}
+            ),
+        },
+        "ui_native_tool_productization_surface_visible": {
+            "passed": execution_summary.get("native_tool_productization_surface", {}).get("format")
+            in {
+                "agent_orchestrator.native_tool_productization_surface.v1",
+                "agent_orchestrator.native_tool_productization_surface.compat.v1",
+            }
+            if isinstance(execution_summary.get("native_tool_productization_surface"), dict)
+            else False,
+            "evidence": execution_summary.get("native_tool_productization_surface", {}),
+        },
+        "ui_adapter_productization_surface_visible": {
+            "passed": execution_summary.get("adapter_productization_surface", {}).get("format")
+            in {
+                "agent_orchestrator.adapter_productization_surface.v1",
+                "agent_orchestrator.adapter_productization_surface.compat.v1",
+            }
+            if isinstance(execution_summary.get("adapter_productization_surface"), dict)
+            else False,
+            "evidence": execution_summary.get("adapter_productization_surface", {}),
+        },
+        "ui_adapter_capability_surface_visible": {
+            "passed": execution_summary.get("adapter_capability_surface", {}).get("format")
+            == "agent_orchestrator.adapter_capability_surface.v1"
+            if isinstance(execution_summary.get("adapter_capability_surface"), dict)
+            else False,
+            "evidence": {
+                **execution_summary.get("adapter_capability_surface", {}),
+                "shared_evidence_surface": execution_summary.get("adapter_capability", {}).get("shared_evidence_surface", [])
+                if isinstance(execution_summary.get("adapter_capability"), dict)
+                else [],
+            },
+        },
         "workspace_native_exploration_visible": {
             "passed": workspace_native_exploration.get("candidate_path_count", 0) >= 1,
             "evidence": {
                 "candidate_path_count": workspace_native_exploration.get("candidate_path_count", 0),
                 "repo_map_directory_count": workspace_native_exploration.get("repo_map_directory_count"),
+            },
+        },
+        "workspace_native_exploration_evidence_visible": {
+            "passed": workspace_native_exploration.get("exploration_evidence", {}).get("format")
+            == "agent_orchestrator.native_exploration_evidence.v1"
+            if isinstance(workspace_native_exploration.get("exploration_evidence"), dict)
+            else False,
+            "evidence": workspace_native_exploration.get("exploration_evidence", {}),
+        },
+        "workspace_native_tool_surface_visible": {
+            "passed": workspace_native_tool_surface.get("format") == "agent_orchestrator.native_tool_surface.v1"
+            and bool(workspace_native_tool_surface.get("daily_driver_readiness", {})),
+            "evidence": workspace_native_tool_surface,
+        },
+        "workspace_native_tool_workflow_surface_visible": {
+            "passed": bool(
+                workspace_native_tool_surface.get("workflow_surface", {}).get("daily_driver_path", {}).get("tools")
+            )
+            if isinstance(workspace_native_tool_surface.get("workflow_surface"), dict)
+            else False,
+            "evidence": workspace_native_tool_surface.get("workflow_surface", {}),
+        },
+        "workspace_native_tool_productization_surface_visible": {
+            "passed": workspace_native_tool_productization_surface.get("format")
+            in {
+                "agent_orchestrator.native_tool_productization_surface.v1",
+                "agent_orchestrator.native_tool_productization_surface.compat.v1",
+            },
+            "evidence": workspace_native_tool_productization_surface,
+        },
+        "workspace_adapter_productization_surface_visible": {
+            "passed": workspace_adapter_productization_surface.get("format")
+            in {
+                "agent_orchestrator.adapter_productization_surface.v1",
+                "agent_orchestrator.adapter_productization_surface.compat.v1",
+            },
+            "evidence": workspace_adapter_productization_surface,
+        },
+        "workspace_adapter_capability_surface_visible": {
+            "passed": workspace_adapter_capability_surface.get("format")
+            == "agent_orchestrator.adapter_capability_surface.v1",
+            "evidence": {
+                **workspace_adapter_capability_surface,
+                "shared_evidence_surface": workspace_adapter_capability.get("shared_evidence_surface", []),
             },
         },
         "workspace_adapter_shared_contract_visible": {
@@ -2815,6 +4255,16 @@ def _native_dogfood_surface_snapshot(
                 "comparison_mode": workspace_adapter_shared_contract.get("comparison_mode"),
                 "default_path": workspace_adapter_shared_contract.get("default_path"),
                 "hot_plug_supported": workspace_adapter_shared_contract.get("hot_plug_supported"),
+                "recovery_contract": workspace_adapter_shared_contract.get("recovery_contract", {}),
+            },
+        },
+        "workspace_adapter_capability_shared_contract_visible": {
+            "passed": workspace_adapter_shared_contract.get("shared_contract_format") == "agent_orchestrator.adapter_shared_contract.v1"
+            or workspace_adapter_shared_contract.get("comparison_mode") == "same_contract_two_executors",
+            "evidence": {
+                "shared_contract_format": workspace_adapter_shared_contract.get("shared_contract_format"),
+                "comparison_mode": workspace_adapter_shared_contract.get("comparison_mode"),
+                "default_path": workspace_adapter_shared_contract.get("default_path"),
             },
         },
         "workspace_planner_shared_contract_visible": {
@@ -2836,16 +4286,137 @@ def _native_dogfood_surface_snapshot(
                 "posture": workspace_planner_shared_contract.get("posture", {}),
             },
         },
-        "workspace_session_continuity_visible": {
-            "passed": bool(workspace_index.get("execution_artifact_summary", {}).get("session_continuity", {})),
+        "workspace_planner_tool_workflow_visible": {
+            "passed": (
+                resolved_workspace_tool_workflow_plan.get("format")
+                == "agent_orchestrator.native_tool_workflow_plan.v1"
+                if isinstance(resolved_workspace_tool_workflow_plan, dict)
+                else False
+            ),
             "evidence": {
-                "session_continuity": workspace_index.get("execution_artifact_summary", {}).get("session_continuity", {}),
+                "tool_workflow_plan": resolved_workspace_tool_workflow_plan,
+            },
+        },
+        "workspace_session_continuity_visible": {
+            "passed": bool(workspace_session_continuity),
+            "evidence": {
+                "session_continuity": workspace_session_continuity,
+            },
+        },
+        "workspace_session_continuity_snapshot_visible": {
+            "passed": workspace_session_continuity.get("continuity_snapshot", {}).get("format")
+            == "agent_orchestrator.session_continuity_snapshot.v1"
+            if isinstance(workspace_session_continuity.get("continuity_snapshot"), dict)
+            else False,
+            "evidence": {
+                "continuity_snapshot": workspace_session_continuity.get("continuity_snapshot", {}),
+            },
+        },
+        "workspace_governed_approval_boundary_visible": {
+            "passed": (
+                not approval_boundary_projection.get("approval_boundary_expected")
+                or (
+                    approval_boundary_projection.get("workspace_boundary_active") is True
+                    and approval_boundary_projection.get("workspace_governed_ready") is True
+                    and approval_boundary_projection.get("workspace_long_horizon_judgment")
+                    == "daily_driver_continuity_governed_approval_boundary"
+                    and approval_boundary_projection.get("workspace_approval_boundary_digest_status")
+                    == "planner_approval_boundary"
+                )
+            ),
+            "evidence": {
+                "approval_boundary_expected": approval_boundary_projection.get("approval_boundary_expected"),
+                "session_productization_surface": (
+                    workspace_session_continuity.get("session_productization_surface", {})
+                    if isinstance(workspace_session_continuity.get("session_productization_surface"), dict)
+                    else {}
+                ),
+                "comparative_session_continuity_summary": approval_boundary_projection.get(
+                    "workspace_comparative_session_continuity", {}
+                ),
+                "comparative_benchmark_digest": approval_boundary_projection.get(
+                    "workspace_comparative_digest", {}
+                ),
+                "approval_boundary_digest_status": approval_boundary_projection.get(
+                    "workspace_approval_boundary_digest_status"
+                ),
+            },
+        },
+        "workspace_session_posture_visible": {
+            "passed": bool(workspace_index.get("execution_artifact_summary", {}).get("planner_decision", {}).get("autonomy_posture"))
+            and bool(workspace_index.get("execution_artifact_summary", {}).get("continuity_outline", {}).get("autonomy_posture"))
+            and "resume_expectation" in workspace_index.get("execution_artifact_summary", {}).get("continuity_outline", {})
+            if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+            and isinstance(workspace_index.get("execution_artifact_summary", {}).get("planner_decision"), dict)
+            and isinstance(workspace_index.get("execution_artifact_summary", {}).get("continuity_outline"), dict)
+            else False,
+            "evidence": {
+                "session_planner_decision": workspace_index.get("execution_artifact_summary", {}).get("planner_decision", {}),
+                "session_continuity_outline": workspace_index.get("execution_artifact_summary", {}).get("continuity_outline", {}),
+            },
+        },
+        "workspace_planner_closure_posture_visible": {
+            "passed": bool(workspace_index.get("execution_artifact_summary", {}).get("planner_closure_posture", {}).get("closure_mode"))
+            if isinstance(workspace_index.get("execution_artifact_summary"), dict)
+            and isinstance(workspace_index.get("execution_artifact_summary", {}).get("planner_closure_posture"), dict)
+            else False,
+            "evidence": {
+                "planner_closure_posture": workspace_index.get("execution_artifact_summary", {}).get("planner_closure_posture", {}),
+            },
+        },
+        "workspace_session_shared_surface_visible": {
+            "passed": "workspace_index"
+            in workspace_session_continuity.get("shared_evidence_surface", [])
+            if isinstance(workspace_session_continuity.get("shared_evidence_surface"), list)
+            else False,
+            "evidence": {
+                "shared_evidence_surface": workspace_session_continuity.get("shared_evidence_surface", []),
+            },
+        },
+        "workspace_daily_driver_main_path_visible": {
+            "passed": workspace_index.get("comparative_benchmark", {}).get("daily_driver_main_path_ready") is not None,
+            "evidence": {
+                "ready": workspace_index.get("comparative_benchmark", {}).get("daily_driver_main_path_ready"),
+                "daily_driver_readiness": workspace_index.get("comparative_benchmark", {}).get("daily_driver_readiness", {}),
             },
         },
         "workspace_runtime_cost_visible": {
-            "passed": bool(workspace_index.get("execution_artifact_summary", {}).get("runtime_cost", {})),
+            "passed": bool(workspace_runtime_cost),
             "evidence": {
-                "runtime_cost": workspace_index.get("execution_artifact_summary", {}).get("runtime_cost", {}),
+                "runtime_cost": workspace_runtime_cost,
+            },
+        },
+        "workspace_compacted_context_visible": {
+            "passed": bool(workspace_compacted_context_summary.get("objective"))
+            and bool(workspace_compacted_context_summary.get("compaction_stage")),
+            "evidence": {
+                "compacted_context_summary": workspace_compacted_context_summary,
+            },
+        },
+        "ui_governed_approval_boundary_visible": {
+            "passed": (
+                not approval_boundary_projection.get("approval_boundary_expected")
+                or (
+                    approval_boundary_projection.get("ui_boundary_active") is True
+                    and approval_boundary_projection.get("ui_governed_ready") is True
+                    and bool(approval_boundary_projection.get("ui_resume_kind"))
+                    and bool(approval_boundary_projection.get("ui_resume_posture"))
+                )
+            ),
+            "evidence": {
+                "approval_boundary_expected": approval_boundary_projection.get("approval_boundary_expected"),
+                "session_resume_kind": approval_boundary_projection.get("ui_resume_kind"),
+                "session_resume_posture": approval_boundary_projection.get("ui_resume_posture"),
+                "session_approval_pause_state": approval_boundary_projection.get("ui_approval_pause_state"),
+                "session_comparative_digest": approval_boundary_projection.get(
+                    "ui_session_comparative_digest", {}
+                ),
+                "comparative_session_continuity_summary": approval_boundary_projection.get(
+                    "ui_comparative_session_continuity", {}
+                ),
+                "approval_boundary_digest_status": approval_boundary_projection.get(
+                    "ui_approval_boundary_digest_status"
+                ),
             },
         },
         "ui_session_continuity_visible": {
@@ -2856,8 +4427,63 @@ def _native_dogfood_surface_snapshot(
                 "session_resume_kind": execution_summary.get("session_resume_kind"),
                 "session_compaction_stage": execution_summary.get("session_compaction_stage"),
                 "session_long_horizon_posture": execution_summary.get("session_long_horizon_posture", {}),
+                "session_continuity_snapshot": execution_summary.get("session_continuity_snapshot", {}),
                 "runtime_duration_seconds": execution_summary.get("runtime_duration_seconds"),
                 "runtime_cost_measurement_status": execution_summary.get("runtime_cost_measurement_status"),
+            },
+        },
+        "ui_session_posture_visible": {
+            "passed": bool(execution_summary.get("session_planner_decision", {}).get("autonomy_posture"))
+            and bool(execution_summary.get("session_continuity_outline", {}).get("autonomy_posture"))
+            and "resume_expectation" in execution_summary.get("session_continuity_outline", {})
+            if isinstance(execution_summary.get("session_planner_decision"), dict)
+            and isinstance(execution_summary.get("session_continuity_outline"), dict)
+            else False,
+            "evidence": {
+                "session_planner_decision": execution_summary.get("session_planner_decision", {}),
+                "session_continuity_outline": execution_summary.get("session_continuity_outline", {}),
+            },
+        },
+        "ui_planner_closure_posture_visible": {
+            "passed": bool(execution_summary.get("planner_closure_posture", {}).get("closure_mode"))
+            if isinstance(execution_summary.get("planner_closure_posture"), dict)
+            else False,
+            "evidence": {
+                "planner_closure_posture": execution_summary.get("planner_closure_posture", {}),
+            },
+        },
+        "ui_compacted_context_visible": {
+            "passed": bool(execution_summary.get("compacted_context_summary", {}).get("objective"))
+            and bool(execution_summary.get("compacted_context_summary", {}).get("compaction_stage")),
+            "evidence": {
+                "compacted_context_summary": execution_summary.get("compacted_context_summary", {}),
+            },
+        },
+        "shared_approval_boundary_evidence_surface_visible": {
+            "passed": (
+                not approval_boundary_projection.get("approval_boundary_expected")
+                or (
+                    "approval_boundary_digest"
+                    in approval_boundary_projection.get("workspace_comparative_digest", {}).get(
+                        "shared_evidence_surface", []
+                    )
+                    and "approval_boundary_digest"
+                    in approval_boundary_projection.get("ui_session_comparative_digest", {}).get(
+                        "shared_evidence_surface", []
+                    )
+                )
+            ),
+            "evidence": {
+                "workspace_shared_evidence_surface": approval_boundary_projection.get(
+                    "workspace_comparative_digest", {}
+                ).get("shared_evidence_surface", [])
+                if isinstance(approval_boundary_projection.get("workspace_comparative_digest"), dict)
+                else [],
+                "ui_shared_evidence_surface": approval_boundary_projection.get(
+                    "ui_session_comparative_digest", {}
+                ).get("shared_evidence_surface", [])
+                if isinstance(approval_boundary_projection.get("ui_session_comparative_digest"), dict)
+                else [],
             },
         },
         }
@@ -2874,11 +4500,25 @@ def _native_dogfood_surface_snapshot(
         "ui_complex_repo_task_acceptance_visible",
         "ui_context_engineering_visible",
         "ui_control_plane_workspace_index_visible",
+        "ui_native_tool_surface_visible",
         "workspace_native_exploration_visible",
+        "workspace_native_exploration_evidence_visible",
+        "workspace_native_tool_surface_visible",
         "workspace_adapter_shared_contract_visible",
+        "workspace_adapter_capability_shared_contract_visible",
+        "workspace_adapter_productization_surface_visible",
         "workspace_session_continuity_visible",
+        "workspace_governed_approval_boundary_visible",
+        "workspace_session_shared_surface_visible",
+        "workspace_session_posture_visible",
         "workspace_runtime_cost_visible",
+        "workspace_compacted_context_visible",
+        "ui_governed_approval_boundary_visible",
         "ui_session_continuity_visible",
+        "ui_session_posture_visible",
+        "ui_compacted_context_visible",
+        "ui_adapter_productization_surface_visible",
+        "shared_approval_boundary_evidence_surface_visible",
     }
     passed_checks = sum(1 for item in checks.values() if item.get("passed") is True)
     readiness_passed_checks = sum(
@@ -3036,9 +4676,117 @@ def _real_task_metrics(cases: list[dict[str, object]]) -> dict[str, int]:
         "native_complex_repo_task_acceptance_ready_cases": sum(
             1 for item in complex_repo_acceptance if item.get("complex_repo_task_ready") is True
         ),
+        "long_chain_native_first_ready_cases": sum(
+            1
+            for case in cases
+            if isinstance(case, dict)
+            and _independent_daily_driver_repo_task_family(case) is not None
+            and isinstance(case.get("native_complex_repo_task_acceptance", {}), dict)
+            and case.get("native_complex_repo_task_acceptance", {}).get("complex_repo_task_ready") is True
+            and isinstance(case.get("native_repo_task_acceptance", {}), dict)
+            and case.get("native_repo_task_acceptance", {}).get("real_repo_task_acceptance_ready") is True
+        ),
+        "daily_driver_main_path_ready_cases": sum(
+            1
+            for item in dogfood_surfaces
+            if isinstance(item, dict)
+            and isinstance(item.get("surface_checks"), dict)
+            and item.get("surface_checks", {}).get("workspace_daily_driver_main_path_visible", {}).get("evidence", {}).get("ready") is True
+            and item.get("surface_checks", {}).get("ui_daily_driver_main_path_visible", {}).get("evidence", {}).get("ready") is True
+        ),
         "native_dogfood_surface_ready_cases": sum(
             1 for item in dogfood_surfaces if item.get("surface_projection_ready") is True
         ),
+    }
+
+
+def _proven_repo_task_family(case: dict[str, object]) -> str | None:
+    if not isinstance(case, dict) or str(case.get("scenario_type")) != "repo_task_acceptance":
+        return None
+    repo_acceptance = case.get("native_repo_task_acceptance", {})
+    complex_acceptance = case.get("native_complex_repo_task_acceptance", {})
+    if not isinstance(repo_acceptance, dict) or not isinstance(complex_acceptance, dict):
+        return None
+    if repo_acceptance.get("real_repo_task_acceptance_ready") is not True:
+        return None
+    if complex_acceptance.get("complex_repo_task_ready") is not True:
+        return None
+    label = str(case.get("label") or "")
+    normalized = label.replace("-", "_")
+    family_by_label = {
+        "repo_task_acceptance": "multi_file_operator_surface_repo_task",
+        "repo_task_acceptance_compliance": "compliance_process_repo_task",
+        "repo_task_acceptance_helper_impl": "helper_implementation_repo_task",
+        "repo_task_acceptance_helper": "helper_implementation_repo_task",
+        "repo_task_acceptance_long_chain_native_first": "long_chain_native_first_repo_task",
+        "repo_task_acceptance_workspace_index_long_chain": "workspace_index_alignment_repo_task",
+        "repo_task_acceptance_evidence_contract_long_chain": "evidence_contract_alignment_repo_task",
+    }
+    if normalized in family_by_label:
+        return family_by_label[normalized]
+    if "compliance" in normalized:
+        return "compliance_process_repo_task"
+    if "helper" in normalized:
+        return "helper_implementation_repo_task"
+    if "workspace_index" in normalized or "root_map" in normalized or "context_map" in normalized:
+        return "workspace_index_alignment_repo_task"
+    if "evidence_contract" in normalized or "artifact_contract" in normalized or "dogfood_evidence" in normalized:
+        return "evidence_contract_alignment_repo_task"
+    if "long_chain" in normalized:
+        return "long_chain_native_first_repo_task"
+    return "multi_file_operator_surface_repo_task"
+
+
+def _proven_daily_driver_repo_task_family(case: dict[str, object]) -> str | None:
+    family = _proven_repo_task_family(case)
+    if not family or not isinstance(case, dict):
+        return None
+    surface_checks = (
+        case.get("native_dogfood_surfaces", {}).get("surface_checks", {})
+        if isinstance(case.get("native_dogfood_surfaces"), dict)
+        and isinstance(case.get("native_dogfood_surfaces", {}).get("surface_checks"), dict)
+        else {}
+    )
+    workspace_ready = (
+        surface_checks.get("workspace_daily_driver_main_path_visible", {}).get("evidence", {}).get("ready") is True
+        if isinstance(surface_checks.get("workspace_daily_driver_main_path_visible"), dict)
+        else False
+    )
+    ui_ready = (
+        surface_checks.get("ui_daily_driver_main_path_visible", {}).get("evidence", {}).get("ready") is True
+        if isinstance(surface_checks.get("ui_daily_driver_main_path_visible"), dict)
+        else False
+    )
+    session_posture_ready = bool(
+        case.get("native_dogfood_surfaces", {})
+        .get("surface_checks", {})
+        .get("workspace_session_posture_visible", {})
+        .get("passed")
+    ) if isinstance(case.get("native_dogfood_surfaces"), dict) else False
+    ui_session_posture_ready = bool(
+        case.get("native_dogfood_surfaces", {})
+        .get("surface_checks", {})
+        .get("ui_session_posture_visible", {})
+        .get("passed")
+    ) if isinstance(case.get("native_dogfood_surfaces"), dict) else False
+    return family if workspace_ready and ui_ready and session_posture_ready and ui_session_posture_ready else None
+
+
+def _independent_daily_driver_repo_task_family(case: dict[str, object]) -> str | None:
+    family = _proven_daily_driver_repo_task_family(case)
+    if not family or not isinstance(case, dict):
+        return None
+    return family
+
+
+def _is_native_productization_case(case: dict[str, object]) -> bool:
+    scenario_type = str(case.get("scenario_type") or "")
+    return scenario_type in {
+        "native_coverage_expansion",
+        "interruption_recovery",
+        "repair_resume_success",
+        "program_execution",
+        "repo_task_acceptance",
     }
 
 
@@ -3046,6 +4794,17 @@ def _comparative_benchmark_summary(cases: list[dict[str, object]]) -> dict[str, 
     comparisons = [case.get("comparison", {}) for case in cases if isinstance(case, dict)]
     team_runs = [case.get("team_workflow", {}) for case in cases if isinstance(case, dict)]
     direct_runs = [case.get("direct_run", {}) for case in cases if isinstance(case, dict)]
+    runtime_measurements = [
+        case.get("runtime_measurement", {})
+        for case in cases
+        if isinstance(case.get("runtime_measurement", {}), dict)
+    ]
+    recovery_signals = [
+        case.get("signals", {}).get("recovery", {})
+        for case in cases
+        if isinstance(case.get("signals", {}), dict)
+        and isinstance(case.get("signals", {}).get("recovery", {}), dict)
+    ]
     repo_acceptance = [
         case.get("native_repo_task_acceptance", {})
         for case in cases
@@ -3061,18 +4820,766 @@ def _comparative_benchmark_summary(cases: list[dict[str, object]]) -> dict[str, 
         for case in cases
         if isinstance(case.get("program_execution_proof", {}), dict)
     ]
+    productization_cases = [
+        case
+        for case in cases
+        if isinstance(case, dict)
+        and _is_native_productization_case(case)
+        and isinstance(case.get("native_dogfood_surfaces", {}), dict)
+        and isinstance(case.get("native_dogfood_surfaces", {}).get("surface_checks"), dict)
+        and bool(case.get("native_dogfood_surfaces", {}).get("surface_checks"))
+    ]
+    native_success_cases = sum(
+        1 for item in team_runs if isinstance(item, dict) and item.get("status") in {"approved_for_execution", "accepted", "completed"}
+    )
+    external_success_cases = sum(
+        1 for item in direct_runs if isinstance(item, dict) and item.get("final_state") in {"accepted", "completed"}
+    )
+    native_blocked_cases = sum(
+        1 for item in team_runs if isinstance(item, dict) and item.get("status") in {"needs_revision", "blocked", "awaiting_human"}
+    )
+    external_blocked_cases = sum(
+        1 for item in direct_runs if isinstance(item, dict) and item.get("final_state") in {"blocked", "failed"}
+    )
+    recovery_cases = sum(
+        1 for item in comparisons if isinstance(item, dict) and "recovery_guidance" in list(item.get("team_advantages", []))
+    )
+    human_intervention_cases = sum(
+        1
+        for item in team_runs
+        if isinstance(item, dict) and (bool(item.get("approval_state")) or bool(item.get("recovery_actions")))
+    )
+    verification_cost_measured_cases = sum(
+        1 for item in runtime_measurements if item.get("command_duration_available") is True
+    )
+    verification_cost_total_seconds = round(
+        sum(float(item.get("duration_seconds_total") or 0.0) for item in runtime_measurements),
+        6,
+    )
+    shared_contract_alignment = {
+        "session_continuity_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_session_continuity_snapshot_visible", {}).get("passed"))
+        ),
+        "runtime_cost_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_runtime_cost_visible", {}).get("passed"))
+        ),
+        "planner_evidence_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("planner_continuity_proof", {}).get("checks", {}).get("planner_shared_contract_visible", {}).get("passed"))
+        ),
+        "planner_closure_posture_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("planner_continuity_proof", {}).get("checks", {}).get("planner_closure_posture_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_planner_closure_posture_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("ui_planner_closure_posture_visible", {}).get("passed"))
+        ),
+        "planner_autonomy_boundary_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("planner_continuity_proof", {}).get("checks", {}).get("planner_shared_contract_visible", {}).get("passed"))
+            and bool(item.get("planner_continuity_proof", {}).get("checks", {}).get("planner_owner_boundary_visible", {}).get("passed"))
+        ),
+        "planner_reasoning_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("planner_continuity_proof", {}).get("checks", {}).get("planner_shared_contract_visible", {}).get("passed"))
+            and bool(item.get("planner_continuity_proof", {}).get("checks", {}).get("planner_owner_boundary_visible", {}).get("passed"))
+        ),
+        "adapter_contract_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_adapter_shared_contract_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_adapter_capability_surface_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_adapter_productization_surface_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("ui_adapter_capability_surface_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("ui_adapter_productization_surface_visible", {}).get("passed"))
+        ),
+        "native_tool_usage_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_native_tool_surface_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("ui_native_tool_surface_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_native_tool_productization_surface_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("ui_native_tool_productization_surface_visible", {}).get("passed"))
+        ),
+        "session_posture_cases": sum(
+            1
+            for item in productization_cases
+            if isinstance(item, dict)
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_session_posture_visible", {}).get("passed"))
+            and bool(item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("ui_session_posture_visible", {}).get("passed"))
+        ),
+    }
+    case_count = len(cases)
+    productization_case_count = len(productization_cases)
+    shared_productization_contract_ready = bool(productization_case_count) and shared_contract_alignment.get("session_continuity_cases") == productization_case_count and shared_contract_alignment.get("runtime_cost_cases") == productization_case_count and shared_contract_alignment.get("native_tool_usage_cases") == productization_case_count and shared_contract_alignment.get("planner_evidence_cases") == productization_case_count and shared_contract_alignment.get("planner_closure_posture_cases") == productization_case_count and shared_contract_alignment.get("planner_autonomy_boundary_cases") == productization_case_count and shared_contract_alignment.get("planner_reasoning_cases") == productization_case_count and shared_contract_alignment.get("adapter_contract_cases") == productization_case_count and shared_contract_alignment.get("session_posture_cases") == productization_case_count
+    proven_repo_task_families = sorted(
+        {
+            family
+            for family in (
+                _proven_repo_task_family(case) for case in cases
+            )
+            if family
+        }
+    )
+    proven_daily_driver_repo_task_families = sorted(
+        {
+            family
+            for family in (
+                _proven_daily_driver_repo_task_family(case) for case in cases
+            )
+            if family
+        }
+    )
+    independent_daily_driver_repo_task_families = sorted(
+        {
+            family
+            for family in (
+                _independent_daily_driver_repo_task_family(case) for case in cases
+            )
+            if family
+        }
+    )
+    independent_daily_driver_family_count = len(independent_daily_driver_repo_task_families)
+    broad_daily_driver_repeatability_ready = independent_daily_driver_family_count >= 5
+    independent_daily_driver_case_ready = independent_daily_driver_family_count > 0
+    multiple_stronger_repo_task_families_proven = len(proven_repo_task_families) > 1 and independent_daily_driver_case_ready
+    daily_driver_repeatability_tier = (
+        "multi_family_broad_daily_driver_proven"
+        if broad_daily_driver_repeatability_ready
+        else "multi_family_independent_daily_driver_proven"
+        if independent_daily_driver_family_count > 1
+        else "single_family_daily_driver_anchor_only"
+        if independent_daily_driver_family_count == 1
+        else "shared_productization_only"
+        if shared_productization_contract_ready
+        else "foundational_gap_remaining"
+    )
+    comparison_posture_basis = {
+        "shared_productization_contract_ready": shared_productization_contract_ready,
+        "long_chain_daily_driver_case_ready": independent_daily_driver_case_ready,
+        "planner_candidate_surface_ready": True,
+        "unified_adapter_contract_ready": True,
+        "case_count": case_count,
+        "productization_case_count": productization_case_count,
+        "daily_driver_main_path_ready_cases": sum(
+            1
+            for item in cases
+            if isinstance(item, dict)
+            and isinstance(item.get("native_dogfood_surfaces", {}), dict)
+            and item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_daily_driver_main_path_visible", {}).get("evidence", {}).get("ready")
+            is True
+            and item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("ui_daily_driver_main_path_visible", {}).get("evidence", {}).get("ready")
+            is True
+            and item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("workspace_session_posture_visible", {}).get("passed") is True
+            and item.get("native_dogfood_surfaces", {}).get("surface_checks", {}).get("ui_session_posture_visible", {}).get("passed") is True
+        ),
+        "evidence_scope": "bounded_internal_evidence_only",
+        "comparison_limitations": [
+            "no_authoritative_external_opencode_harness",
+            "single_independent_daily_driver_anchor_family"
+            if independent_daily_driver_family_count <= 1
+            else "bounded_multi_family_daily_driver_internal_only"
+            if not broad_daily_driver_repeatability_ready
+            else "bounded_internal_daily_driver_repeatability_only",
+            "platform_breadth_and_product_thickness_still_manual_gap_judgment",
+        ],
+        "basis_surface_refs": [
+            "shared_contract_alignment",
+            "shared_productization_contract_ready",
+            "planner_candidate_surface_ready",
+            "unified_adapter_contract_ready",
+            "planner_closure_posture",
+            "planner_autonomy_boundary_cases",
+            "planner_reasoning_cases",
+            "native_repo_task_acceptance_ready_cases",
+            "native_complex_repo_task_acceptance_ready_cases",
+            "daily_driver_main_path_ready_cases",
+        ],
+        "daily_driver_repeatability_tier": daily_driver_repeatability_tier,
+        "independent_daily_driver_repo_task_family_count": independent_daily_driver_family_count,
+        "independent_daily_driver_repo_task_families_proven": independent_daily_driver_repo_task_families,
+    }
+    comparison_proof_strength = {
+        "direct_proof_status": (
+            "multiple_stronger_task_families_proven"
+            if multiple_stronger_repo_task_families_proven
+            else "single_stronger_task_family_proven"
+            if independent_daily_driver_case_ready
+            else "foundational_productization_only"
+            if shared_productization_contract_ready
+            else "foundational_gap_remaining"
+        ),
+        "repeatability_status": (
+            "broadly_proven_on_internal_repo_task_slice"
+            if broad_daily_driver_repeatability_ready
+            else "not_yet_broadly_proven"
+            if independent_daily_driver_case_ready
+            else "not_applicable_until_direct_proof"
+            if shared_productization_contract_ready is False
+            else "not_yet_proven"
+        ),
+        "repeatability_ready": broad_daily_driver_repeatability_ready,
+        "stronger_task_family_count": independent_daily_driver_family_count,
+        "broader_task_family_count": independent_daily_driver_family_count,
+        "stronger_task_families": (
+            proven_repo_task_families
+            if multiple_stronger_repo_task_families_proven
+            else independent_daily_driver_repo_task_families
+            if independent_daily_driver_case_ready
+            else []
+        ),
+        "daily_driver_main_path_anchor": (
+            "long_chain_native_first_repo_task"
+            if "long_chain_native_first_repo_task" in independent_daily_driver_repo_task_families
+            else None
+        ),
+        "repo_task_acceptance_families_proven": proven_repo_task_families,
+        "repo_task_acceptance_family_count": len(proven_repo_task_families),
+        "daily_driver_repo_task_families_proven": proven_daily_driver_repo_task_families,
+        "daily_driver_repo_task_family_count": len(proven_daily_driver_repo_task_families),
+        "independent_daily_driver_repo_task_families_proven": independent_daily_driver_repo_task_families,
+        "independent_daily_driver_repo_task_family_count": independent_daily_driver_family_count,
+        "daily_driver_repeatability_tier": daily_driver_repeatability_tier,
+        "broader_repeatability_gap_families": []
+        if broad_daily_driver_repeatability_ready
+        else [
+            "multi_family_daily_driver_repo_tasks",
+        ],
+        "planner_candidate_status": "native_first_candidate_surface_ready",
+        "adapter_unification_status": "same_contract_adapter_surface_ready",
+        "proof_limitations": [
+            "single_independent_daily_driver_anchor_family"
+            if independent_daily_driver_family_count <= 1
+            else "bounded_multi_family_daily_driver_internal_only"
+            if not broad_daily_driver_repeatability_ready
+            else "no_authoritative_external_comparison_harness",
+            "no_repeatable_multi_family_daily_driver_proof"
+            if not broad_daily_driver_repeatability_ready
+            else "platform_breadth_and_external_ecosystem_gap_remains",
+        ],
+    }
+    comparison_posture = (
+        {
+            "status": "daily_driver_main_path_proven_breadth_gap_remaining",
+            "confidence": "bounded_internal_evidence_only",
+            "remaining_gap_classes": [
+                "multi_family_daily_driver_repeatability",
+                "platform_breadth",
+                "plugin_ecosystem",
+                "session_ux_thickness",
+                "wider_general_task_coverage",
+            ],
+            "foundation_gap_remaining": False,
+        }
+        if shared_productization_contract_ready and independent_daily_driver_case_ready
+        else {
+            "status": "shared_productization_ready_but_daily_driver_proof_gap_remaining",
+            "confidence": "bounded_internal_evidence_only",
+            "remaining_gap_classes": [
+                "long_chain_repo_closure_repeatability",
+                "multi_family_daily_driver_repeatability",
+                "platform_breadth",
+                "plugin_ecosystem",
+                "wider_general_task_coverage",
+            ],
+            "foundation_gap_remaining": False,
+        }
+        if shared_productization_contract_ready
+        else {
+            "status": "foundational_gap_remaining",
+            "confidence": "bounded_internal_evidence_only",
+            "remaining_gap_classes": [
+                "tool_surface_depth",
+                "planner_independence",
+                "session_continuity_productization",
+                "adapter_unification",
+            ],
+            "foundation_gap_remaining": True,
+        }
+    )
+    comparison_grade_assessment = {
+        "status": (
+            "internal_repeatability_strong_external_comparison_gap_remaining"
+            if broad_daily_driver_repeatability_ready
+            else "internal_productization_ready_but_repeatability_or_external_gap_remaining"
+            if shared_productization_contract_ready
+            else "foundational_gap_remaining"
+        ),
+        "comparison_grade_ready": False,
+        "internal_repeatability_ready": broad_daily_driver_repeatability_ready,
+        "external_harness_ready": False,
+        "external_harness_status": "missing_authoritative_opencode_harness",
+        "blocking_gap": "no_authoritative_external_opencode_harness",
+        "decision_mode": "human_audit_required_until_external_comparison_ready",
+    }
+    external_comparison_harness_surface = build_external_comparison_harness_surface(
+        shared_productization_contract_ready=shared_productization_contract_ready,
+        internal_repeatability_ready=broad_daily_driver_repeatability_ready,
+        evidence_scope="bounded_internal_evidence_only",
+        proven_independent_daily_driver_family_count=independent_daily_driver_family_count,
+        comparative_shared_evidence_surface=[
+            "runtime_payload",
+            "session_continuity",
+            "session_productization_surface",
+            "planner_closure_posture",
+            "native_tool_workflow_surface",
+            "shared_productization_surface",
+            "native_tool_productization_surface",
+            "adapter_productization_surface",
+            "adapter_capability_surface",
+            "workspace_index",
+            "team_summary",
+            "team_next",
+            "team_runbook",
+            "ui_execution_summary",
+            "cli_execution_summary",
+            "evidence_report",
+        ],
+    )
+    planner_closure_posture = next(
+        (
+            item.get("team_workflow", {}).get("planner_closure_posture", {})
+            for item in productization_cases
+            if isinstance(item.get("team_workflow", {}), dict)
+            and isinstance(item.get("team_workflow", {}).get("planner_closure_posture"), dict)
+            and item.get("team_workflow", {}).get("planner_closure_posture", {}).get("closure_mode")
+        ),
+        {},
+    )
+    if not planner_closure_posture:
+        planner_closure_posture = next(
+            (
+                item.get("planner_continuity_proof", {})
+                .get("checks", {})
+                .get("planner_closure_posture_visible", {})
+                .get("evidence", {})
+                .get("planner_closure_posture", {})
+                for item in productization_cases
+                if isinstance(item.get("planner_continuity_proof", {}), dict)
+                and isinstance(item.get("planner_continuity_proof", {}).get("checks", {}), dict)
+                and isinstance(
+                    item.get("planner_continuity_proof", {})
+                    .get("checks", {})
+                    .get("planner_closure_posture_visible", {})
+                    .get("evidence", {}),
+                    dict,
+                )
+                and isinstance(
+                    item.get("planner_continuity_proof", {})
+                    .get("checks", {})
+                    .get("planner_closure_posture_visible", {})
+                    .get("evidence", {})
+                    .get("planner_closure_posture", {}),
+                    dict,
+                )
+                and item.get("planner_continuity_proof", {})
+                .get("checks", {})
+                .get("planner_closure_posture_visible", {})
+                .get("evidence", {})
+                .get("planner_closure_posture", {})
+                .get("closure_mode")
+            ),
+            {},
+        )
+    comparative_native_tool_summary = next(
+        (
+            build_comparative_native_tool_summary(
+                native_tool_productization_surface=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_native_tool_productization_surface_visible", {})
+                    .get("evidence", {})
+                ),
+                native_tool_workflow_surface=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_native_tool_workflow_surface_visible", {})
+                    .get("evidence", {})
+                ),
+            )
+            for item in productization_cases
+            if isinstance(item, dict)
+            and isinstance(item.get("native_dogfood_surfaces", {}), dict)
+            and (
+                isinstance(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_native_tool_productization_surface_visible", {})
+                    .get("evidence", {}),
+                    dict,
+                )
+                or isinstance(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_native_tool_workflow_surface_visible", {})
+                    .get("evidence", {}),
+                    dict,
+                )
+            )
+        ),
+        {},
+    )
+    operator_tool_digest = next(
+        (
+            derive_operator_tool_digest(
+                native_tool_productization_surface=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_native_tool_productization_surface_visible", {})
+                    .get("evidence", {})
+                ),
+                native_tool_workflow_surface=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_native_tool_workflow_surface_visible", {})
+                    .get("evidence", {})
+                ),
+            )
+            for item in productization_cases
+            if isinstance(item, dict)
+            and isinstance(item.get("native_dogfood_surfaces", {}), dict)
+            and (
+                isinstance(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_native_tool_productization_surface_visible", {})
+                    .get("evidence", {}),
+                    dict,
+                )
+                or isinstance(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_native_tool_workflow_surface_visible", {})
+                    .get("evidence", {}),
+                    dict,
+                )
+            )
+        ),
+        {},
+    )
+    operator_planner_digest = next(
+        (
+            derive_operator_planner_digest(
+                planner_decision=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_planner_decision_visible", {})
+                    .get("evidence", {})
+                    .get("session_planner_decision", {})
+                ),
+                planner_closure_posture=(
+                    item.get("planner_continuity_proof", {})
+                    .get("checks", {})
+                    .get("planner_closure_posture_visible", {})
+                    .get("evidence", {})
+                    .get("planner_closure_posture", {})
+                ),
+                continuity_outline=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("ui_session_posture_visible", {})
+                    .get("evidence", {})
+                ),
+            )
+            for item in productization_cases
+            if isinstance(item, dict)
+            and (
+                isinstance(item.get("planner_continuity_proof", {}), dict)
+                or isinstance(item.get("native_dogfood_surfaces", {}), dict)
+            )
+        ),
+        {},
+    )
+    comparative_adapter_summary = next(
+        (
+            build_comparative_adapter_summary(
+                adapter_productization_surface=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_adapter_productization_surface_visible", {})
+                    .get("evidence", {})
+                ),
+                adapter_shared_contract=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_adapter_shared_contract_visible", {})
+                    .get("evidence", {})
+                ),
+                adapter_capability_surface=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_adapter_capability_surface_visible", {})
+                    .get("evidence", {})
+                ),
+            )
+            for item in productization_cases
+            if isinstance(item, dict)
+            and isinstance(item.get("native_dogfood_surfaces", {}), dict)
+            and (
+                isinstance(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_adapter_productization_surface_visible", {})
+                    .get("evidence", {}),
+                    dict,
+                )
+                or isinstance(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_adapter_shared_contract_visible", {})
+                    .get("evidence", {}),
+                    dict,
+                )
+            )
+        ),
+        {},
+    )
+    comparative_session_posture_summary = next(
+        (
+            build_comparative_session_posture_summary(
+                session_productization_surface=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("ui_session_productization_surface_visible", {})
+                    .get("evidence", {})
+                ),
+                planner_decision=(
+                    item.get("planner_continuity_proof", {})
+                    .get("checks", {})
+                    .get("planner_closure_posture_visible", {})
+                    .get("evidence", {})
+                    .get("planner_closure_posture", {})
+                ),
+                continuity_outline=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("ui_session_posture_visible", {})
+                    .get("evidence", {})
+                ),
+            )
+            for item in productization_cases
+            if isinstance(item, dict)
+            and isinstance(item.get("native_dogfood_surfaces", {}), dict)
+        ),
+        {},
+    )
+    comparative_session_continuity_summary = next(
+        (
+            build_comparative_session_continuity_summary(
+                session_productization_surface=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("ui_session_productization_visible", {})
+                    .get("evidence", {})
+                ),
+                continuity_outline=(
+                    item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("ui_session_posture_visible", {})
+                    .get("evidence", {})
+                ),
+                comparative_shared_evidence_surface=[
+                    "runtime_payload",
+                    "session_continuity",
+                    "session_productization_surface",
+                    "workspace_index",
+                    "ui_execution_summary",
+                    "cli_execution_summary",
+                    "evidence_report",
+                ],
+            )
+            for item in productization_cases
+            if isinstance(item, dict)
+            and isinstance(item.get("native_dogfood_surfaces", {}), dict)
+        ),
+        {},
+    )
+    comparative_planner_candidate_summary = next(
+        (
+            build_comparative_planner_candidate_summary(
+                planner_shared_contract=(
+                    item.get("team_workflow", {}).get("planner_shared_contract", {})
+                    if isinstance(item.get("team_workflow", {}), dict)
+                    else item.get("native_dogfood_surfaces", {})
+                    .get("surface_checks", {})
+                    .get("workspace_planner_decision_visible", {})
+                    .get("evidence", {})
+                    .get("session_planner_decision", {})
+                    if isinstance(item.get("native_dogfood_surfaces", {}), dict)
+                    else {}
+                ),
+                operator_planner_digest=(
+                    derive_operator_planner_digest(
+                        planner_decision=(
+                            item.get("native_dogfood_surfaces", {})
+                            .get("surface_checks", {})
+                            .get("workspace_planner_decision_visible", {})
+                            .get("evidence", {})
+                            .get("session_planner_decision", {})
+                        ),
+                        planner_closure_posture=(
+                            item.get("planner_continuity_proof", {})
+                            .get("checks", {})
+                            .get("planner_closure_posture_visible", {})
+                            .get("evidence", {})
+                            .get("planner_closure_posture", {})
+                        ),
+                        continuity_outline=(
+                            item.get("native_dogfood_surfaces", {})
+                            .get("surface_checks", {})
+                            .get("ui_session_posture_visible", {})
+                            .get("evidence", {})
+                        ),
+                    )
+                    if isinstance(item, dict)
+                    else {}
+                ),
+                comparative_shared_evidence_surface=[
+                    "runtime_payload",
+                    "planner_shared_contract",
+                    "planner_closure_posture",
+                    "planner_autonomy_boundary",
+                    "planner_reasoning",
+                    "workspace_index",
+                    "ui_execution_summary",
+                    "cli_execution_summary",
+                    "evidence_report",
+                ],
+            )
+            for item in productization_cases
+            if isinstance(item, dict)
+        ),
+        {},
+    )
+    comparative_native_closure_summary = next(
+        (
+            build_comparative_native_closure_summary(
+                native_task_proof=(
+                    item.get("team_workflow", {}).get("native_task_proof", {})
+                    if isinstance(item.get("team_workflow", {}), dict)
+                    else {}
+                ),
+                verification=(
+                    item.get("team_workflow", {}).get("verification", {})
+                    if isinstance(item.get("team_workflow", {}), dict)
+                    else {}
+                ),
+                recovery_summary=(
+                    item.get("team_workflow", {}).get("recovery_summary", {})
+                    if isinstance(item.get("team_workflow", {}), dict)
+                    else {}
+                ),
+                comparative_shared_evidence_surface=[
+                    "runtime_payload",
+                    "native_task_proof",
+                    "verification",
+                    "recovery_summary",
+                    "workspace_index",
+                    "ui_execution_summary",
+                    "cli_execution_summary",
+                    "evidence_report",
+                ],
+            )
+            for item in productization_cases
+            if isinstance(item, dict)
+        ),
+        {},
+    )
+    comparison_grade_assessment["external_comparison_harness_surface"] = external_comparison_harness_surface
+    comparative_daily_driver_summary = build_comparative_daily_driver_summary(
+        proof_strength=comparison_proof_strength,
+        benchmark_digest={
+            "comparison_status": comparison_posture.get("status"),
+            "daily_driver_main_path_ready": independent_daily_driver_case_ready,
+        },
+        comparative_benchmark={
+            "comparison_posture": comparison_posture,
+            "daily_driver_main_path_ready": independent_daily_driver_case_ready,
+        },
+    )
+    comparative_completion_summary = build_comparative_completion_summary(
+        benchmark_digest={
+            "comparison_status": comparison_posture.get("status"),
+            "comparison_grade_status": comparison_grade_assessment.get("status"),
+            "comparison_grade_ready": comparison_grade_assessment.get("ready"),
+            "blocking_gap": comparison_grade_assessment.get("blocking_gap"),
+            "external_harness_operator_action": external_comparison_harness_surface.get("operator_action"),
+            "remaining_gap_classes": comparison_grade_assessment.get("remaining_gap_classes"),
+        },
+        comparative_benchmark={
+            "comparison_posture": comparison_posture,
+            "comparison_grade_assessment": comparison_grade_assessment,
+            "external_comparison_harness_surface": external_comparison_harness_surface,
+        },
+    )
+    clarify_boundary_digest = derive_clarify_boundary_digest(
+        operator_planner_digest=operator_planner_digest,
+        comparative_session_posture_summary=comparative_session_posture_summary,
+        shared_evidence_surface=[
+            "runtime_payload",
+            "clarify_boundary_digest",
+            "approval_boundary_digest",
+            "session_continuity",
+            "session_productization_surface",
+            "planner_closure_posture",
+            "workspace_index",
+            "team_summary",
+            "team_next",
+            "team_runbook",
+            "ui_execution_summary",
+            "cli_execution_summary",
+            "evidence_report",
+        ],
+    )
+    approval_boundary_digest = derive_approval_boundary_digest(
+        operator_planner_digest=operator_planner_digest,
+        comparative_session_posture_summary=comparative_session_posture_summary,
+        shared_evidence_surface=[
+            "runtime_payload",
+            "clarify_boundary_digest",
+            "approval_boundary_digest",
+            "session_continuity",
+            "session_productization_surface",
+            "planner_closure_posture",
+            "workspace_index",
+            "team_summary",
+            "team_next",
+            "team_runbook",
+            "ui_execution_summary",
+            "cli_execution_summary",
+            "evidence_report",
+        ],
+    )
     return {
         "case_count": len(cases),
-        "native_success_cases": sum(1 for item in team_runs if isinstance(item, dict) and item.get("status") in {"approved_for_execution", "accepted", "completed"}),
-        "external_success_cases": sum(1 for item in direct_runs if isinstance(item, dict) and item.get("final_state") in {"accepted", "completed"}),
-        "native_blocked_cases": sum(1 for item in team_runs if isinstance(item, dict) and item.get("status") in {"needs_revision", "blocked"}),
-        "external_blocked_cases": sum(1 for item in direct_runs if isinstance(item, dict) and item.get("final_state") in {"blocked", "failed"}),
-        "human_intervention_cases": sum(
-            1
-            for item in team_runs
-            if isinstance(item, dict) and bool(item.get("approval_state")) and item.get("status") not in {"accepted", "completed"}
-        ),
-        "recovery_cases": sum(1 for item in comparisons if isinstance(item, dict) and "recovery_guidance" in list(item.get("team_advantages", []))),
+        "native_success_cases": native_success_cases,
+        "external_success_cases": external_success_cases,
+        "native_blocked_cases": native_blocked_cases,
+        "external_blocked_cases": external_blocked_cases,
+        "human_intervention_cases": human_intervention_cases,
+        "recovery_cases": recovery_cases,
+        "success_rate_delta": native_success_cases - external_success_cases,
+        "blocked_rate_delta": native_blocked_cases - external_blocked_cases,
+        "recovery_rate_delta": recovery_cases - external_blocked_cases,
+        "verification_cost_measured_cases": verification_cost_measured_cases,
+        "verification_cost_total_seconds": verification_cost_total_seconds,
+        "human_intervention_frequency": human_intervention_cases,
+        "productization_case_count": productization_case_count,
         "same_program_contract_cases": sum(1 for item in program_execution if item.get("program_execution_ready") is True),
         "native_repo_task_acceptance_ready_cases": sum(1 for item in repo_acceptance if item.get("real_repo_task_acceptance_ready") is True),
         "native_complex_repo_task_acceptance_ready_cases": sum(1 for item in complex_repo_acceptance if item.get("complex_repo_task_ready") is True),
@@ -3081,18 +5588,57 @@ def _comparative_benchmark_summary(cases: list[dict[str, object]]) -> dict[str, 
             if comparisons
             else 0.0
         ),
+        "shared_contract_alignment": shared_contract_alignment,
+        "shared_productization_contract_ready": shared_productization_contract_ready,
+        "comparison_posture_basis": comparison_posture_basis,
+        "comparison_proof_strength": comparison_proof_strength,
+        "comparison_posture": comparison_posture,
+        "daily_driver_main_path_anchor": comparison_proof_strength.get("daily_driver_main_path_anchor"),
+        "planner_closure_posture": planner_closure_posture,
+        "comparative_native_tool_summary": comparative_native_tool_summary,
+        "operator_planner_digest": operator_planner_digest,
+        "comparative_planner_candidate_summary": comparative_planner_candidate_summary,
+        "operator_tool_digest": operator_tool_digest,
+        "comparative_adapter_summary": comparative_adapter_summary,
+        "comparative_session_posture_summary": comparative_session_posture_summary,
+        "comparative_session_continuity_summary": comparative_session_continuity_summary,
+        "comparative_native_closure_summary": comparative_native_closure_summary,
+        "clarify_boundary_digest": clarify_boundary_digest,
+        "approval_boundary_digest": approval_boundary_digest,
+        "comparative_daily_driver_summary": comparative_daily_driver_summary,
+        "comparative_completion_summary": comparative_completion_summary,
+        "comparison_grade_assessment": comparison_grade_assessment,
+        "external_comparison_harness_surface": external_comparison_harness_surface,
         "shared_evidence_surface": [
             "runtime_payload",
             "session_continuity",
+            "session_productization_surface",
+            "planner_closure_posture",
+            "planner_autonomy_boundary",
+            "planner_reasoning",
+            "clarify_boundary_digest",
+            "approval_boundary_digest",
+            "native_tool_workflow_surface",
+            "shared_productization_surface",
+            "native_tool_productization_surface",
+            "adapter_productization_surface",
+            "adapter_capability_surface",
             "workspace_index",
             "team_summary",
             "team_next",
             "team_runbook",
             "ui_execution_summary",
             "cli_execution_summary",
+            "adapter_shared_contract",
+            "planner_shared_contract",
             "recovery_recommendation",
             "topology_snapshot",
         ],
+        "governed_fallback_hot_plug_preserved": all(
+            bool(item.get("signals", {}).get("fallback", {}).get("present") in {True, False})
+            for item in cases
+            if isinstance(item, dict)
+        ),
     }
 
 

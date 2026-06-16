@@ -204,6 +204,7 @@ Goal:
 
 - Compare two evidence JSON captures without changing the existing evidence schema.
 - Produce a markdown trend report for benefit score, scenario aggregates, key signal counts, team advantages, and direct limitations.
+- Keep proof-strength posture visible across baseline/current comparisons instead of reducing the trend to score-style deltas only.
 
 Implementation changes:
 
@@ -211,6 +212,7 @@ Implementation changes:
 - Add `evidence compare --baseline <json> --current <json> --output <md>`.
 - Keep `--format pretty|json` behavior consistent with other evidence commands.
 - Write an initial trend report to `docs/process/v1x-evidence-trend.md`.
+- Ensure the trend report preserves a `Comparative Proof Strength` section derived from the benchmark payload.
 
 Targeted test:
 

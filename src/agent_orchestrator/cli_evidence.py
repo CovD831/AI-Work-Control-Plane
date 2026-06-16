@@ -58,7 +58,23 @@ def run_evidence_command(args: argparse.Namespace) -> None:
         )
         path = write_workflow_evidence_trend_markdown(payload, Path(args.output))
         if json_only(args):
-            emit_json({"output": str(path), "deltas": payload.get("deltas", {})}, args)
+            baseline = payload.get("baseline", {}) if isinstance(payload.get("baseline"), dict) else {}
+            current = payload.get("current", {}) if isinstance(payload.get("current"), dict) else {}
+            emit_json(
+                {
+                    "output": str(path),
+                    "deltas": payload.get("deltas", {}),
+                    "baseline": {
+                        "case_count": baseline.get("case_count", 0),
+                        "comparative_benchmark": baseline.get("comparative_benchmark", {}),
+                    },
+                    "current": {
+                        "case_count": current.get("case_count", 0),
+                        "comparative_benchmark": current.get("comparative_benchmark", {}),
+                    },
+                },
+                args,
+            )
         else:
             print(f"Wrote evidence trend report: {path}")
         return

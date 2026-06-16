@@ -108,6 +108,13 @@ class ContextSnapshot:
     planner_family: str
     compatibility_metadata: dict[str, object]
     resume_kind: ResumeKind
+    planner_decision: dict[str, object] = field(default_factory=dict)
+    continuity_outline: dict[str, object] = field(default_factory=dict)
+    session_continuity_contract: dict[str, object] = field(default_factory=dict)
+    session_productization_surface: dict[str, object] = field(default_factory=dict)
+    comparative_benchmark: dict[str, object] = field(default_factory=dict)
+    comparative_benchmark_digest: dict[str, object] = field(default_factory=dict)
+    compacted_context_summary: dict[str, object] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
@@ -120,6 +127,13 @@ class ContextSnapshot:
             "planner_family": self.planner_family,
             "compatibility_metadata": dict(self.compatibility_metadata),
             "resume_kind": self.resume_kind,
+            "planner_decision": dict(self.planner_decision),
+            "continuity_outline": dict(self.continuity_outline),
+            "session_continuity_contract": dict(self.session_continuity_contract),
+            "session_productization_surface": dict(self.session_productization_surface),
+            "comparative_benchmark": dict(self.comparative_benchmark),
+            "comparative_benchmark_digest": dict(self.comparative_benchmark_digest),
+            "compacted_context_summary": dict(self.compacted_context_summary),
             "metadata": dict(self.metadata),
         }
 
@@ -134,6 +148,13 @@ class ContextSnapshot:
             planner_family=str(data.get("planner_family", "compatibility")),
             compatibility_metadata=dict(data.get("compatibility_metadata", {})),
             resume_kind=str(data.get("resume_kind", "fresh")),
+            planner_decision=dict(data.get("planner_decision", {})),
+            continuity_outline=dict(data.get("continuity_outline", {})),
+            session_continuity_contract=dict(data.get("session_continuity_contract", {})),
+            session_productization_surface=dict(data.get("session_productization_surface", {})),
+            comparative_benchmark=dict(data.get("comparative_benchmark", {})),
+            comparative_benchmark_digest=dict(data.get("comparative_benchmark_digest", {})),
+            compacted_context_summary=dict(data.get("compacted_context_summary", {})),
             metadata=dict(data.get("metadata", {})),
         )
 

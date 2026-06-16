@@ -12,13 +12,19 @@ from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 def write_minimal_process_docs(root: Path) -> None:
     (root / "docs" / "process").mkdir(parents=True, exist_ok=True)
     (root / "src" / "agent_orchestrator").mkdir(parents=True, exist_ok=True)
-    (root / "src" / "agent_orchestrator" / "__init__.py").write_text('"""package"""\n', encoding="utf-8")
+    package_init = root / "src" / "agent_orchestrator" / "__init__.py"
+    if not package_init.exists():
+        package_init.write_text('"""package"""\n', encoding="utf-8")
     (root / "src" / "agent_orchestrator" / "stub.py").write_text(
         '"""Stub module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Provide a compliant module for minimal process-doc test fixtures.\n# MODULE: tests\n# ---\n\nVALUE = 1\n',
         encoding="utf-8",
     )
     (root / "src" / "agent_orchestrator" / "compliance_signal.py").write_text(
         '"""Compliance-visible stub module."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Provide a compliance-visible Python surface for native repo-task acceptance fixtures.\n# MODULE: tests\n# ---\n\nFLAG = 0\n',
+        encoding="utf-8",
+    )
+    (root / "src" / "agent_orchestrator" / "summary_helper.py").write_text(
+        '"""Helper summary stub."""\n\nfrom __future__ import annotations\n\n# DEPS: __future__\n# RESPONSIBILITY: Provide a helper implementation surface for native repo-task acceptance fixtures.\n# MODULE: tests\n# ---\n\n\ndef build_summary() -> dict[str, object]:\n    return {"status": "stub"}\n',
         encoding="utf-8",
     )
     (root / "README.md").write_text(
@@ -78,6 +84,7 @@ def write_minimal_process_docs(root: Path) -> None:
         "- docs/process/root-map.md\n"
         "- docs/process/context-map.md\n"
         "- docs/architecture/native-coding-agent-upgrade-plan.md\n"
+        "- docs/process/goal-mode-native-agent-productization-closure-audit.md\n"
         "- docs/process/native-coding-agent-phase-0-baseline.md\n"
         "- docs/process/native-coding-agent-phase-1-kernel-boundary.md\n"
         "- docs/process/native-coding-agent-phase-2-step-loop-convergence.md\n"
@@ -86,7 +93,58 @@ def write_minimal_process_docs(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "docs" / "process" / "agent-orchestrator-implementation-process.md").write_text(
-        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n- docs/decisions/\n",
+        "# Agent Orchestrator Product Process\n\n- hook-based compliance checks\n- native coding-agent dogfood baseline\n- docs/decisions/\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "control-plane-artifact-contracts.md").write_text(
+        "# Control Plane Artifact Contracts\n\n- session_continuity\n- runtime_cost\n- native_tool_usage\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "process" / "native-coding-agent-dogfood-evidence.md").write_text(
+        "# Native Coding Agent Dogfood Evidence\n\n"
+        "native coding-agent dogfood baseline\n"
+        "- bounded_internal_repo_task\n"
+        "- approval_pause_resume_complete\n"
+        "- verify_failure_exhausted_recovery_block\n"
+        "- verify_failure_repair_resume_success\n"
+        "- multi_milestone_program_execution\n"
+        "- agent_orchestrator.native_task_proof.v1\n"
+        "- agent_orchestrator.native_runtime_closure.v1\n"
+        "- agent_orchestrator.native_repo_task_acceptance.v1\n"
+        "- agent_orchestrator.program_execution_proof.v1\n"
+        "- native_tool_workflow_surface\n"
+        "- native_tool_productization_surface\n"
+        "- adapter_productization_surface\n"
+        "- session_productization_surface\n"
+        "- session_planner_decision\n"
+        "- session_continuity_outline\n"
+        "- autonomy_posture\n"
+        "- resume_expectation\n"
+        "- resume_posture\n"
+        "- session_posture_cases\n"
+        "- productization_case_count\n"
+        "- continuity_snapshot\n"
+        "- compacted_context_summary\n"
+        "- recovery_contract\n"
+        "- shared_contract_alignment\n"
+        "- shared_productization_contract_ready\n"
+        "- native_tool_usage\n"
+        "- daily_driver_main_path_ready\n"
+        "- daily_driver_main_path_ready_cases\n"
+        "- comparison_posture\n"
+        "- comparison_posture_basis\n"
+        "- comparison_proof_strength\n"
+        "- stronger_task_families\n"
+        "- broader_repeatability_gap_families\n"
+        "- multiple stronger direct-proof families\n"
+        "- evidence trend reports\n"
+        "- agent_orchestrator.runtime_event_stream.v1\n"
+        "- agent_orchestrator.workspace_index.v1\n"
+        "- agent_orchestrator.recovery_recommendation.v1\n"
+        "- agent_orchestrator.execution_topology_snapshot.v1\n"
+        "- stable step-loop\n"
+        "- explicit context select plus structured observation\n"
+        "- multi-milestone native program-execution evidence chain\n",
         encoding="utf-8",
     )
     (root / "docs" / "architecture").mkdir(parents=True, exist_ok=True)
@@ -151,6 +209,7 @@ def write_minimal_process_docs(root: Path) -> None:
         "- team inspect-docs\n"
         "- team inspect-handoff\n"
         "- team docs-index\n"
+        "- native-coding-agent-dogfood-evidence.md\n"
         "- team workspace-status\n"
         "- team context-packet\n"
         "- team topology inspect\n"

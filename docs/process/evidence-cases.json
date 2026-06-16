@@ -148,5 +148,25 @@
     "operator_goal": "prove a longer native-first repository task can close through exploration, multi-file editing, verification, and docs synchronization without external help",
     "expected_signals": ["recovery_guidance", "doc_sync", "cost_latency"],
     "runtime_expectation": "native exploration, multi-file mutation, verification, and repo-facing surface updates stay on the native path"
+  },
+  {
+    "label": "repo_task_acceptance_workspace_index_long_chain",
+    "requirement": "Replace \"VALUE = 1\" with \"VALUE = 2\" in src/agent_orchestrator/stub.py and replace \"FLAG = 0\" with \"FLAG = 1\" in src/agent_orchestrator/compliance_signal.py and replace \"return {\\\"status\\\": \\\"stub\\\"}\" with \"return {\\\"status\\\": \\\"implemented\\\", \\\"checks\\\": 1}\" in src/agent_orchestrator/summary_helper.py and append \"root map updated\" to docs/process/root-map.md and append \"context map updated\" to docs/process/context-map.md and append \"project index updated\" to docs/process/project-index.md and append \"native upgrade plan updated\" to docs/architecture/native-coding-agent-upgrade-plan.md",
+    "scenario_type": "repo_task_acceptance",
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "prove a second longer native-first repository task can close through exploration, multi-file editing, verification, and workspace/architecture index synchronization without external help",
+    "expected_signals": ["recovery_guidance", "doc_sync", "cost_latency"],
+    "runtime_expectation": "native exploration, multi-file mutation, verification, and workspace-facing architecture index updates stay on the native path"
+  },
+  {
+    "label": "repo_task_acceptance_evidence_contract_long_chain",
+    "requirement": "Replace \"VALUE = 1\" with \"VALUE = 2\" in src/agent_orchestrator/stub.py and replace \"FLAG = 0\" with \"FLAG = 1\" in src/agent_orchestrator/compliance_signal.py and replace \"return {\\\"status\\\": \\\"stub\\\"}\" with \"return {\\\"status\\\": \\\"implemented\\\", \\\"checks\\\": 1}\" in src/agent_orchestrator/summary_helper.py and append \"artifact contract updated\" to docs/process/control-plane-artifact-contracts.md and append \"dogfood evidence updated\" to docs/process/native-coding-agent-dogfood-evidence.md and append \"project index refreshed\" to docs/process/project-index.md",
+    "scenario_type": "repo_task_acceptance",
+    "mode": "success_first",
+    "risk_profile": "medium",
+    "operator_goal": "prove a third longer native-first repository task can close through exploration, multi-file editing, verification, and evidence-contract synchronization without external help",
+    "expected_signals": ["recovery_guidance", "doc_sync", "cost_latency"],
+    "runtime_expectation": "native exploration, multi-file mutation, verification, and evidence-facing contract updates stay on the native path"
   }
 ]

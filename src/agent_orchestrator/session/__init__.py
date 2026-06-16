@@ -10,12 +10,14 @@ from agent_orchestrator.session.models import (
     new_snapshot_id,
     new_turn_id,
 )
+from agent_orchestrator.session.productization import derive_session_productization_surface
 from agent_orchestrator.session.runtime import SessionRuntime
 from agent_orchestrator.session.scratchpad import ScratchpadEntry, ScratchpadStore
 
 __all__ = [
     "AgentSession",
     "ContextSnapshot",
+    "derive_session_productization_surface",
     "ExecutionActivity",
     "SessionRuntime",
     "SessionTurn",

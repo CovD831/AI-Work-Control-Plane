@@ -15,6 +15,15 @@
 - improvement_signals: average_benefit_score_delta=+0, execution_run_delta=+5, positive_team_advantage_delta=+75.
 - limitation_signals: direct_without_plan_metadata_delta=+5; compare this with case_count_delta before treating it as a regression.
 
+## Comparative Proof Strength
+
+- baseline_direct_proof_status: foundational_productization_only
+- current_direct_proof_status: foundational_productization_only
+- baseline_repeatability_status: not_yet_proven
+- current_repeatability_status: not_yet_proven
+- stronger_task_family_count_delta: +0
+- broader_task_family_count_delta: +0
+
 ## Scenario Aggregates
 
 - compliance_blocking: cases_delta=+1, average_benefit_score_delta=+17, max_benefit_score_delta=+17

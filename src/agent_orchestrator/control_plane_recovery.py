@@ -9,6 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_orchestrator.control_plane_artifacts import artifact_ref as _artifact_ref
+from agent_orchestrator.control_plane_posture import (
+    derive_session_continuity_outline,
+    derive_session_planner_decision,
+    infer_resume_posture,
+)
 from agent_orchestrator.control_plane_artifacts import resolve_root as _resolve_root
 from agent_orchestrator.control_plane_artifacts import stable_id as _stable_id
 from agent_orchestrator.control_plane_constants import CONTROL_PLANE_FORMATS, RECOVERY_TIMELINE_STATUSES
@@ -99,6 +104,10 @@ def build_recovery_recommendation(
     evidence_bundle: dict[str, object] | None = None,
 ) -> dict[str, object]:
     payload = session.to_dict()
+    from agent_orchestrator.control_plane import build_strategy_decision
+
+    strategy = build_strategy_decision(session)
+    session_planner_decision = derive_session_planner_decision(strategy)
     summary = get_governance_status(payload)
     timeline_summary = (
         recovery_timeline.get("summary", {})
@@ -146,6 +155,29 @@ def build_recovery_recommendation(
         and not human_required
         and current_status
         not in {"runtime_failed", "provider_degraded", "evidence_blocked", "interrupted"}
+    )
+    session_continuity_outline = derive_session_continuity_outline(
+        strategy,
+        resume_kind=(
+            "approval_resume"
+            if human_required
+            else "fresh"
+            if current_status in {"drafting", "review_pending", "planned"}
+            else "resume_if_same_task"
+        ),
+        compaction_stage=None,
+        resume_posture=infer_resume_posture(
+            current_status=current_status,
+            human_required=human_required,
+            resume_expectation=session_planner_decision.get("delegation_contract", {}).get("resume_expectation"),
+            resume_kind=(
+                "approval_resume"
+                if human_required
+                else "fresh"
+                if current_status in {"drafting", "review_pending", "planned"}
+                else "resume_if_same_task"
+            ),
+        ),
     )
     branch_candidates = _recovery_branch_candidates(
         session=session,
@@ -207,6 +239,8 @@ def build_recovery_recommendation(
             "approval_pause_state": human_required,
             "clarify_pause_state": False,
         },
+        "session_planner_decision": session_planner_decision,
+        "session_continuity_outline": session_continuity_outline,
         "recovery_search": _recovery_search_summary(branch_candidates),
         "branch_candidates": branch_candidates,
         "read_only": True,

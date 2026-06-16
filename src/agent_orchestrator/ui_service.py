@@ -22,15 +22,44 @@ from agent_orchestrator.control_plane import (
     build_workspace_index,
     build_workspace_state_snapshot,
 )
+from agent_orchestrator.control_plane_posture import (
+    derive_planner_closure_posture_summary,
+    derive_session_continuity_outline_summary,
+    derive_session_planner_decision_summary,
+)
 from agent_orchestrator.events import EventStore
+from agent_orchestrator.execution.models import (
+    derive_adapter_capability_summary,
+    derive_adapter_productization_surface,
+)
 from agent_orchestrator.jobs import FileJobRuntime
 from agent_orchestrator.memory import MemoryStore
 from agent_orchestrator.messages import MessageStore
 from agent_orchestrator.planning import TeamOrchestrator, build_operator_runbook
 from agent_orchestrator.planning_governance import get_governance_status
 from agent_orchestrator.policies import OrchestrationMode
+from agent_orchestrator.productization_surface import (
+    build_comparative_adapter_summary,
+    build_comparative_completion_summary,
+    build_comparative_daily_driver_summary,
+    build_comparative_native_closure_summary,
+    build_comparative_native_tool_summary,
+    build_comparative_planner_candidate_summary,
+    build_comparative_planner_autonomy_summary,
+    build_comparative_session_continuity_summary,
+    build_comparative_session_posture_summary,
+    build_comparative_daily_driver_benchmark,
+    build_runtime_comparative_benchmark_digest,
+    build_shared_productization_surface,
+    derive_approval_boundary_digest,
+    derive_clarify_boundary_digest,
+    derive_operator_planner_digest,
+    derive_operator_tool_digest,
+    derive_native_tool_productization_surface,
+)
 from agent_orchestrator.roles import DEFAULT_AGENT_ROLES, get_agent_role, role_for_job_kind
 from agent_orchestrator.run_store import RunStore
+from agent_orchestrator.session.productization import derive_session_productization_surface
 from agent_orchestrator.tmux_runtime import TmuxJobRuntime
 from agent_orchestrator.work_graph import WorkGraphStore, WorkUnitGraph, graph_to_plan_tree, schedulable_nodes
 
@@ -879,6 +908,56 @@ def _build_operator_summary(
         if isinstance(workspace_index, dict) and isinstance(workspace_index.get("comparative_benchmark"), dict)
         else {}
     )
+    execution_fact_chain = (
+        workspace_index.get("execution_fact_chain", {})
+        if isinstance(workspace_index, dict) and isinstance(workspace_index.get("execution_fact_chain"), dict)
+        else {}
+    )
+    comparative_digest = _comparative_benchmark_digest(workspace_benchmark)
+    proof_strength = (
+        workspace_benchmark.get("comparison_proof_strength", {})
+        if isinstance(workspace_benchmark.get("comparison_proof_strength"), dict)
+        else {}
+    )
+    operator_planner_digest = derive_operator_planner_digest(
+        planner_decision=(
+            execution_summary.get("session_planner_decision", {})
+            if isinstance(execution_summary.get("session_planner_decision"), dict)
+            else {}
+        ),
+        planner_closure_posture=(
+            execution_summary.get("planner_closure_posture", {})
+            if isinstance(execution_summary.get("planner_closure_posture"), dict)
+            else {}
+        ),
+        continuity_outline=(
+            execution_summary.get("continuity_outline", {})
+            if isinstance(execution_summary.get("continuity_outline"), dict)
+            else {}
+        ),
+    )
+    clarify_boundary_digest = (
+        workspace_index.get("clarify_boundary_digest", {})
+        if isinstance(workspace_index, dict) and isinstance(workspace_index.get("clarify_boundary_digest"), dict)
+        else derive_clarify_boundary_digest(
+            operator_planner_digest=operator_planner_digest,
+            comparative_session_posture_summary=workspace_benchmark.get("comparative_session_posture_summary", {})
+            if isinstance(workspace_benchmark.get("comparative_session_posture_summary"), dict)
+            else {},
+            execution_fact_chain=execution_fact_chain,
+        )
+    )
+    approval_boundary_digest = (
+        workspace_index.get("approval_boundary_digest", {})
+        if isinstance(workspace_index, dict) and isinstance(workspace_index.get("approval_boundary_digest"), dict)
+        else derive_approval_boundary_digest(
+            operator_planner_digest=operator_planner_digest,
+            comparative_session_posture_summary=workspace_benchmark.get("comparative_session_posture_summary", {})
+            if isinstance(workspace_benchmark.get("comparative_session_posture_summary"), dict)
+            else {},
+            execution_fact_chain=execution_fact_chain,
+        )
+    )
     return {
         "session": {
             "id": payload.get("id"),
@@ -899,7 +978,164 @@ def _build_operator_summary(
             "linked_run_status": linked_run.get("status") if isinstance(linked_run, dict) else None,
         },
         "execution_runtime_summary": execution_summary,
+        "execution_fact_chain": execution_fact_chain,
+        "clarify_boundary_digest": clarify_boundary_digest,
+        "approval_boundary_digest": approval_boundary_digest,
         "comparative_benchmark_summary": workspace_benchmark,
+        "comparative_benchmark_digest": comparative_digest,
+        "comparative_planner_closure_summary": _comparative_planner_closure_summary(comparative_digest),
+        "comparative_planner_autonomy_summary": build_comparative_planner_autonomy_summary(
+            planner_shared_contract=(
+                execution_summary.get("planner_shared_contract", {})
+                if isinstance(execution_summary.get("planner_shared_contract"), dict)
+                else {}
+            ),
+            operator_planner_digest=operator_planner_digest,
+            comparative_shared_evidence_surface=(
+                comparative_digest.get("shared_evidence_surface", [])
+                if isinstance(comparative_digest.get("shared_evidence_surface"), list)
+                else []
+            ),
+        ),
+        "comparative_planner_candidate_summary": build_comparative_planner_candidate_summary(
+            planner_shared_contract=(
+                execution_summary.get("planner_shared_contract", {})
+                if isinstance(execution_summary.get("planner_shared_contract"), dict)
+                else {}
+            ),
+            operator_planner_digest=operator_planner_digest,
+            comparative_shared_evidence_surface=(
+                comparative_digest.get("shared_evidence_surface", [])
+                if isinstance(comparative_digest.get("shared_evidence_surface"), list)
+                else []
+            ),
+        ),
+        "comparative_native_tool_summary": build_comparative_native_tool_summary(
+            native_tool_productization_surface=(
+                execution_summary.get("native_tool_productization_surface", {})
+                if isinstance(execution_summary.get("native_tool_productization_surface"), dict)
+                else {}
+            ),
+            native_tool_workflow_surface=(
+                execution_summary.get("native_tool_workflow_surface", {})
+                if isinstance(execution_summary.get("native_tool_workflow_surface"), dict)
+                else {}
+            ),
+        ),
+        "operator_tool_digest": derive_operator_tool_digest(
+            native_tool_productization_surface=(
+                execution_summary.get("native_tool_productization_surface", {})
+                if isinstance(execution_summary.get("native_tool_productization_surface"), dict)
+                else {}
+            ),
+            native_tool_workflow_surface=(
+                execution_summary.get("native_tool_workflow_surface", {})
+                if isinstance(execution_summary.get("native_tool_workflow_surface"), dict)
+                else {}
+            ),
+        ),
+        "operator_planner_digest": operator_planner_digest,
+        "comparative_adapter_summary": build_comparative_adapter_summary(
+            adapter_productization_surface=(
+                execution_summary.get("adapter_productization_surface", {})
+                if isinstance(execution_summary.get("adapter_productization_surface"), dict)
+                else {}
+            ),
+            adapter_shared_contract=(
+                execution_summary.get("adapter_shared_contract", {})
+                if isinstance(execution_summary.get("adapter_shared_contract"), dict)
+                else {}
+            ),
+            adapter_capability_surface=(
+                execution_summary.get("adapter_capability_surface", {})
+                if isinstance(execution_summary.get("adapter_capability_surface"), dict)
+                else execution_summary.get("adapter_capability", {})
+                if isinstance(execution_summary.get("adapter_capability"), dict)
+                else {}
+            ),
+        ),
+        "comparative_session_continuity_summary": (
+            workspace_benchmark.get("comparative_session_continuity_summary", {})
+            if isinstance(workspace_benchmark.get("comparative_session_continuity_summary"), dict)
+            and workspace_benchmark.get("comparative_session_continuity_summary")
+            else build_comparative_session_continuity_summary(
+                session_productization_surface=(
+                    execution_summary.get("session_productization_surface", {})
+                    if isinstance(execution_summary.get("session_productization_surface"), dict)
+                    else {}
+                ),
+                continuity_outline=(
+                    execution_summary.get("session_continuity_outline", {})
+                    if isinstance(execution_summary.get("session_continuity_outline"), dict)
+                    else {}
+                ),
+                comparative_shared_evidence_surface=(
+                    comparative_digest.get("shared_evidence_surface", [])
+                    if isinstance(comparative_digest.get("shared_evidence_surface"), list)
+                    else []
+                ),
+            )
+        ),
+        "comparative_native_closure_summary": (
+            workspace_benchmark.get("comparative_native_closure_summary", {})
+            if isinstance(workspace_benchmark.get("comparative_native_closure_summary"), dict)
+            and workspace_benchmark.get("comparative_native_closure_summary")
+            else build_comparative_native_closure_summary(
+                native_task_proof=(
+                    execution_summary.get("native_task_proof", {})
+                    if isinstance(execution_summary.get("native_task_proof"), dict)
+                    else {}
+                ),
+                verification=(
+                    execution_summary.get("milestone_verification", {})
+                    if isinstance(execution_summary.get("milestone_verification"), dict)
+                    else {}
+                ),
+                recovery_summary=(
+                    execution_summary.get("repair_summary", {})
+                    if isinstance(execution_summary.get("repair_summary"), dict)
+                    else {}
+                ),
+                comparative_shared_evidence_surface=(
+                    comparative_digest.get("shared_evidence_surface", [])
+                    if isinstance(comparative_digest.get("shared_evidence_surface"), list)
+                    else []
+                ),
+            )
+        ),
+        "comparative_session_posture_summary": build_comparative_session_posture_summary(
+            session_productization_surface=(
+                execution_summary.get("session_productization_surface", {})
+                if isinstance(execution_summary.get("session_productization_surface"), dict)
+                else {}
+            ),
+            planner_decision=(
+                execution_summary.get("session_planner_decision", {})
+                if isinstance(execution_summary.get("session_planner_decision"), dict)
+                else {}
+            ),
+            continuity_outline=(
+                execution_summary.get("session_continuity_outline", {})
+                if isinstance(execution_summary.get("session_continuity_outline"), dict)
+                else {}
+            ),
+        ),
+        "operator_posture_digest": (
+            execution_summary.get("session_productization_surface", {}).get("operator_posture_digest", {})
+            if isinstance(execution_summary.get("session_productization_surface"), dict)
+            and isinstance(execution_summary.get("session_productization_surface", {}).get("operator_posture_digest"), dict)
+            else {}
+        ),
+        "comparative_daily_driver_summary": build_comparative_daily_driver_summary(
+            proof_strength=proof_strength,
+            benchmark_digest=comparative_digest,
+            comparative_benchmark=workspace_benchmark,
+        ),
+        "comparative_completion_summary": build_comparative_completion_summary(
+            benchmark_digest=comparative_digest,
+            comparative_benchmark=workspace_benchmark,
+        ),
+        "comparative_daily_driver_benchmark": build_comparative_daily_driver_benchmark(proof_strength),
         "review_policy": review_policy or payload.get("structured_brief", {}).get("review_policy", {})
         if isinstance(payload.get("structured_brief"), dict)
         else {},
@@ -945,6 +1181,29 @@ def _build_operator_summary(
             "edge_count": len(graph.edges) if graph else 0,
             "schedulable_nodes": schedulable_nodes(graph) if graph else [],
         },
+    }
+
+
+def _comparative_benchmark_digest(benchmark: dict[str, object]) -> dict[str, object]:
+    return build_runtime_comparative_benchmark_digest(benchmark if isinstance(benchmark, dict) else {})
+
+
+def _comparative_planner_closure_summary(benchmark_digest: dict[str, object]) -> dict[str, object]:
+    benchmark_digest = benchmark_digest if isinstance(benchmark_digest, dict) else {}
+    if not benchmark_digest.get("planner_closure_mode") and not benchmark_digest.get("planner_next_recommended_action"):
+        return {}
+    return {
+        "format": "agent_orchestrator.comparative_planner_closure_summary.v1",
+        "closure_mode": benchmark_digest.get("planner_closure_mode"),
+        "next_recommended_action": benchmark_digest.get("planner_next_recommended_action"),
+        "resume_posture": benchmark_digest.get("planner_resume_posture"),
+        "verify_selected": benchmark_digest.get("planner_verify_selected"),
+        "verification_status": benchmark_digest.get("planner_verification_status"),
+        "summary": (
+            f"mode={benchmark_digest.get('planner_closure_mode')} "
+            f"next_action={benchmark_digest.get('planner_next_recommended_action')} "
+            f"resume_posture={benchmark_digest.get('planner_resume_posture')}"
+        ),
     }
 
 
@@ -1031,49 +1290,108 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
         if isinstance(payload.get("session_continuity_contract"), dict)
         else {}
     )
+    productization_surface = _session_productization_surface(continuity_contract)
+    program_continuity = (
+        continuity_contract.get("program_continuity", {})
+        if isinstance(continuity_contract.get("program_continuity"), dict)
+        else {}
+    )
+    daily_driver_readiness = (
+        continuity_contract.get("daily_driver_readiness", {})
+        if isinstance(continuity_contract.get("daily_driver_readiness"), dict)
+        else {}
+    )
+    tool_productization_surface = _native_tool_productization_surface(payload)
+    adapter_productization_surface = _adapter_productization_surface(payload)
     path_selection = payload.get("path_selection", {}) if isinstance(payload.get("path_selection"), dict) else {}
     adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
-    adapter_shared_contract = {
-        "adapter_family": adapter_contract.get("adapter_family"),
-        "agent_kind": adapter_contract.get("agent_kind"),
-        "default_path": path_selection.get("default_path"),
-        "operating_boundary": path_selection.get("operating_boundary"),
-        "selection_reason": path_selection.get("selection_reason"),
-        "handoff_reason_code": path_selection.get("handoff_reason_code"),
-        "fallback_reason_code": path_selection.get("fallback_reason_code"),
-        "comparison_mode": (
-            adapter_contract.get("capability_surface", {}).get("comparability", {}).get("comparison_mode")
-            if isinstance(adapter_contract.get("capability_surface"), dict)
-            and isinstance(adapter_contract.get("capability_surface", {}).get("comparability"), dict)
-            else None
-        ),
-        "hot_plug_supported": (
-            adapter_contract.get("capability_surface", {}).get("governance", {}).get("hot_plug_supported")
-            if isinstance(adapter_contract.get("capability_surface"), dict)
-            and isinstance(adapter_contract.get("capability_surface", {}).get("governance"), dict)
-            else None
-        ),
-        "fallback_governed": (
-            adapter_contract.get("capability_surface", {}).get("governance", {}).get("fallback_governed")
-            if isinstance(adapter_contract.get("capability_surface"), dict)
-            and isinstance(adapter_contract.get("capability_surface", {}).get("governance"), dict)
-            else None
-        ),
-        "approval_required": adapter_contract.get("approval_semantics", {}).get("approval_required")
-        if isinstance(adapter_contract.get("approval_semantics"), dict)
-        else None,
-        "approval_pause_supported": adapter_contract.get("approval_semantics", {}).get("approval_pause_supported")
-        if isinstance(adapter_contract.get("approval_semantics"), dict)
-        else None,
-        "evidence_outputs": list(adapter_contract.get("evidence_outputs", []))
-        if isinstance(adapter_contract.get("evidence_outputs"), list)
-        else [],
-        "recovery_surfaces": list(adapter_contract.get("recovery_surfaces", []))
-        if isinstance(adapter_contract.get("recovery_surfaces"), list)
-        else [],
-    }
+    adapter_capability_surface = (
+        payload.get("adapter_capability_surface", {})
+        if isinstance(payload.get("adapter_capability_surface"), dict)
+        else {}
+    )
+    adapter_shared_contract = (
+        payload.get("adapter_shared_contract", {})
+        if isinstance(payload.get("adapter_shared_contract"), dict)
+        else {}
+    )
+    if not adapter_shared_contract:
+        adapter_shared_contract = {
+            "adapter_family": adapter_contract.get("adapter_family"),
+            "agent_kind": adapter_contract.get("agent_kind"),
+            "default_path": path_selection.get("default_path"),
+            "operating_boundary": path_selection.get("operating_boundary"),
+            "selection_reason": path_selection.get("selection_reason"),
+            "handoff_reason_code": path_selection.get("handoff_reason_code"),
+            "fallback_reason_code": path_selection.get("fallback_reason_code"),
+            "native_coverage_class": path_selection.get("native_coverage_class"),
+            "learning_consumed": path_selection.get("learning_consumed"),
+            "learning_source_count": path_selection.get("learning_source_count"),
+            "comparison_mode": (
+                adapter_contract.get("capability_surface", {}).get("comparability", {}).get("comparison_mode")
+                if isinstance(adapter_contract.get("capability_surface"), dict)
+                and isinstance(adapter_contract.get("capability_surface", {}).get("comparability"), dict)
+                else None
+            ),
+            "hot_plug_supported": (
+                adapter_contract.get("capability_surface", {}).get("governance", {}).get("hot_plug_supported")
+                if isinstance(adapter_contract.get("capability_surface"), dict)
+                and isinstance(adapter_contract.get("capability_surface", {}).get("governance"), dict)
+                else None
+            ),
+            "fallback_governed": (
+                adapter_contract.get("capability_surface", {}).get("governance", {}).get("fallback_governed")
+                if isinstance(adapter_contract.get("capability_surface"), dict)
+                and isinstance(adapter_contract.get("capability_surface", {}).get("governance"), dict)
+                else None
+            ),
+            "approval_required": adapter_contract.get("approval_semantics", {}).get("approval_required")
+            if isinstance(adapter_contract.get("approval_semantics"), dict)
+            else None,
+            "approval_pause_supported": adapter_contract.get("approval_semantics", {}).get("approval_pause_supported")
+            if isinstance(adapter_contract.get("approval_semantics"), dict)
+            else None,
+            "evidence_outputs": list(adapter_contract.get("evidence_outputs", []))
+            if isinstance(adapter_contract.get("evidence_outputs"), list)
+            else [],
+            "recovery_surfaces": list(adapter_contract.get("recovery_surfaces", []))
+            if isinstance(adapter_contract.get("recovery_surfaces"), list)
+            else [],
+            "shared_contract_format": (
+                adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("format")
+                if isinstance(adapter_contract.get("capability_surface"), dict)
+                and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract"), dict)
+                else None
+            ),
+            "shared_contract_resume_supported": (
+                adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("continuity_support", {}).get("resume_contract")
+                if isinstance(adapter_contract.get("capability_surface"), dict)
+                and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract"), dict)
+                and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("continuity_support"), dict)
+                else None
+            ),
+            "recovery_contract": (
+                dict(adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("recovery_contract", {}))
+                if isinstance(adapter_contract.get("capability_surface"), dict)
+                and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract"), dict)
+                and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("recovery_contract"), dict)
+                else {}
+            ),
+        }
+    comparative_benchmark = (
+        payload.get("comparative_benchmark", {})
+        if isinstance(payload.get("comparative_benchmark"), dict)
+        else {}
+    )
+    comparative_benchmark_digest = (
+        payload.get("comparative_benchmark_digest", {})
+        if isinstance(payload.get("comparative_benchmark_digest"), dict)
+        else {}
+    )
     capability_surface = (
-        adapter_contract.get("capability_surface", {})
+        adapter_capability_surface
+        if adapter_capability_surface
+        else adapter_contract.get("capability_surface", {})
         if isinstance(adapter_contract.get("capability_surface"), dict)
         else {}
     )
@@ -1093,28 +1411,243 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
         else _default_context_surfaces_for_step_kind(str(step_kind) if step_kind else None)
     )
     repo_task_acceptance_ready = native_repo_task_acceptance.get("real_repo_task_acceptance_ready")
+    planner_decision = (
+        strategy_summary.get("decision_evidence", {})
+        if isinstance(strategy_summary.get("decision_evidence"), dict)
+        else {}
+    )
+    session_planner_decision = (
+        payload.get("planner_decision", {})
+        if isinstance(payload.get("planner_decision"), dict)
+        else {}
+    )
+    session_continuity_outline = (
+        payload.get("continuity_outline", {})
+        if isinstance(payload.get("continuity_outline"), dict)
+        else {}
+    )
+    shared_productization_surface = build_shared_productization_surface(
+        session_productization_surface=productization_surface,
+        native_tool_productization_surface=tool_productization_surface,
+        native_tool_workflow_surface=(
+            payload.get("native_tool_workflow_surface", {})
+            if isinstance(payload.get("native_tool_workflow_surface"), dict)
+            else (
+                payload.get("native_tool_surface", {}).get("workflow_surface", {})
+                if isinstance(payload.get("native_tool_surface"), dict)
+                and isinstance(payload.get("native_tool_surface", {}).get("workflow_surface"), dict)
+                else {}
+            )
+        ),
+        adapter_productization_surface=adapter_productization_surface,
+        planner_decision=session_planner_decision
+        or derive_session_planner_decision_summary(
+            planner_shared={
+                "format": planner_decision.get("format"),
+                "planner_family": payload.get("planner_family") or strategy_summary.get("planner_family"),
+                "selected_strategy": planner_decision.get("selected_strategy"),
+                "selected_actions": planner_decision.get("selected_actions", []),
+                "selected_owner": planner_decision.get("selected_owner"),
+                "decision_boundary": planner_decision.get("decision_boundary", {}),
+                "posture": planner_decision.get("posture", {}),
+                "autonomy_surface": planner_decision.get("autonomy_surface", {}),
+                "delegation_contract": planner_decision.get("delegation_contract", {}),
+                "operator_control": planner_decision.get("operator_control", {}),
+                "route_planner_intent": planner_decision.get("route_planner_intent", {}),
+                "tool_workflow_plan": planner_decision.get("tool_workflow_plan", {}),
+            },
+            adapter_shared={
+                "operating_boundary": path_selection.get("operating_boundary"),
+                "selection_reason": path_selection.get("selection_reason"),
+                "path_selection": {"planner_intent": path_selection.get("planner_intent", {})},
+            },
+        ),
+        continuity_outline=session_continuity_outline
+        or derive_session_continuity_outline_summary(
+            continuity=continuity_contract,
+            planner_family=payload.get("planner_family") or strategy_summary.get("planner_family"),
+        ),
+        planner_closure_posture=(
+            payload.get("planner_closure_posture", {})
+            if isinstance(payload.get("planner_closure_posture"), dict)
+            else derive_planner_closure_posture_summary(
+                planner_decision=session_planner_decision
+                or derive_session_planner_decision_summary(
+                    planner_shared={
+                        "format": planner_decision.get("format"),
+                        "planner_family": payload.get("planner_family") or strategy_summary.get("planner_family"),
+                        "selected_strategy": planner_decision.get("selected_strategy"),
+                        "selected_actions": planner_decision.get("selected_actions", []),
+                        "selected_owner": planner_decision.get("selected_owner"),
+                        "decision_boundary": planner_decision.get("decision_boundary", {}),
+                        "posture": planner_decision.get("posture", {}),
+                        "autonomy_surface": planner_decision.get("autonomy_surface", {}),
+                        "delegation_contract": planner_decision.get("delegation_contract", {}),
+                        "operator_control": planner_decision.get("operator_control", {}),
+                        "route_planner_intent": planner_decision.get("route_planner_intent", {}),
+                        "tool_workflow_plan": planner_decision.get("tool_workflow_plan", {}),
+                    },
+                    adapter_shared={
+                        "operating_boundary": path_selection.get("operating_boundary"),
+                        "selection_reason": path_selection.get("selection_reason"),
+                        "path_selection": {"planner_intent": path_selection.get("planner_intent", {})},
+                    },
+                ),
+                continuity=session_continuity_outline
+                or derive_session_continuity_outline_summary(
+                    continuity=continuity_contract,
+                    planner_family=payload.get("planner_family") or strategy_summary.get("planner_family"),
+                ),
+            )
+        ),
+        runtime_cost=(
+            continuity_contract.get("runtime_cost", {})
+            if isinstance(continuity_contract.get("runtime_cost"), dict)
+            else {}
+        ),
+        native_tool_usage=(
+            payload.get("native_tool_usage", {})
+            if isinstance(payload.get("native_tool_usage"), dict)
+            else {}
+        ),
+        adapter_capability_surface=(
+            payload.get("adapter_capability_surface", {})
+            if isinstance(payload.get("adapter_capability_surface"), dict)
+            else {}
+        ),
+        comparative_shared_evidence_surface=(
+            payload.get("shared_productization_surface", {}).get("shared_evidence_surface", [])
+            if isinstance(payload.get("shared_productization_surface"), dict)
+            else []
+        ),
+    )
+    compacted_context_summary = _compacted_context_summary(payload.get("compressed_context", {}))
+    derived_session_planner_decision = (
+        session_planner_decision
+        or derive_session_planner_decision_summary(
+            planner_shared={
+                "format": planner_decision.get("format"),
+                "planner_family": payload.get("planner_family") or strategy_summary.get("planner_family"),
+                "selected_strategy": planner_decision.get("selected_strategy"),
+                "selected_actions": planner_decision.get("selected_actions", []),
+                "selected_owner": planner_decision.get("selected_owner"),
+                "decision_boundary": planner_decision.get("decision_boundary", {}),
+                "posture": planner_decision.get("posture", {}),
+                "autonomy_surface": planner_decision.get("autonomy_surface", {}),
+                "delegation_contract": planner_decision.get("delegation_contract", {}),
+                "operator_control": planner_decision.get("operator_control", {}),
+                "route_planner_intent": planner_decision.get("route_planner_intent", {}),
+                "tool_workflow_plan": planner_decision.get("tool_workflow_plan", {}),
+            },
+            adapter_shared={
+                "operating_boundary": path_selection.get("operating_boundary"),
+                "selection_reason": path_selection.get("selection_reason"),
+                "path_selection": {"planner_intent": path_selection.get("planner_intent", {})},
+            },
+        )
+    )
+    derived_continuity_outline = (
+        session_continuity_outline
+        or derive_session_continuity_outline_summary(
+            continuity=continuity_contract,
+            planner_family=payload.get("planner_family") or strategy_summary.get("planner_family"),
+        )
+    )
+    planner_closure_posture = derive_planner_closure_posture_summary(
+        planner_decision=derived_session_planner_decision,
+        continuity=continuity_contract,
+    )
     return {
         "runtime_name": runtime_name,
         "execution_mode": payload.get("execution_mode"),
         "planner_family": payload.get("planner_family") or strategy_summary.get("planner_family"),
-        "planner_decision_format": strategy_summary.get("decision_evidence", {}).get("format")
-        if isinstance(strategy_summary.get("decision_evidence"), dict)
-        else None,
-        "planner_selected_strategy": strategy_summary.get("decision_evidence", {}).get("selected_strategy")
-        if isinstance(strategy_summary.get("decision_evidence"), dict)
-        else strategy_summary.get("selected_execution_strategy"),
-        "planner_native_work_units": strategy_summary.get("decision_evidence", {}).get("native_work_units")
-        if isinstance(strategy_summary.get("decision_evidence"), dict)
-        else None,
+        "planner_decision_format": planner_decision.get("format"),
+        "planner_selected_strategy": planner_decision.get("selected_strategy") or strategy_summary.get("selected_execution_strategy"),
+        "planner_native_work_units": planner_decision.get("native_work_units"),
+        "session_planner_decision": derived_session_planner_decision,
+        "planner_control_surface": (
+            session_planner_decision.get("control_surface", {})
+            if isinstance(session_planner_decision.get("control_surface"), dict)
+            else derive_session_planner_decision_summary(
+                planner_shared={
+                    "format": planner_decision.get("format"),
+                    "planner_family": payload.get("planner_family") or strategy_summary.get("planner_family"),
+                    "selected_strategy": planner_decision.get("selected_strategy"),
+                    "selected_actions": planner_decision.get("selected_actions", []),
+                    "selected_owner": planner_decision.get("selected_owner"),
+                    "decision_boundary": planner_decision.get("decision_boundary", {}),
+                    "posture": planner_decision.get("posture", {}),
+                    "autonomy_surface": planner_decision.get("autonomy_surface", {}),
+                    "control_surface": planner_decision.get("control_surface", {}),
+                    "delegation_contract": planner_decision.get("delegation_contract", {}),
+                    "operator_control": planner_decision.get("operator_control", {}),
+                    "route_planner_intent": planner_decision.get("route_planner_intent", {}),
+                    "tool_workflow_plan": planner_decision.get("tool_workflow_plan", {}),
+                },
+                adapter_shared={
+                    "operating_boundary": path_selection.get("operating_boundary"),
+                    "selection_reason": path_selection.get("selection_reason"),
+                    "path_selection": {"planner_intent": path_selection.get("planner_intent", {})},
+                },
+            ).get("control_surface", {})
+        ) or None,
+        "session_continuity_outline": derived_continuity_outline,
+        "planner_closure_posture": planner_closure_posture,
+        "planner_shared_contract": {
+            "format": planner_decision.get("format"),
+            "planner_family": payload.get("planner_family") or strategy_summary.get("planner_family"),
+            "selected_strategy": planner_decision.get("selected_strategy") or strategy_summary.get("selected_execution_strategy"),
+            "decision_candidates": list(planner_decision.get("decision_candidates", []))
+            if isinstance(planner_decision.get("decision_candidates"), list)
+            else [],
+            "selected_owner": planner_decision.get("selected_owner"),
+            "decision_boundary": dict(planner_decision.get("decision_boundary", {}))
+            if isinstance(planner_decision.get("decision_boundary"), dict)
+            else {},
+            "posture": dict(planner_decision.get("posture", {}))
+            if isinstance(planner_decision.get("posture"), dict)
+            else {},
+            "autonomy_surface": dict(planner_decision.get("autonomy_surface", {}))
+            if isinstance(planner_decision.get("autonomy_surface"), dict)
+            else {},
+            "autonomy_boundary": dict(planner_decision.get("autonomy_boundary", {}))
+            if isinstance(planner_decision.get("autonomy_boundary"), dict)
+            else {},
+            "planner_reasoning": dict(planner_decision.get("planner_reasoning", {}))
+            if isinstance(planner_decision.get("planner_reasoning"), dict)
+            else {},
+            "delegation_contract": dict(planner_decision.get("delegation_contract", {}))
+            if isinstance(planner_decision.get("delegation_contract"), dict)
+            else {},
+            "operator_control": dict(planner_decision.get("operator_control", {}))
+            if isinstance(planner_decision.get("operator_control"), dict)
+            else {},
+            "tool_workflow_plan": dict(planner_decision.get("tool_workflow_plan", {}))
+            if isinstance(planner_decision.get("tool_workflow_plan"), dict)
+            else {},
+            "route_planner_intent": dict(path_selection.get("planner_intent", {}))
+            if isinstance(path_selection.get("planner_intent"), dict)
+            else {},
+        },
         "default_path": path_selection.get("default_path"),
         "operating_boundary": path_selection.get("operating_boundary"),
         "selection_reason": path_selection.get("selection_reason"),
         "handoff_reason_code": path_selection.get("handoff_reason_code"),
         "fallback_reason_code": path_selection.get("fallback_reason_code"),
+        "native_coverage_class": path_selection.get("native_coverage_class"),
+        "learning_consumed": path_selection.get("learning_consumed"),
+        "learning_source_count": path_selection.get("learning_source_count"),
+        "route_planner_intent": dict(path_selection.get("planner_intent", {}))
+        if isinstance(path_selection.get("planner_intent"), dict)
+        else {},
         "adapter_family": adapter_contract.get("adapter_family"),
         "adapter_agent_kind": adapter_contract.get("agent_kind"),
         "adapter_capability_surface_format": capability_surface.get("format"),
-        "adapter_capability": _adapter_capability_summary(adapter_contract),
+        "adapter_capability_surface": adapter_capability_surface,
+        "adapter_capability": _adapter_capability_summary(
+            adapter_contract,
+            adapter_capability_surface=adapter_capability_surface,
+        ),
         "adapter_governance_shared": capability_surface.get("governance", {}).get("fallback_governed")
         if isinstance(capability_surface.get("governance"), dict)
         else None,
@@ -1130,6 +1663,39 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
         "adapter_recovery_surfaces": capability_surface.get("recovery_surfaces", [])
         if isinstance(capability_surface.get("recovery_surfaces"), list)
         else [],
+        "adapter_shared_contract": {
+            "adapter_family": adapter_contract.get("adapter_family"),
+            "agent_kind": adapter_contract.get("agent_kind"),
+            "comparison_mode": capability_surface.get("comparability", {}).get("comparison_mode")
+            if isinstance(capability_surface.get("comparability"), dict)
+            else None,
+            "default_path": path_selection.get("default_path"),
+            "operating_boundary": path_selection.get("operating_boundary"),
+            "approval_required": capability_surface.get("approval_semantics", {}).get("approval_required")
+            if isinstance(capability_surface.get("approval_semantics"), dict)
+            else None,
+            "approval_pause_supported": capability_surface.get("approval_semantics", {}).get("approval_pause_supported")
+            if isinstance(capability_surface.get("approval_semantics"), dict)
+            else None,
+            "hot_plug_supported": capability_surface.get("governance", {}).get("hot_plug_supported")
+            if isinstance(capability_surface.get("governance"), dict)
+            else None,
+            "fallback_governed": capability_surface.get("governance", {}).get("fallback_governed")
+            if isinstance(capability_surface.get("governance"), dict)
+            else None,
+            "evidence_outputs": list(adapter_contract.get("evidence_outputs", [])),
+            "recovery_surfaces": list(adapter_contract.get("recovery_surfaces", [])),
+            "recovery_contract": dict(capability_surface.get("shared_contract", {}).get("recovery_contract", {}))
+            if isinstance(capability_surface.get("shared_contract"), dict)
+            else {},
+            "shared_contract_format": capability_surface.get("shared_contract", {}).get("format")
+            if isinstance(capability_surface.get("shared_contract"), dict)
+            else None,
+            "shared_contract_resume_supported": capability_surface.get("shared_contract", {}).get("continuity_support", {}).get("resume_contract")
+            if isinstance(capability_surface.get("shared_contract"), dict)
+            and isinstance(capability_surface.get("shared_contract", {}).get("continuity_support"), dict)
+            else None,
+        },
         "kernel_role": kernel_contract.get("kernel_role"),
         "kernel_state_authority": kernel_contract.get("state_authority"),
         "kernel_output_surfaces": list(kernel_contract.get("output_surfaces", []))
@@ -1145,9 +1711,30 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
         "session_compaction_stage": continuity_contract.get("compaction_stage"),
         "session_masked_observation_count": continuity_contract.get("masked_observation_count"),
         "session_long_horizon_posture": continuity_contract.get("long_horizon_posture", {}),
+        "session_continuity_snapshot": continuity_contract.get("continuity_snapshot", {}),
+        "resume_contract": payload.get("resume_contract", {})
+        if isinstance(payload.get("resume_contract"), dict)
+        else {},
+        "session_productization_surface": productization_surface,
+        "session_comparative_digest": (
+            comparative_benchmark_digest
+            if isinstance(comparative_benchmark_digest, dict) and comparative_benchmark_digest
+            else productization_surface.get("comparative_benchmark_digest", {})
+            if isinstance(productization_surface.get("comparative_benchmark_digest"), dict)
+            else continuity_contract.get("comparative_benchmark_digest", {})
+            if isinstance(continuity_contract.get("comparative_benchmark_digest"), dict)
+            else {}
+        ),
+        "shared_productization_surface": shared_productization_surface,
+        "comparative_benchmark": comparative_benchmark,
+        "comparative_benchmark_digest": comparative_benchmark_digest
+        or _comparative_benchmark_digest(comparative_benchmark),
+        "compacted_context_summary": compacted_context_summary,
         "program_posture": continuity_contract.get("program_posture", {}),
         "delegation_contract": continuity_contract.get("delegation_contract", {}),
         "program_continuity": continuity_contract.get("program_continuity", {}),
+        "daily_driver_readiness": daily_driver_readiness,
+        "daily_driver_main_path_ready": daily_driver_readiness.get("daily_driver_main_path_ready"),
         "milestone_verification": continuity_contract.get("milestone_verification", {}),
         "operator_control": continuity_contract.get("operator_control", {}),
         "runtime_duration_seconds": _runtime_duration_seconds(payload),
@@ -1179,12 +1766,31 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
         "repo_task_acceptance_ready": repo_task_acceptance_ready,
         "repo_task_acceptance_passed_checks": native_repo_task_acceptance.get("passed_check_count"),
         "repo_task_acceptance_total_checks": native_repo_task_acceptance.get("total_check_count"),
-        "closure_strength": "repo_task_acceptance_ready"
-        if repo_task_acceptance_ready is True
-        else "runtime_closure_only",
+        "closure_strength": (
+            program_continuity.get("closure_strength")
+            if program_continuity.get("closure_strength") in {
+                "runtime_closure_only",
+                "repo_task_acceptance_ready",
+                "long_chain_native_first_ready",
+            }
+            else "long_chain_native_first_ready"
+            if repo_task_acceptance_ready is True
+            and native_complex_repo_task_acceptance.get("complex_repo_task_ready") is True
+            else "repo_task_acceptance_ready"
+            if repo_task_acceptance_ready is True
+            else "runtime_closure_only"
+        ),
         "complex_repo_task_acceptance_ready": native_complex_repo_task_acceptance.get("complex_repo_task_ready"),
         "complex_repo_task_acceptance_passed_checks": native_complex_repo_task_acceptance.get("passed_check_count"),
         "complex_repo_task_acceptance_total_checks": native_complex_repo_task_acceptance.get("total_check_count"),
+        "long_chain_native_first_ready": (
+            program_continuity.get("long_chain_native_first_ready")
+            if isinstance(program_continuity.get("long_chain_native_first_ready"), bool)
+            else bool(
+                repo_task_acceptance_ready is True
+                and native_complex_repo_task_acceptance.get("complex_repo_task_ready") is True
+            )
+        ),
         "verification_status": verification.get("status"),
         "verification_failure_kind": verification.get("failure_kind"),
         "repair_attempt_count": repair_summary.get("attempt_count", len(attempt_memory)),
@@ -1193,6 +1799,18 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
         "recovery_reason": recovery_summary.get("reason"),
         "human_review_recommended": recovery_summary.get("human_review_recommended"),
         "native_tool_surface": payload.get("native_tool_surface", {}),
+        "native_tool_workflow_surface": (
+            payload.get("native_tool_workflow_surface", {})
+            if isinstance(payload.get("native_tool_workflow_surface"), dict)
+            else (
+                payload.get("native_tool_surface", {}).get("workflow_surface", {})
+                if isinstance(payload.get("native_tool_surface"), dict)
+                and isinstance(payload.get("native_tool_surface", {}).get("workflow_surface"), dict)
+                else {}
+            )
+        ),
+        "native_tool_productization_surface": tool_productization_surface,
+        "native_tool_trace": payload.get("native_tool_trace", {}),
         "native_tool_trace_count": len(payload.get("native_tool_trace", {}).get("trace", []))
         if isinstance(payload.get("native_tool_trace"), dict) and isinstance(payload.get("native_tool_trace", {}).get("trace"), list)
         else 0,
@@ -1218,8 +1836,15 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
                 if isinstance(repo_report.get("artifact"), dict) and isinstance(repo_report.get("artifact", {}).get("repo_map"), dict)
                 else None
             ),
+            "exploration_evidence": (
+                dict(repo_report.get("artifact", {}).get("exploration_evidence", {}))
+                if isinstance(repo_report.get("artifact"), dict)
+                and isinstance(repo_report.get("artifact", {}).get("exploration_evidence"), dict)
+                else {}
+            ),
         },
         "adapter_shared_contract": adapter_shared_contract,
+        "adapter_productization_surface": adapter_productization_surface,
     }
 
 
@@ -1234,6 +1859,14 @@ def _default_context_surfaces_for_step_kind(step_kind: str | None) -> list[str]:
 
 
 def _runtime_duration_seconds(payload: dict[str, object]) -> float | None:
+    continuity_contract = (
+        payload.get("session_continuity_contract", {})
+        if isinstance(payload.get("session_continuity_contract"), dict)
+        else {}
+    )
+    if continuity_contract.get("runtime_duration_seconds") is not None:
+        value = continuity_contract.get("runtime_duration_seconds")
+        return float(value) if isinstance(value, (int, float)) else None
     artifact_summary = payload.get("native_tool_trace", {}) if isinstance(payload.get("native_tool_trace"), dict) else {}
     trace = artifact_summary.get("trace", []) if isinstance(artifact_summary.get("trace"), list) else []
     timestamps = [
@@ -1255,25 +1888,150 @@ def _runtime_duration_seconds(payload: dict[str, object]) -> float | None:
 
 
 def _runtime_cost_measurement_status(payload: dict[str, object]) -> str:
-    return "placeholder"
-
-
-def _adapter_capability_summary(adapter_contract: dict[str, object]) -> dict[str, object]:
-    capability_surface = (
-        adapter_contract.get("capability_surface", {})
-        if isinstance(adapter_contract.get("capability_surface"), dict)
+    continuity_contract = (
+        payload.get("session_continuity_contract", {})
+        if isinstance(payload.get("session_continuity_contract"), dict)
         else {}
     )
-    governance = capability_surface.get("governance", {}) if isinstance(capability_surface.get("governance"), dict) else {}
-    comparability = capability_surface.get("comparability", {}) if isinstance(capability_surface.get("comparability"), dict) else {}
+    status = continuity_contract.get("usage_cost_measurement_status")
+    return str(status) if isinstance(status, str) and status else "placeholder"
+
+
+def _session_productization_surface(continuity_contract: dict[str, object]) -> dict[str, object]:
+    return derive_session_productization_surface(continuity_contract)
+
+
+def _native_tool_productization_surface(payload: dict[str, object]) -> dict[str, object]:
+    return derive_native_tool_productization_surface(
+        native_tool_surface=payload.get("native_tool_surface", {})
+        if isinstance(payload.get("native_tool_surface"), dict)
+        else {},
+        native_tool_trace=payload.get("native_tool_trace", {})
+        if isinstance(payload.get("native_tool_trace"), dict)
+        else {},
+        native_tool_productization_surface=payload.get("native_tool_productization_surface", {})
+        if isinstance(payload.get("native_tool_productization_surface"), dict)
+        else {},
+    )
+
+
+def _adapter_productization_surface(payload: dict[str, object]) -> dict[str, object]:
+    surface = (
+        payload.get("adapter_productization_surface", {})
+        if isinstance(payload.get("adapter_productization_surface"), dict)
+        else {}
+    )
+    if surface:
+        return surface
+    adapter_shared_contract = (
+        payload.get("adapter_shared_contract", {})
+        if isinstance(payload.get("adapter_shared_contract"), dict)
+        else {}
+    )
+    if not adapter_shared_contract:
+        adapter_contract = payload.get("adapter_contract", {}) if isinstance(payload.get("adapter_contract"), dict) else {}
+        capability_surface = (
+            adapter_contract.get("capability_surface", {})
+            if isinstance(adapter_contract.get("capability_surface"), dict)
+            else {}
+        )
+        shared_contract = (
+            capability_surface.get("shared_contract", {})
+            if isinstance(capability_surface.get("shared_contract"), dict)
+            else {}
+        )
+        path_selection = payload.get("path_selection", {}) if isinstance(payload.get("path_selection"), dict) else {}
+        adapter_shared_contract = {
+            "adapter_family": adapter_contract.get("adapter_family"),
+            "agent_kind": adapter_contract.get("agent_kind"),
+            "comparison_mode": capability_surface.get("comparability", {}).get("comparison_mode")
+            if isinstance(capability_surface.get("comparability"), dict)
+            else None,
+            "default_path": path_selection.get("default_path"),
+            "operating_boundary": path_selection.get("operating_boundary"),
+            "approval_required": adapter_contract.get("approval_semantics", {}).get("approval_required")
+            if isinstance(adapter_contract.get("approval_semantics"), dict)
+            else None,
+            "approval_pause_supported": adapter_contract.get("approval_semantics", {}).get("approval_pause_supported")
+            if isinstance(adapter_contract.get("approval_semantics"), dict)
+            else None,
+            "hot_plug_supported": capability_surface.get("governance", {}).get("hot_plug_supported")
+            if isinstance(capability_surface.get("governance"), dict)
+            else None,
+            "fallback_governed": capability_surface.get("governance", {}).get("fallback_governed")
+            if isinstance(capability_surface.get("governance"), dict)
+            else None,
+            "evidence_outputs": list(adapter_contract.get("evidence_outputs", []))
+            if isinstance(adapter_contract.get("evidence_outputs"), list)
+            else [],
+            "recovery_surfaces": list(adapter_contract.get("recovery_surfaces", []))
+            if isinstance(adapter_contract.get("recovery_surfaces"), list)
+            else [],
+            "recovery_contract": dict(shared_contract.get("recovery_contract", {}))
+            if isinstance(shared_contract.get("recovery_contract"), dict)
+            else {},
+            "shared_contract_format": shared_contract.get("format"),
+            "shared_contract_resume_supported": shared_contract.get("continuity_support", {}).get("resume_contract")
+            if isinstance(shared_contract.get("continuity_support"), dict)
+            else None,
+        }
+    return derive_adapter_productization_surface(adapter_shared_contract=adapter_shared_contract)
+
+
+def _compacted_context_summary(compressed_context: dict[str, object]) -> dict[str, object]:
+    if not isinstance(compressed_context, dict) or not compressed_context:
+        return {}
+    summarized_history = (
+        compressed_context.get("summarized_history", {})
+        if isinstance(compressed_context.get("summarized_history"), dict)
+        else {}
+    )
+    completed_steps = (
+        list(summarized_history.get("completed_steps", []))
+        if isinstance(summarized_history.get("completed_steps"), list)
+        else []
+    )
+    pending_steps = (
+        list(summarized_history.get("pending_steps", []))
+        if isinstance(summarized_history.get("pending_steps"), list)
+        else []
+    )
+    blocked_steps = (
+        list(summarized_history.get("blocked_steps", []))
+        if isinstance(summarized_history.get("blocked_steps"), list)
+        else []
+    )
     return {
-        "format": capability_surface.get("format"),
-        "comparison_mode": comparability.get("comparison_mode"),
-        "hot_plug_supported": governance.get("hot_plug_supported"),
-        "fallback_governed": governance.get("fallback_governed"),
-        "evidence_outputs": list(capability_surface.get("evidence_outputs", [])) if isinstance(capability_surface.get("evidence_outputs"), list) else [],
-        "recovery_surfaces": list(capability_surface.get("recovery_surfaces", [])) if isinstance(capability_surface.get("recovery_surfaces"), list) else [],
+        "objective": compressed_context.get("objective"),
+        "current_status": compressed_context.get("current_status"),
+        "latest_recovery_hint": compressed_context.get("latest_recovery_hint"),
+        "compaction_stage": summarized_history.get("compaction_stage"),
+        "masked_observation_count": summarized_history.get("masked_observation_count"),
+        "summarization_triggered": summarized_history.get("summarization_triggered"),
+        "observation_count": summarized_history.get("observation_count"),
+        "selected_memory_count": summarized_history.get("selected_memory_count"),
+        "artifact_count": summarized_history.get("artifact_count"),
+        "completed_step_count": len(completed_steps),
+        "pending_step_count": len(pending_steps),
+        "blocked_step_count": len(blocked_steps),
     }
+
+
+def _adapter_capability_summary(
+    adapter_contract: dict[str, object],
+    *,
+    adapter_capability_surface: dict[str, object] | None = None,
+) -> dict[str, object]:
+    if not isinstance(adapter_capability_surface, dict) or not adapter_capability_surface:
+        adapter_capability_surface = (
+            adapter_contract.get("capability_surface", {})
+            if isinstance(adapter_contract.get("capability_surface"), dict)
+            else {}
+        )
+    return derive_adapter_capability_summary(
+        adapter_contract=adapter_contract,
+        adapter_capability_surface=adapter_capability_surface,
+    )
 
 
 def _job_card(job: dict[str, object], jobs_root: Path | None = None) -> dict[str, object]:

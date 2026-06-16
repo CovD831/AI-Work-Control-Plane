@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent_orchestrator.execution.models import (
+    derive_adapter_productization_surface,
     ExecutionKernelContract,
     ExecutionRequest,
     ExecutionResult,
@@ -92,6 +93,7 @@ class LegacyExecutionRuntime(ExecutionRuntime):
         payload = run.to_dict()
         payload.setdefault("kernel_contract", self._kernel_contract().to_dict())
         payload.setdefault("adapter_contract", self._adapter_contract().to_dict())
+        payload.setdefault("adapter_productization_surface", _adapter_productization_surface(payload.get("adapter_contract", {})))
         payload.setdefault("session_id", request.session_id)
         payload.setdefault("turn_id", request.turn_id)
         if isinstance(request.context_snapshot, dict):
@@ -123,6 +125,7 @@ class LegacyExecutionRuntime(ExecutionRuntime):
         payload = handle.to_dict()
         payload.setdefault("kernel_contract", self._kernel_contract().to_dict())
         payload.setdefault("adapter_contract", self._adapter_contract().to_dict())
+        payload.setdefault("adapter_productization_surface", _adapter_productization_surface(payload.get("adapter_contract", {})))
         payload.setdefault("session_id", request.session_id)
         payload.setdefault("turn_id", request.turn_id)
         if isinstance(request.context_snapshot, dict):
@@ -157,18 +160,55 @@ def _shared_adapter_capability_surface(
     evidence_outputs: list[str],
     recovery_surfaces: list[str],
 ) -> dict[str, object]:
+    path_selection = {
+        "default_path": "external",
+        "operating_boundary": "fallback_governed",
+        "selection_reason": "Legacy runtime remains hot-pluggable under governed fallback.",
+        "handoff_reason_code": None,
+        "fallback_reason_code": "external_runtime_unavailable",
+    }
+    operator_recovery_surface = {
+        "format": "agent_orchestrator.adapter_operator_recovery_surface.v1",
+        "governed_lanes": [
+            "continue_execution",
+            "fallback_external",
+            "handoff_external",
+        ],
+        "default_recovery_lane": "fallback_external",
+        "continuity_expectation": "fresh_or_external_reentry",
+        "evidence_backed_lanes": list(evidence_outputs),
+        "operator_visible": True,
+    }
+    shared_contract = {
+        "format": "agent_orchestrator.adapter_shared_contract.v1",
+        "comparison_mode": "same_contract_two_executors",
+        "path_selection": dict(path_selection),
+        "approval_semantics": {
+            "approval_required": approval_required,
+            "approval_pause_supported": approval_pause_supported,
+        },
+        "evidence_outputs": list(evidence_outputs),
+        "recovery_surfaces": list(recovery_surfaces),
+        "continuity_support": {
+            "resume_contract": "resume_contract" in recovery_surfaces,
+            "approval_pause_state": "approval_pause_state" in recovery_surfaces,
+        },
+        "operator_recovery_surface": operator_recovery_surface,
+        "recovery_contract": {
+            "continue_allowed": True,
+            "scope_realign_required": False,
+            "fallback_allowed": True,
+            "handoff_allowed": True,
+            "remaining_budget_preserved": True,
+            "resume_continuity_required": "resume_contract" in recovery_surfaces,
+        },
+    }
     return {
         "format": "agent_orchestrator.adapter_capability_surface.v1",
         "adapter_family": adapter_family,
         "agent_kind": agent_kind,
         "runtime_metadata": dict(runtime_metadata),
-        "path_selection": {
-            "default_path": "external",
-            "operating_boundary": "fallback_governed",
-            "selection_reason": "Legacy runtime remains hot-pluggable under governed fallback.",
-            "handoff_reason_code": None,
-            "fallback_reason_code": "external_runtime_unavailable",
-        },
+        "path_selection": path_selection,
         "governance": {
             "approval_required": approval_required,
             "approval_pause_supported": approval_pause_supported,
@@ -177,9 +217,15 @@ def _shared_adapter_capability_surface(
         },
         "evidence_outputs": list(evidence_outputs),
         "recovery_surfaces": list(recovery_surfaces),
+        "operator_recovery_surface": operator_recovery_surface,
+        "shared_contract": shared_contract,
         "comparability": {
             "shared_with_external": True,
             "shared_with_native": True,
             "comparison_mode": "same_contract_two_executors",
         },
     }
+
+
+def _adapter_productization_surface(adapter_contract: dict[str, object]) -> dict[str, object]:
+    return derive_adapter_productization_surface(adapter_contract=adapter_contract)

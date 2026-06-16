@@ -42,7 +42,10 @@ from agent_orchestrator.jobs import AgentJob, FileJobRuntime, now_iso
 from agent_orchestrator.memory import MemoryRecord, MemoryStore
 from agent_orchestrator.planning import PlanSession
 from agent_orchestrator.planning_governance import get_governance_status
-from agent_orchestrator.planning_support import build_document_context_package
+from agent_orchestrator.planning_support import (
+    build_document_context_package,
+    build_strategy_decision_contract as _build_strategy_decision_contract_support,
+)
 
 
 def build_workspace_state_snapshot(
@@ -228,85 +231,63 @@ def build_strategy_decision(session: PlanSession, workspace_state: dict[str, obj
     ]
     if isinstance(next_task, dict):
         verification_requirements.extend(str(item) for item in next_task.get("validation", []) if item)
-    program_posture = {
-        "program_goal": session.structured_brief.goal or session.requirement,
-        "active_milestone": current_checkpoint_objective,
-        "completed_milestones": [],
-        "ready_next_units": [str(next_task.get("title"))] if isinstance(next_task, dict) and next_task.get("title") else [],
-        "blocked_units": list(status.get("blocking_reasons", [])) if isinstance(status.get("blocking_reasons"), list) else [],
-    }
-    delegation_contract = {
-        "selected_executor": (
-            decision.get("selected_provider_runtime", {}).get("provider")
-            if isinstance(decision.get("selected_provider_runtime"), dict)
-            else None
-        ) or "native",
-        "ownership_boundary": status.get("topology_reason"),
-        "handoff_reason_code": decision.get("selected_provider_runtime", {}).get("handoff_reason_code")
+    selected_provider_runtime = (
+        decision.get("selected_provider_runtime", {})
         if isinstance(decision.get("selected_provider_runtime"), dict)
-        else None,
-        "fallback_reason_code": decision.get("selected_provider_runtime", {}).get("fallback_reason_code")
-        if isinstance(decision.get("selected_provider_runtime"), dict)
-        else None,
-        "required_handoff_artifacts": ["strategy_decision", "workspace_index", "evidence_bundle"],
-        "resume_expectation": status.get("resume_action"),
-    }
-    program_continuity = {
-        "resume_supported": True,
-        "resume_kind": status.get("resume_action"),
-        "compaction_stage": None,
-        "continuity_artifact_status": "projected",
-        "latest_recovery_hint": status.get("next_action_message"),
-    }
-    milestone_verification = {
-        "verification_status": "pending",
-        "remaining_checks": verification_requirements,
-        "checkpoint_ready": False,
-    }
-    operator_control = {
-        "next_recommended_action": status.get("primary_action"),
-        "runbook_recovery_lane": status.get("resume_reason"),
-        "approval_pause_state": status.get("approval_state"),
-        "clarify_pause_state": bool(status.get("human_intervention_reason")),
-    }
-    return {
-        "format": CONTROL_PLANE_FORMATS["strategy_decision"],
-        "session_id": session.id,
-        "goal": session.structured_brief.goal or session.requirement,
-        "current_checkpoint_objective": current_checkpoint_objective,
-        "next_goal": current_checkpoint_objective,
-        "status": session.status,
-        "selected_topology": decision.get("selected_topology"),
-        "selected_provider_runtime": decision.get("selected_provider_runtime", {}),
-        "control_plane_focus": "state_context_strategy_topology_approval_evidence_memory_recovery",
-        "orchestration_horizon": {
-            "short_term": "explicit orchestration solves real local work",
-            "medium_term": "control plane governs orchestration and evidence",
-            "long_term": "models may internalize orchestration while external artifacts remain auditable",
+        else {}
+    )
+    topology_signals = (
+        session.structured_brief.topology_recommendation.get("signals", {})
+        if isinstance(session.structured_brief.topology_recommendation, dict)
+        and isinstance(session.structured_brief.topology_recommendation.get("signals"), dict)
+        else {}
+    )
+    selected_executor = selected_provider_runtime.get("provider") or "native"
+    approval_pause_state = status.get("approval_state")
+    clarify_pause_state = bool(status.get("human_intervention_reason"))
+    payload = _build_strategy_decision_contract_support(
+        session_id=session.id,
+        goal=session.structured_brief.goal or session.requirement,
+        requirement=session.requirement,
+        status=session.status,
+        current_checkpoint_objective=current_checkpoint_objective,
+        recommended_action=status.get("primary_action"),
+        primary_reason=status.get("next_action_message") or status.get("primary_reason"),
+        resume_action=status.get("resume_action"),
+        resume_reason=status.get("resume_reason"),
+        selected_topology=decision.get("selected_topology"),
+        topology_reason=status.get("topology_reason"),
+        topology_signals=topology_signals,
+        review_policy=dict(session.structured_brief.review_policy),
+        provider_fallback=_strategy_topology_policy(session, status, decision).get("provider_fallback", {}),
+        rationale=list(decision.get("decision_rationale", [])) if isinstance(decision.get("decision_rationale"), list) else [],
+        risks=[str(item) for item in session.structured_brief.risks],
+        verification_requirements=verification_requirements,
+        ready_next_units=[str(next_task.get("title"))] if isinstance(next_task, dict) and next_task.get("title") else [],
+        blocked_units=list(status.get("blocking_reasons", [])) if isinstance(status.get("blocking_reasons"), list) else [],
+        selected_executor=selected_executor,
+        handoff_reason_code=selected_provider_runtime.get("handoff_reason_code"),
+        fallback_reason_code=selected_provider_runtime.get("fallback_reason_code"),
+        required_handoff_artifacts=["strategy_decision", "workspace_index", "evidence_bundle"],
+        approval_pause_state=approval_pause_state,
+        clarify_pause_state=clarify_pause_state,
+        compliance_blocking=bool(session.compliance.get("blocking")) if isinstance(session.compliance, dict) else False,
+        recovery_actions=_strategy_recovery_policy(status).get("recovery_actions", []),
+        extra_fields={
+            "selected_provider_runtime": decision.get("selected_provider_runtime", {}),
+            "runtime_health": _runtime_health_payload(decision.get("selected_provider_runtime", {})),
+            "tool_inventory": _tool_inventory_payload(),
+            "usage_cost": _usage_cost_placeholder(),
+            "tradeoffs": [
+                "Keep explicit orchestration for short-term reliability.",
+                "Move durable state, evidence, approvals, and memory into the control-plane artifact chain.",
+                "Allow orchestration to shrink over time while keeping state, evidence, approvals, memory, and recovery external.",
+            ],
+            "workspace_state_created_at": workspace_state.get("created_at") if isinstance(workspace_state, dict) else None,
+            "created_at": now_iso(),
         },
-        "topology_policy": _strategy_topology_policy(session, status, decision),
-        "recovery_policy": _strategy_recovery_policy(status),
-        "runtime_health": _runtime_health_payload(decision.get("selected_provider_runtime", {})),
-        "tool_inventory": _tool_inventory_payload(),
-        "usage_cost": _usage_cost_placeholder(),
-        "rationale": list(decision.get("decision_rationale", [])) if isinstance(decision.get("decision_rationale"), list) else [],
-        "tradeoffs": [
-            "Keep explicit orchestration for short-term reliability.",
-            "Move durable state, evidence, approvals, and memory into the control-plane artifact chain.",
-            "Allow orchestration to shrink over time while keeping state, evidence, approvals, memory, and recovery external.",
-        ],
-        "risks": [str(item) for item in session.structured_brief.risks],
-        "verification_requirements": verification_requirements,
-        "validation_plan": verification_requirements,
-        "program_posture": program_posture,
-        "delegation_contract": delegation_contract,
-        "program_continuity": program_continuity,
-        "milestone_verification": milestone_verification,
-        "operator_control": operator_control,
-        "executes": False,
-        "workspace_state_created_at": workspace_state.get("created_at") if isinstance(workspace_state, dict) else None,
-        "created_at": now_iso(),
-    }
+    )
+    return payload
 
 
 def _strategy_topology_policy(

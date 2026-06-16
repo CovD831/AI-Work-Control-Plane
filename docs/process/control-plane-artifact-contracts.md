@@ -1,194 +1,64 @@
 # Control Plane Artifact Contracts
 
-## Purpose
+- agent_orchestrator.workspace_state.v1
+- agent_orchestrator.context_packet.v1
+- agent_orchestrator.strategy_decision.v1
+- agent_orchestrator.approval_item.v1
+- agent_orchestrator.evidence_bundle.v1
+- agent_orchestrator.provider_evidence_summary.v1
+- agent_orchestrator.governance_bundle.v1
+- agent_orchestrator.governance_bundle_inspection.v1
+- native_tool_workflow_surface
+- native_tool_productization_surface
+- adapter_productization_surface
+- comparative_native_tool_summary
+- comparative_adapter_summary
+- session_productization_surface
+- workflow_continuity
+- session_continuity.comparative_benchmark
+- session_continuity.comparative_benchmark_digest
+- operator_posture_digest
+- clarify_boundary_digest
+- session_planner_decision
+- planner_closure_posture
+- session_continuity_outline
+- comparative_session_posture_summary
+- comparative_session_continuity_summary
+- comparative_native_closure_summary
+- autonomy_posture
+- resume_expectation
+- resume_posture
+- session_posture_cases
+- workflow_resume_ready
+- workflow_projection_visible
+- workflow_recovery_aligned
+- productization_case_count
+- continuity_snapshot
+- compacted_context_summary
+- recovery_contract
+- shared_contract_alignment
+- shared_productization_contract_ready
+- daily_driver_main_path_ready
+- comparison_posture_basis
+- comparison_proof_strength
+- comparative_daily_driver_summary
+- comparative_completion_summary
+- daily_driver_repeatability_tier
+- independent_daily_driver_repo_task_families_proven
+- external_comparison_harness_surface
+- stronger_task_families
+- repo_task_acceptance_families_proven
+- daily_driver_repo_task_families_proven
+- broader_repeatability_gap_families
 
-These contracts pin the minimum stable shape for AI Work Control Plane artifacts. Producers may add fields, but they must keep the `format` value and documented stable fields compatible for v1 consumers.
+Evidence comparison or trend surfaces should preserve these names as stable cross-surface contract markers.
 
-## Compatibility Rules
-
-- Every machine-facing artifact includes a top-level `format` string.
-- Pretty CLI output is human-readable only; JSON output is the automation contract.
-- Unknown fields must be ignored by consumers.
-- Missing optional fields must hydrate to safe empty values.
-- Legacy memory and approval payloads remain readable.
-- External `explore_cache` status is optional state, not a failure.
+For session productization specifically, downstream projections should treat `workflow_continuity`, `workflow_resume_ready`, `workflow_projection_visible`, and `workflow_recovery_aligned` as first-class continuity markers rather than optional narrative-only hints.
 
 ## Canonical Vs Projection Boundary
 
-- Canonical contracts are the control-plane artifacts documented in this file.
-- `WorkspaceStateSnapshot`, `ContextPacket`, `StrategyDecision`, `ExecutionTopologySnapshot`, `ApprovalItem`, `EvidenceBundle`, recovery artifacts, runtime fidelity artifacts, and `MemoryRecord` remain the durable automation boundary.
-- `team roles`, work-graph trees, pretty summaries, runbook guidance, and UI panels are projections over canonical state.
-- Role-contract enrichments such as `structured_inputs`, `structured_outputs`, blocker/alternative/request/reflection capabilities, and work-graph owner-contract views are governance metadata for inspection and routing clarity.
-- Those enrichments must not become a second durable state source or an implicit autonomous runtime loop without a later bounded phase explicitly introducing that behavior.
+Canonical contracts are the control-plane artifacts documented in this file.
 
-## WorkspaceStateSnapshot
+`team roles`, work-graph trees, pretty summaries, runbook guidance, and UI panels are projections over those contracts and must not become a second durable state source.
 
-- Format: `agent_orchestrator.workspace_state.v1`
-- Producer: `team workspace-status`
-- Consumers: operator summary surfaces, UI, lifecycle index
-- Lifecycle: generated from file stores and persisted to `.agent_orchestrator/workspace/index.json`
-- Stable fields: `project_root`, `plans`, `runs`, `jobs`, `evidence`, `approvals`, `provider_health`, `dirty_state`, `memory_digest`, `external_cache`, `created_at`
-
-## WorkspaceIndex
-
-- Format: `agent_orchestrator.workspace_index.v1`
-- Producer: workspace, context, topology, and evidence builders
-- Consumers: operator surfaces that need the latest artifact lifecycle references
-- Lifecycle: persisted to `.agent_orchestrator/workspace/index.json`
-- Stable fields: `workspace_state`, `artifacts`, `updated_at`
-- Rule: artifact refs contain `format`, `digest`, `created_at`, `recorded_at`, `status`, and `summary`.
-
-## ContextPacket
-
-- Format: `agent_orchestrator.context_packet.v1`
-- Producer: `team context-packet`
-- Consumers: strategy/topology surfaces and model handoff
-- Lifecycle: generated on demand; records source artifacts and stale warnings
-- Stable fields: `query`, `changed_files`, `docs_context`, `memory_records`, `source_artifacts`, `stale_warnings`, `token_budget_summary`, `external_cache`, `created_at`
-- Rule: it compresses context but does not choose strategy.
-
-## StrategyDecision
-
-对外语义建议：
-
-- 可以把它理解成“治理检查点摘要”或“当前检查点治理摘要”
-- 不建议把它理解成替 provider 做内部 planning 的策略脑
-
-- Format: `agent_orchestrator.strategy_decision.v1`
-- Producer: control-plane topology builder and operator workflow helpers
-- Consumers: `team summary`, `team next`, `team runbook`, execution path snapshot, UI
-- Lifecycle: generated deterministically from session state as a read-only governance summary
-- Stable fields: `session_id`, `goal`, `current_checkpoint_objective`, `status`, `selected_topology`, `selected_provider_runtime`, `rationale`, `tradeoffs`, `risks`, `verification_requirements`, `executes`, `created_at`
-- Compatibility: `next_goal` and `validation_plan` remain readable as v1 compatibility aliases, but new consumers should prefer `current_checkpoint_objective` and `verification_requirements`.
-- Rule: `executes` must remain `false`.
-- Rule: this artifact records checkpoint objective, verification requirements, runtime boundary hints, and recovery-facing context; it does not replace provider-native planning.
-
-## ExecutionTopologySnapshot
-
-对外语义建议：
-
-- 可以把它理解成“执行路径快照”或“只读执行结构快照”
-- 不建议把它理解成需要持续编辑的 multi-agent 拓扑设计器
-
-- Format: `agent_orchestrator.execution_topology_snapshot.v1`
-- Producer: `team topology inspect`
-- Consumers: 治理控制台与 UI
-- Lifecycle: read-only snapshot of the current execution path and control-plane boundaries; never mutates execution engine state
-- Stable fields: `session_id`, `fixed_node_types`, `nodes`, `edges`, `strategy_decision`, `execution_contract`, `approval_queue`, `evidence_bundle`, `read_only`, `created_at`
-- Rule: this artifact is a read-only execution path view for inspection, not an orchestration editor.
-
-## ApprovalItem
-
-- Format: `agent_orchestrator.approval_item.v1`
-- Producer: approval queue generator and approval resolver
-- Consumers: `team approvals list`, `team approvals resolve`, evidence/memory policy
-- Lifecycle: generated from blocked/risky state; resolution appends an event and memory record
-- Stable fields: `id`, `status`, `reason_code`, `reason`, `scope`, `scope_id`, `recommended_action`, `session_id`, `run_id`, `job_id`, `work_unit_id`, `evidence_refs`, `created_at`, `resolved_at`, `resolution_reason`, `actor`
-- Rule: resolving an approval records a decision only; execution gates remain authoritative.
-
-## EvidenceBundle
-
-- Format: `agent_orchestrator.evidence_bundle.v1`
-- Producer: `team evidence-gates`
-- Consumers: 治理控制台、memory recommendation、release gates
-- Lifecycle: generated on demand from local evidence, compliance, and gate state
-- Stable fields: `status`, `gate_evidence`, `evidence_state`, `recovery_refs`, `compliance`, `memory_recommendation`, `created_at`
-
-## RecoveryTimeline
-
-- Format: `agent_orchestrator.recovery_timeline.v1`
-- Producer: control-plane recovery builder and workspace status
-- Consumers: `team summary`, `team next`, `team runbook`, workspace status, UI, evidence policy
-- Lifecycle: generated read-only from PlanSession, Run Ledger, Approval Inbox, EvidenceBundle, provider fallback, and compliance state
-- Stable fields: `project_root`, `status_catalog`, `entries`, `summary`, `source_refs`, `read_only`, `created_at`
-- Rule: this artifact recommends recovery context only; it does not execute.
-
-## RuntimeEventStream
-
-- Format: `agent_orchestrator.runtime_event_stream.v1`
-- Producer: control-plane runtime event builder and workspace status
-- Consumers: recovery timeline, recovery recommendation, evidence policy, UI
-- Lifecycle: generated read-only from existing plan, run, job, approval, and provider/runtime metadata
-- Stable fields: `project_root`, `events`, `summary`, `provider_session_snapshots`, `operation_receipts`, `mutation_policy`, `usage_cost`, `read_only`, `created_at`
-- Rule: direct API and runtime events remain records-only; execution stays under the approved-plan gate.
-
-## ProviderSessionSnapshot
-
-- Format: `agent_orchestrator.provider_session_snapshot.v1`
-- Producer: `team runtime inspect` and runtime event builder
-- Consumers: workspace status, evidence policy, UI, recovery recommendation
-- Lifecycle: generated read-only from job records and available runtime metadata
-- Stable fields: `job_id`, `task_id`, `provider`, `kind`, `status`, `phase`, `runtime_mode`, `session_id`, `thread_id`, `provider_session_ref`, `pid`, `command`, `home_isolation`, `liveness`, `operation_support`, `operation_receipts`, `last_operation_receipt`, `recommended_recovery_command`, `artifact_refs`, `read_only`, `created_at`
-- Rule: a snapshot reports fidelity; it does not claim ownership of a persistent provider session.
-
-## ProviderSessionRef
-
-- Format: `agent_orchestrator.provider_session_ref.v1`
-- Producer: provider runtime adapters when a provider-owned reference is observed
-- Consumers: provider session snapshot, runtime event stream, future provider pilots
-- Lifecycle: stored inside job parsed payloads and surfaced read-only through provider session snapshots
-- Stable fields: `job_id`, `provider`, `runtime_id`, `session_id`, `thread_id`, `cwd`, `pid`, `command`, `provider_owned`, `continuation_guarantee`, `created_at`
-- Rule: a ref points at provider/runtime state; it does not transfer ownership of that state to AI-Work-Control-Plane.
-
-## CodexExecJson
-
-- Format: `agent_orchestrator.codex_exec_json.v1`
-- Producer: `CodexCliAdapter` when the opt-in Codex Runtime Pilot path runs with `codex exec --json`
-- Consumers: provider evidence summary, provider session ref creation, future structured-output pilots
-- Lifecycle: stored inside job parsed payloads and summarized through workspace/evidence surfaces
-- Stable fields: `event_count`, `malformed_event_count`, `event_types`, `events`, `final_message`, `final_message_source`, `session_id`, `thread_id`, `usage`
-- Rule: JSON events are provider evidence; usage/cost remains placeholder unless the provider reports usage directly.
-
-## ProviderEvidenceSummary
-
-- Format: `agent_orchestrator.provider_evidence_summary.v1`
-- Producer: workspace status, evidence gates, and setup readiness
-- Consumers: operator status surfaces, evidence policy, release-readiness checks
-- Lifecycle: generated read-only from recent job records and provider parsed payloads
-- Stable fields: `job_count`, `provider_session_ref_count`, `provider_owned_ref_count`, `continuation_provider_owned_count`, `codex_exec_json_job_count`, `codex_json_event_count`, `codex_malformed_event_count`, `final_message_artifact_count`, `provider_reported_usage_count`, `usage_cost_measurement_status`, `session_ownership_claim`, `policy`
-- Rule: the summary makes provider evidence consumable without creating provider-specific control-plane branches or claiming persistent session ownership.
-
-## GovernanceBundle
-
-- Format: `agent_orchestrator.governance_bundle.v1`
-- Producer: `team governance-bundle export`
-- Consumers: offline operator review, external evaluation, handoff and release evidence
-- Lifecycle: portable read-only JSON bundle assembled from current control-plane surfaces
-- Stable fields: `schema_version`, `project_root`, `created_at`, `query`, `changed_files`, `artifacts`, `artifact_manifest`, `externalization`, `boundaries`
-- Rule: a bundle is an inspection and handoff artifact; exporting or inspecting it must not mutate plan state, resume work, or claim provider session ownership.
-
-## GovernanceBundleInspection
-
-- Format: `agent_orchestrator.governance_bundle_inspection.v1`
-- Producer: `team governance-bundle inspect`
-- Consumers: external evaluators and release gates
-- Lifecycle: read-only verdict derived from a saved governance bundle
-- Stable fields: `bundle_path`, `bundle_format`, `complete`, `auditable`, `blocking`, `blocking_reasons`, `warnings`, `artifact_formats`, `boundary_summary`, `externalization`
-- Rule: inspection validates portability and boundary clarity without requiring the original workspace to be live.
-
-## RuntimeOperationReceipt
-
-- Format: `agent_orchestrator.runtime_operation_receipt.v1`
-- Producer: job runtime send/cancel/terminal operation handling
-- Consumers: provider session snapshot, runtime event stream, UI
-- Lifecycle: appended to job parsed payloads while preserving existing `operation`, `follow_up`, and `cancel` fields
-- Stable fields: `id`, `job_id`, `provider`, `runtime_mode`, `session_id`, `thread_id`, `action`, `status`, `reason`, `detail`, `terminal_state`, `records_only`, `updated_at`
-- Rule: receipts are evidence of operator/runtime interaction only; they do not bypass execution gates.
-
-## RecoveryRecommendation
-
-- Format: `agent_orchestrator.recovery_recommendation.v1`
-- Producer: `team next --format json` and workspace status
-- Consumers: operator CLI, UI, recovery docs
-- Lifecycle: generated read-only from session status, recovery timeline, runtime events, approvals, and evidence
-- Stable fields: `session_id`, `current_status`, `current_blocking_reason`, `safest_next_operator_command`, `required_approval_or_evidence`, `recoverable_artifact_refs`, `may_resume_execution`, `human_decision_required`, `compliance_must_be_fixed_first`, `read_only`, `mutation_policy`, `created_at`
-- Rule: recommendations never resolve approvals or execute recovery.
-
-## MemoryRecord
-
-- Format rule: memory records are line-oriented records and use stable fields instead of a top-level artifact format.
-- Producer: local memory store and control-plane resolution/evidence policies
-- Consumers: context packet and operator knowledge surfaces
-- Lifecycle: append-only local baseline; external cache is optional
-- Stable fields: `id`, `namespace`, `session_id`, `role`, `provider`, `record_type`, `summary`, `payload`, `provenance`, `freshness`, `confidence`, `external_cache_status`, `created_at`
-- Rule: `provenance.source_artifacts` should identify the source evidence bundle, approval id, session id, or run id when available.
+Unknown fields must be ignored by downstream readers so productization surfaces can evolve without breaking old consumers.

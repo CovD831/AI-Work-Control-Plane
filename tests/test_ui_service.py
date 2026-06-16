@@ -8,7 +8,7 @@ from agent_orchestrator.intake import ClarifyPolicy, ExecutionMode, TaskKind, Ta
 from agent_orchestrator.jobs import FileJobRuntime, JobRequest
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 from agent_orchestrator.run_store import RunStore
-from agent_orchestrator.ui_service import DashboardService, build_dashboard_service
+from agent_orchestrator.ui_service import DashboardService, _build_operator_summary, build_dashboard_service
 from test_support import start_approved_session, write_minimal_process_docs
 
 
@@ -69,9 +69,18 @@ def test_dashboard_lists_sessions_and_builds_detail(tmp_path) -> None:
     assert detail["control_plane"]["read_only"] is True
     assert detail["control_plane"]["strategy_decision"]["format"] == "agent_orchestrator.strategy_decision.v1"
     assert detail["control_plane"]["strategy_decision"]["executes"] is False
+    assert detail["control_plane"]["strategy_decision"]["route_planner_intent"]["native_first"] is True
+    assert detail["control_plane"]["strategy_decision"]["adapter_shared_contract"]["format"] == "agent_orchestrator.adapter_shared_contract.v1"
     assert detail["control_plane"]["topology_snapshot"]["format"] == "agent_orchestrator.execution_topology_snapshot.v1"
     assert detail["control_plane"]["topology_snapshot"]["program_posture"]["program_goal"]
     assert "selected_executor" in detail["control_plane"]["topology_snapshot"]["delegation_contract"]
+    assert detail["control_plane"]["topology_snapshot"]["session_planner_decision"]["autonomy_posture"]["pause_expected"] in {True, False}
+    assert detail["control_plane"]["topology_snapshot"]["session_continuity_outline"]["autonomy_posture"]["resume_posture"] in {
+        "fresh_entry",
+        "same_task_resume",
+        "approval_reentry",
+        None,
+    }
     assert detail["control_plane"]["approval_queue"]["format"] == "agent_orchestrator.approval_queue.v1"
     assert detail["control_plane"]["evidence_bundle"]["format"] == "agent_orchestrator.evidence_bundle.v1"
     assert detail["plan_tree"]["kind"] == "session"
@@ -213,6 +222,29 @@ def test_dashboard_job_terminal_snapshot_surfaces_stdout_and_terminal_ref(tmp_pa
     assert snapshot["stdout"] == "pane output"
 
 
+def test_build_operator_summary_surfaces_multi_family_daily_driver_benchmark() -> None:
+    operator = _build_operator_summary(
+        {"id": "session-1", "status": "completed", "events": []},
+        {"metadata": {"provenance": {}}, "payload": {}},
+        None,
+        [],
+        {
+            "comparative_benchmark": {
+                "comparison_proof_strength": {
+                    "daily_driver_repeatability_tier": "multi_family_broad_daily_driver_proven",
+                    "independent_daily_driver_repo_task_family_count": 6,
+                }
+            }
+        },
+    )
+
+    assert (
+        operator["comparative_daily_driver_benchmark"]
+        == "official_catalog=docs/process/evidence-cases.json independent_daily_driver_families=6 status=multi_family_broad_daily_driver_proven"
+    )
+    assert operator["comparative_daily_driver_summary"]["format"] == "agent_orchestrator.comparative_daily_driver_summary.v1"
+
+
 def test_dashboard_service_can_use_tmux_job_runtime(tmp_path) -> None:
     service = build_dashboard_service(
         plans_root=str(tmp_path / "plans"),
@@ -235,12 +267,22 @@ def test_dashboard_actions_execute_and_read_run(tmp_path) -> None:
     run_id = executed["resume"]["linked_execution_run_id"]
     run = service.get_run(run_id)
 
-    assert executed["status"] in {"accepted", "needs_followup"}
+    assert executed["status"] == "blocked"
     assert run["run_id"] == run_id
     assert run["metadata"]["approved_plan"]["session_id"] == session["id"]
     assert run["metadata"]["team_execution_mode"] == "native"
     assert run["payload"]["runtime_name"] == "coding_agent"
     assert run["payload"]["native_task_proof"]["native_runtime_only"] is True
+    pending_approval = run["payload"]["pending_approval"]
+    if pending_approval is not None:
+        assert pending_approval["stage"] in {"edit", "verify"}
+    else:
+        assert run["payload"]["strategy_summary"]["selected_execution_strategy"] in {
+            "clarify_then_edit",
+            "need_human_confirmation",
+        }
+        assert run["payload"]["action_selection_trace"][0]["action_type"] == "pause"
+        assert run["payload"]["action_selection_trace"][0]["source"] == "planner_control_surface"
     assert any(event["payload"].get("action") == "execute" for event in service.list_session_events(str(session["id"]))["events"])
     assert service.list_events()["events"]
     assert any(record["record_type"] == "action" for record in service.list_session_memory(str(session["id"]))["records"])
@@ -253,43 +295,350 @@ def test_dashboard_actions_execute_and_read_run(tmp_path) -> None:
     assert operator["execution_provenance"]["plan_session_id"] == session["id"]
     assert operator["execution_provenance"]["linked_run_status"] in {"completed", "blocked"}
     assert "execution_runtime_summary" in operator
+    if pending_approval is not None:
+        assert operator["execution_fact_chain"]["approval_pause_state"] is True
+        assert operator["execution_fact_chain"]["next_recommended_action"] in {"execute", "await_approval"}
+    else:
+        if run["payload"]["strategy_summary"]["selected_execution_strategy"] == "need_human_confirmation":
+            assert operator["execution_fact_chain"]["approval_pause_state"] is True
+            assert operator["execution_fact_chain"]["next_recommended_action"] in {"human_review", "await_approval"}
+            assert operator["approval_boundary_digest"]["format"] == "agent_orchestrator.approval_boundary_digest.v1"
+            assert operator["approval_boundary_digest"]["status"] == "planner_approval_boundary"
+            assert operator["comparative_benchmark_digest"]["approval_boundary_active"] is True
+            assert "approval_boundary_digest" in operator["approval_boundary_digest"]["shared_evidence_surface"]
+            assert detail["control_plane"]["workspace_index"]["approval_boundary_digest"]["status"] == "planner_approval_boundary"
+        else:
+            assert operator["execution_fact_chain"]["next_recommended_action"] == "clarify_scope"
+            assert operator["clarify_boundary_digest"]["format"] == "agent_orchestrator.clarify_boundary_digest.v1"
+            assert operator["clarify_boundary_digest"]["status"] == "planner_clarify_boundary"
+            assert operator["clarify_boundary_digest"]["next_recommended_action"] == "clarify_scope"
+            assert operator["comparative_benchmark_digest"]["clarify_boundary_active"] is True
+            assert "clarify_boundary_digest" in operator["clarify_boundary_digest"]["shared_evidence_surface"]
+            assert "workspace_index" in operator["clarify_boundary_digest"]["shared_evidence_surface"]
+            assert detail["control_plane"]["workspace_index"]["clarify_boundary_digest"]["status"] == "planner_clarify_boundary"
     assert operator["execution_runtime_summary"]["runtime_name"] == "coding_agent"
     assert operator["execution_runtime_summary"]["native_runtime_only"] is True
+    assert operator["execution_runtime_summary"]["session_planner_decision"]["format"] == "agent_orchestrator.session_planner_snapshot.v1"
+    assert operator["execution_runtime_summary"]["session_continuity_outline"]["format"] == "agent_orchestrator.session_continuity_outline.v1"
+    assert operator["execution_runtime_summary"]["planner_closure_posture"]["format"] == "agent_orchestrator.planner_closure_posture.v1"
+    assert operator["execution_runtime_summary"]["session_planner_decision"]["autonomy_posture"]["pause_expected"] in {True, False}
+    assert operator["execution_runtime_summary"]["session_planner_decision"]["tool_workflow_plan"]["workflow_projection_required"] in {True, False}
+    assert operator["execution_runtime_summary"]["session_continuity_outline"]["autonomy_posture"]["pause_expected"] in {True, False}
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["format"] == "agent_orchestrator.native_planner_decision.v1"
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["decision_candidates"]
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["decision_boundary"]["risk_level"]
+    assert "explore" in operator["execution_runtime_summary"]["planner_shared_contract"]["posture"]["route_intent_alignment"]
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["delegation_contract"]["selected_executor"] == "native"
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["operator_control"]["next_recommended_action"]
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["autonomy_surface"]["format"] == "agent_orchestrator.native_planner_autonomy_surface.v1"
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["autonomy_surface"]["primary_action"]
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["autonomy_boundary"]["native_first"] is True
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["tool_workflow_plan"]["workflow_projection_required"] is True
+    assert operator["execution_runtime_summary"]["planner_shared_contract"]["planner_reasoning"]["requires_verify"] is True
     assert operator["execution_runtime_summary"]["repo_task_acceptance_ready"] is False
     assert operator["execution_runtime_summary"]["complex_repo_task_acceptance_ready"] is False
+    assert operator["execution_runtime_summary"]["long_chain_native_first_ready"] is False
+    assert operator["execution_runtime_summary"]["daily_driver_readiness"]["shared_productization_ready"] is True
+    assert operator["execution_runtime_summary"]["daily_driver_readiness"]["daily_driver_main_path_ready"] is False
+    assert operator["execution_runtime_summary"]["daily_driver_readiness"]["open_product_gap"] == "long_chain_repo_closure_not_yet_proven"
+    assert operator["execution_runtime_summary"]["daily_driver_main_path_ready"] is False
     assert operator["execution_runtime_summary"]["default_path"] == "native"
     assert operator["execution_runtime_summary"]["operating_boundary"] == "native_preferred"
     assert operator["execution_runtime_summary"]["selection_reason"]
     assert operator["comparative_benchmark_summary"]["format"] == "agent_orchestrator.comparative_benchmark_summary.v1"
     assert operator["comparative_benchmark_summary"]["native_default_path"] is True
     assert operator["comparative_benchmark_summary"]["native_complex_repo_task_acceptance_ready"] is False
+    assert operator["comparative_benchmark_summary"]["long_chain_native_first_ready"] is False
+    assert operator["comparative_benchmark_summary"]["daily_driver_main_path_ready"] is False
+    assert operator["comparative_benchmark_summary"]["comparison_posture"]["status"] == "shared_productization_ready_but_daily_driver_proof_gap_remaining"
+    assert operator["comparative_benchmark_summary"]["comparison_posture"]["foundation_gap_remaining"] is False
+    assert "platform_breadth" in operator["comparative_benchmark_summary"]["comparison_posture"]["remaining_gap_classes"]
+    assert operator["comparative_benchmark_summary"]["comparison_posture_basis"]["shared_productization_contract_ready"] is True
+    assert operator["comparative_benchmark_summary"]["comparison_posture_basis"]["daily_driver_main_path_ready"] is False
+    assert operator["comparative_benchmark_summary"]["comparison_posture_basis"]["planner_candidate_surface_ready"] is True
+    assert operator["comparative_benchmark_summary"]["comparison_posture_basis"]["unified_adapter_contract_ready"] is True
+    assert operator["comparative_benchmark_summary"]["comparison_proof_strength"]["direct_proof_status"] == "foundational_productization_only"
+    assert operator["comparative_benchmark_summary"]["comparison_proof_strength"]["repeatability_status"] == "not_yet_proven"
+    assert operator["comparative_benchmark_summary"]["comparison_proof_strength"]["repeatability_ready"] is False
+    assert operator["comparative_benchmark_summary"]["comparison_proof_strength"]["planner_candidate_status"] == "native_first_candidate_surface_ready"
+    assert operator["comparative_benchmark_summary"]["comparison_proof_strength"]["adapter_unification_status"] == "same_contract_adapter_surface_ready"
+    assert operator["comparative_benchmark_summary"]["comparison_grade_assessment"]["status"] == "internal_productization_ready_but_repeatability_or_external_gap_remaining"
+    assert operator["comparative_benchmark_summary"]["comparison_grade_assessment"]["comparison_grade_ready"] is False
+    assert operator["comparative_benchmark_summary"]["comparison_grade_assessment"]["external_harness_ready"] is False
+    assert operator["comparative_benchmark_summary"]["comparison_grade_assessment"]["external_comparison_harness_surface"]["format"] == "agent_orchestrator.external_comparison_harness_surface.v1"
+    assert operator["comparative_benchmark_summary"]["external_comparison_harness_surface"]["next_evidence_milestone"] == "authoritative_opencode_case_harness"
+    assert operator["comparative_daily_driver_benchmark"] is None
+    assert operator["comparative_daily_driver_benchmark"] is None
+    assert operator["comparative_benchmark_digest"]["native_default_path"] is True
+    assert operator["comparative_benchmark_digest"]["case_count"] == 1
+    assert operator["comparative_benchmark_digest"]["productization_case_count"] == 1
+    assert operator["comparative_benchmark_digest"]["daily_driver_main_path_ready"] is False
+    assert operator["comparative_benchmark_digest"]["daily_driver_main_path_ready_cases"] == 0
+    assert operator["comparative_benchmark_digest"]["comparison_status"] == "shared_productization_ready_but_daily_driver_proof_gap_remaining"
+    assert operator["comparative_benchmark_digest"]["evidence_scope"] == "bounded_internal_evidence_only"
+    assert operator["comparative_benchmark_digest"]["direct_proof_status"] == "foundational_productization_only"
+    assert operator["comparative_benchmark_digest"]["repeatability_status"] == "not_yet_proven"
+    assert operator["comparative_benchmark_digest"]["comparison_grade_status"] == "internal_productization_ready_but_repeatability_or_external_gap_remaining"
+    assert operator["comparative_benchmark_digest"]["comparison_grade_ready"] is False
+    assert operator["comparative_benchmark_digest"]["external_harness_ready"] is False
+    assert operator["comparative_benchmark_digest"]["external_harness_status"] == "missing_authoritative_opencode_harness"
+    assert operator["comparative_planner_closure_summary"]["format"] == "agent_orchestrator.comparative_planner_closure_summary.v1"
+    assert operator["comparative_planner_closure_summary"]["closure_mode"]
+    assert "mode=" in operator["comparative_planner_closure_summary"]["summary"]
+    assert operator["comparative_planner_autonomy_summary"]["format"] == "agent_orchestrator.comparative_planner_autonomy_summary.v1"
+    assert operator["comparative_planner_autonomy_summary"]["native_first"] is True
+    assert operator["comparative_planner_autonomy_summary"]["autonomy_boundary"]["requires_edit"] is True
+    assert operator["comparative_planner_autonomy_summary"]["planner_reasoning"]["requires_verify"] is True
+    assert operator["comparative_planner_candidate_summary"]["format"] == "agent_orchestrator.comparative_planner_candidate_summary.v1"
+    assert operator["comparative_planner_candidate_summary"]["native_first"] is True
+    assert operator["comparative_planner_candidate_summary"]["selected_strategy"]
+    assert operator["comparative_planner_candidate_summary"]["workflow_projection_ready"] is True
+    assert operator["comparative_planner_candidate_summary"]["action_coverage"]["autonomy_selected_action_count"] >= 1
+    assert operator["comparative_native_tool_summary"]["format"] == "agent_orchestrator.comparative_native_tool_summary.v1"
+    assert operator["comparative_native_tool_summary"]["tooling_posture"] == "daily_driver_ready"
+    assert operator["comparative_native_tool_summary"]["bounded_read_search_ready"] is True
+    assert "repo_map" in operator["comparative_native_tool_summary"]["daily_driver_tools"]
+    assert "posture=daily_driver_ready" in operator["comparative_native_tool_summary"]["summary"]
+    assert operator["operator_tool_digest"]["format"] == "agent_orchestrator.operator_tool_digest.v1"
+    assert operator["operator_tool_digest"]["tooling_posture"] == "daily_driver_ready"
+    assert "repo_map" in operator["operator_tool_digest"]["daily_driver_tools"]
+    assert operator["operator_planner_digest"]["format"] == "agent_orchestrator.operator_planner_digest.v1"
+    assert operator["operator_planner_digest"]["primary_action"]
+    assert operator["operator_planner_digest"]["selected_executor"] == "native"
+    assert operator["operator_planner_digest"]["next_recommended_action"]
+    assert operator["operator_planner_digest"]["decision_mode"] == "native_first_autonomous"
+    assert operator["operator_planner_digest"]["candidate_count"] >= 1
+    assert operator["comparative_benchmark_digest"]["operator_planner_decision_mode"] == "native_first_autonomous"
+    assert operator["comparative_adapter_summary"]["format"] == "agent_orchestrator.comparative_adapter_summary.v1"
+    assert operator["comparative_adapter_summary"]["surface_status"] == "same_contract_two_executors_governed"
+    assert operator["comparative_adapter_summary"]["hot_plug_supported"] is True
+    assert operator["comparative_adapter_summary"]["resume_contract_supported"] is True
+    assert operator["comparative_adapter_summary"]["unified_adapter_contract_ready"] is True
+    assert "status=same_contract_two_executors_governed" in operator["comparative_adapter_summary"]["summary"]
+    assert operator["comparative_session_posture_summary"]["format"] == "agent_orchestrator.comparative_session_posture_summary.v1"
+    assert operator["comparative_session_posture_summary"]["pause_expected"] in {True, False}
+    assert operator["comparative_session_posture_summary"]["workflow_projection_ready"] in {True, False}
+    assert "primary=" in operator["comparative_session_posture_summary"]["summary"]
+    assert operator["comparative_session_continuity_summary"]["format"] == "agent_orchestrator.comparative_session_continuity_summary.v1"
+    assert operator["comparative_session_continuity_summary"]["resume_supported"] is True
+    assert operator["comparative_session_continuity_summary"]["resume_ready"] is True
+    assert operator["comparative_session_continuity_summary"]["runtime_cost_ready"] is True
+    assert operator["comparative_session_continuity_summary"]["workflow_projection_visible"] in {True, False}
+    assert operator["comparative_session_continuity_summary"]["resume_posture"] in {
+        "fresh_entry",
+        "same_task_resume",
+        "approval_reentry",
+        None,
+    }
+    assert "status=" in operator["comparative_session_continuity_summary"]["summary"]
+    assert operator["comparative_native_closure_summary"]["format"] == "agent_orchestrator.comparative_native_closure_summary.v1"
+    assert operator["comparative_native_closure_summary"]["native_runtime_only"] is True
+    assert operator["comparative_native_closure_summary"]["external_coding_agent_required"] is False
+    assert operator["comparative_native_closure_summary"]["proof_ready"] in {True, False}
+    assert "native_runtime_only=" in operator["comparative_native_closure_summary"]["summary"]
+    assert operator["operator_posture_digest"]["format"] == "agent_orchestrator.session_operator_posture_digest.v1"
+    assert operator["operator_posture_digest"]["next_recommended_action"]
+    assert operator["operator_posture_digest"]["summary"]
+    assert "operator_posture_approval_boundary_active" in operator["comparative_benchmark_digest"]
+    assert "session_continuity_approval_boundary_active" in operator["comparative_benchmark_digest"]
+    assert "session_continuity_governed_pause_resume_ready" in operator["comparative_benchmark_digest"]
+    assert operator["comparative_benchmark_digest"]["external_harness_operator_action"] == "maintain_human_audit_until_external_harness_ready"
+    assert operator["comparative_benchmark_digest"]["external_harness_required_shared_surface_count"] == 5
+    assert operator["comparative_benchmark_digest"]["external_harness_required_external_artifact_count"] == 3
+    assert operator["comparative_benchmark_digest"]["external_harness_missing_external_artifact_count"] == 3
+    assert operator["comparative_benchmark_digest"]["external_harness_missing_artifacts"] == [
+        "authoritative_opencode_case_harness",
+        "same_contract_executor_comparison",
+        "governed_recovery_and_cost_comparison",
+    ]
+    assert operator["execution_runtime_summary"]["session_comparative_digest"]["external_harness_status"] == (
+        "missing_authoritative_opencode_harness"
+    )
+    assert operator["comparative_benchmark_digest"]["stronger_task_families"] == []
+    assert operator["comparative_benchmark_digest"]["repo_task_acceptance_families_proven"] == []
+    assert operator["comparative_benchmark_digest"]["repo_task_acceptance_family_count"] is None
+    assert operator["comparative_benchmark_digest"]["daily_driver_repo_task_families_proven"] == []
+    assert operator["comparative_benchmark_digest"]["daily_driver_repo_task_family_count"] == 0
+    assert operator["comparative_benchmark_digest"]["session_posture_cases"] == 1
+    assert operator["comparative_benchmark_digest"]["broader_repeatability_gap_families"] == [
+        "multi_family_daily_driver_repo_tasks"
+    ]
+    assert "ui_execution_summary" in operator["comparative_benchmark_digest"]["shared_evidence_surface"]
     assert operator["execution_runtime_summary"]["context_engineering_contract_format"] == "agent_orchestrator.context_engineering_contract.v1"
     assert operator["execution_runtime_summary"]["context_engineering_main_path_required"] is True
     assert operator["execution_runtime_summary"]["context_isolation_reinjection_mode"] in {"full_inline_context", "digest_focus_subset", None}
     assert operator["execution_runtime_summary"]["native_tool_trace_count"] >= 1
     assert operator["execution_runtime_summary"]["runtime_cost_measurement_status"] == "placeholder"
     assert operator["execution_runtime_summary"]["session_resume_kind"] == "resume_if_same_task"
+    assert operator["execution_runtime_summary"]["session_continuity_snapshot"]["artifact_backed"] is True
+    assert operator["execution_runtime_summary"]["session_continuity_snapshot"]["snapshot_status"] == "ready"
+    assert operator["execution_runtime_summary"]["session_continuity_snapshot"]["program_digest"]["active_milestone"]
+    assert operator["execution_runtime_summary"]["resume_contract"]["resume_supported"] is True
+    assert operator["execution_runtime_summary"]["resume_contract"]["continuity_snapshot"]["format"] == "agent_orchestrator.session_continuity_snapshot.v1"
+    assert operator["execution_runtime_summary"]["resume_contract"]["program_posture"]["program_goal"]
+    assert operator["execution_runtime_summary"]["resume_contract"]["native_tool_usage"]["trace_count"] >= 1
+    assert operator["execution_runtime_summary"]["session_productization_surface"]["format"] == "agent_orchestrator.session_productization_surface.v1"
+    assert operator["execution_runtime_summary"]["session_productization_surface"]["continuity_readiness"]["resume_ready"] is True
+    assert operator["execution_runtime_summary"]["session_productization_surface"]["autonomy_posture"]["resume_posture"] in {
+        "fresh_entry",
+        "same_task_resume",
+        "approval_reentry",
+    }
+    assert operator["execution_runtime_summary"]["shared_productization_surface"]["format"] == "agent_orchestrator.shared_productization_surface.v1"
+    assert operator["execution_runtime_summary"]["shared_productization_surface"]["shared_productization_contract_ready"] is True
+    assert operator["execution_runtime_summary"]["shared_productization_surface"]["contract_readiness"]["session_ready"] is True
+    assert operator["execution_runtime_summary"]["shared_productization_surface"]["contract_readiness"]["tool_ready"] is True
+    assert operator["execution_runtime_summary"]["shared_productization_surface"]["contract_readiness"]["adapter_ready"] is True
+    assert operator["execution_runtime_summary"]["shared_productization_surface"]["contract_readiness"]["planner_ready"] is True
+    assert operator["execution_runtime_summary"]["shared_productization_surface"]["native_tool_workflow_surface"]["explore"]["tools"] == [
+        "repo_map",
+        "find_files",
+        "search",
+        "outline",
+        "read",
+    ]
+    assert operator["execution_runtime_summary"]["native_tool_productization_surface"]["readiness"]["glob_ready"] is True
+    assert operator["execution_runtime_summary"]["compacted_context_summary"]["objective"]
+    assert operator["execution_runtime_summary"]["compacted_context_summary"]["compaction_stage"] is not None
     assert operator["execution_runtime_summary"]["session_long_horizon_posture"]["resume_ready"] is True
+    assert operator["execution_runtime_summary"]["session_long_horizon_posture"]["resume_posture"] in {
+        "fresh_entry",
+        "same_task_resume",
+        "approval_reentry",
+    }
     assert operator["execution_runtime_summary"]["program_posture"]["program_goal"]
+    assert operator["execution_runtime_summary"]["program_continuity"]["long_chain_native_first_ready"] is False
+    assert operator["execution_runtime_summary"]["program_continuity"]["closure_strength"] == "runtime_closure_only"
     assert "selected_executor" in operator["execution_runtime_summary"]["delegation_contract"]
     assert "verification_status" in operator["execution_runtime_summary"]["milestone_verification"]
     assert "next_recommended_action" in operator["execution_runtime_summary"]["operator_control"]
     assert operator["execution_runtime_summary"]["native_exploration"]["candidate_path_count"] >= 1
     assert operator["execution_runtime_summary"]["native_exploration"]["candidate_reason"] in {
         "explicit_existing_paths",
+        "filename_matches",
         "search_matches",
         "repo_map_fallback",
     }
+    assert operator["execution_runtime_summary"]["native_exploration"]["exploration_evidence"]["format"] == "agent_orchestrator.native_exploration_evidence.v1"
+    assert "ui_execution_summary" in operator["execution_runtime_summary"]["native_exploration"]["exploration_evidence"]["shared_evidence_surface"]
+    assert operator["execution_runtime_summary"]["native_tool_surface"]["capability_profile"]["read"]["purpose"] == "bounded file inspection"
+    assert operator["execution_runtime_summary"]["native_tool_surface"]["capability_profile"]["structured_patch"]["purpose"] == "auditable bounded mutations with preview evidence"
+    assert operator["execution_runtime_summary"]["native_tool_surface"]["capability_profile"]["diff_preview"]["purpose"] == "governed bounded change preview for operator-visible review"
+    assert operator["execution_runtime_summary"]["native_tool_surface"]["workflow_surface"]["daily_driver_path"]["tools"] == [
+        "repo_map",
+        "find_files",
+        "search",
+        "outline",
+        "read",
+        "patch_preview",
+        "structured_patch",
+        "diff_preview",
+        "verify",
+    ]
+    assert operator["execution_runtime_summary"]["native_tool_surface"]["daily_driver_readiness"]["structured_patch_ready"] is True
+    assert operator["execution_runtime_summary"]["native_tool_surface"]["daily_driver_readiness"]["patch_preview_ready"] is True
+    assert operator["execution_runtime_summary"]["native_tool_surface"]["daily_driver_readiness"]["diff_preview_ready"] is True
+    assert operator["execution_runtime_summary"]["native_tool_productization_surface"]["format"] == "agent_orchestrator.native_tool_productization_surface.v1"
+    assert operator["execution_runtime_summary"]["native_tool_productization_surface"]["operator_visibility_ready"] is True
+    assert operator["execution_runtime_summary"]["native_tool_workflow_surface"]["daily_driver_path"]["tools"] == [
+        "repo_map",
+        "find_files",
+        "search",
+        "outline",
+        "read",
+        "patch_preview",
+        "structured_patch",
+        "diff_preview",
+        "verify",
+    ]
+    assert operator["comparative_daily_driver_benchmark"] is None
+    assert operator["execution_runtime_summary"]["adapter_productization_surface"]["format"] == "agent_orchestrator.adapter_productization_surface.v1"
+    assert operator["execution_runtime_summary"]["adapter_productization_surface"]["surface_status"] == "same_contract_two_executors_governed"
+    assert operator["execution_runtime_summary"]["adapter_productization_surface"]["resume_contract_supported"] is True
+    assert operator["execution_runtime_summary"]["adapter_capability_surface"]["format"] == "agent_orchestrator.adapter_capability_surface.v1"
     assert operator["execution_runtime_summary"]["adapter_capability"]["comparison_mode"] == "same_contract_two_executors"
     assert operator["execution_runtime_summary"]["adapter_capability"]["hot_plug_supported"] is True
+    assert operator["execution_runtime_summary"]["adapter_capability"]["shared_contract_format"] == "agent_orchestrator.adapter_shared_contract.v1"
+    assert operator["execution_runtime_summary"]["adapter_capability"]["shared_contract_resume_supported"] is True
+    assert operator["execution_runtime_summary"]["adapter_capability"]["shared_contract_recovery_contract"]["fallback_allowed"] is True
+    assert operator["execution_runtime_summary"]["adapter_capability"]["shared_contract_recovery_contract"]["resume_continuity_required"] is True
+    assert operator["execution_runtime_summary"]["adapter_capability"]["shared_contract_operator_recovery_surface"]["default_recovery_lane"] == "approval_pause"
+    assert operator["execution_runtime_summary"]["adapter_shared_contract"]["shared_contract_format"] == "agent_orchestrator.adapter_shared_contract.v1"
+    assert operator["execution_runtime_summary"]["adapter_shared_contract"]["shared_contract_resume_supported"] is True
+    assert "workspace_index" in operator["execution_runtime_summary"]["adapter_shared_contract"]["shared_evidence_surface"]
+    assert operator["execution_runtime_summary"]["adapter_shared_contract"]["operator_visibility_contract"]["session_surface_required"] is True
+    assert operator["execution_runtime_summary"]["adapter_shared_contract"]["tooling_contract"]["workflow_projection_required"] is True
+    assert operator["execution_runtime_summary"]["adapter_shared_contract"]["fallback_governed"] is True
+    assert operator["execution_runtime_summary"]["adapter_shared_contract"]["operator_recovery_surface"]["default_recovery_lane"] == "approval_pause"
+    assert operator["execution_runtime_summary"]["comparative_benchmark"]["format"] == "agent_orchestrator.comparative_benchmark_summary.v1"
+    assert operator["execution_runtime_summary"]["comparative_benchmark"]["shared_productization_contract_ready"] is True
+    assert operator["execution_runtime_summary"]["comparative_benchmark_digest"]["comparison_grade_status"] == (
+        "internal_productization_ready_but_repeatability_or_external_gap_remaining"
+    )
+    assert operator["execution_runtime_summary"]["comparative_benchmark_digest"]["external_harness_status"] == (
+        "missing_authoritative_opencode_harness"
+    )
     assert operator["execution_runtime_summary"]["step_loop_context_surfaces"] == [
         "select",
         "structured_observation",
         "compact",
         "resume_continuity",
     ]
+    assert operator["execution_fact_chain"]["format"] == "agent_orchestrator.execution_fact_chain.v1"
+    assert operator["execution_fact_chain"]["task_class"] == "bounded_internal_repo_task"
+    assert operator["execution_fact_chain"]["closure_status"] in {"completed", "blocked"}
+    assert operator["execution_fact_chain"]["resume_supported"] is True
+    assert operator["execution_fact_chain"]["shared_surface_refs"] == [
+        "workspace_index.execution_fact_chain",
+        "ui.operator_summary.execution_fact_chain",
+        "cli.workspace_state.execution_fact_chain",
+    ]
     assert operator["work_graph_summary"]["node_count"] >= 1
     assert service.list_messages()["messages"]
+
+
+def test_dashboard_resume_session_can_complete_native_execution_after_both_approvals(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    service = _service(tmp_path)
+    session = service.create_session('Append "print(\'bye\')" to note.py')
+    session = service.mark_draft_ready(str(session["id"]))
+    session = service.submit_draft_for_review(str(session["id"]))
+    session = service.approve_session(str(session["id"]))
+    (tmp_path / "note.py").write_text("print('hello')\n", encoding="utf-8")
+
+    first = service.execute_session(str(session["id"]), mode=OrchestrationMode.SUCCESS_FIRST.value)
+    first_run = service.get_run(first["resume"]["linked_execution_run_id"])
+    resolve_approval_item(
+        first_run["payload"]["pending_approval"]["approval_id"],
+        status="approved",
+        reason="Approve edit execution",
+        project_root=tmp_path,
+        approvals_root=tmp_path / ".agent_orchestrator" / "approvals",
+    )
+
+    second = service.resume_session(str(session["id"]), apply=True)
+    second_run = service.get_run(second["resume"]["linked_execution_run_id"])
+    resolve_approval_item(
+        second_run["payload"]["pending_approval"]["approval_id"],
+        status="approved",
+        reason="Approve verify execution",
+        project_root=tmp_path,
+        approvals_root=tmp_path / ".agent_orchestrator" / "approvals",
+    )
+
+    completed = service.resume_session(str(session["id"]), apply=True)
+    detail = service.get_session(str(session["id"]))
+    run = service.get_run(completed["resume"]["linked_execution_run_id"])
+
+    assert completed["status"] == "accepted"
+    assert completed["status_summary"]["resume_reason"] == "execution_completed"
+    assert run["status"] == "completed"
+    assert run["accepted"] is True
+    assert run["payload"]["verification"]["status"] == "passed"
+    assert detail["operator_summary"]["execution_runtime_summary"]["closure_status"] == "completed"
+    assert detail["operator_summary"]["execution_fact_chain"]["closure_status"] == "completed"
+    assert detail["control_plane"]["workspace_index"]["execution_fact_chain"]["closure_status"] == "completed"
+    assert "print('bye')" in (tmp_path / "note.py").read_text(encoding="utf-8")
 
 
 def test_dashboard_reads_native_team_execute_runtime_summary(tmp_path) -> None:
@@ -311,8 +660,10 @@ def test_dashboard_reads_native_team_execute_runtime_summary(tmp_path) -> None:
     assert detail["operator_summary"]["execution_runtime_summary"]["planner_family"] == "native"
     assert detail["operator_summary"]["execution_runtime_summary"]["planner_decision_format"] == "agent_orchestrator.native_planner_decision.v1"
     assert detail["operator_summary"]["execution_runtime_summary"]["planner_native_work_units"] is True
+    assert detail["operator_summary"]["execution_runtime_summary"]["planner_shared_contract"]["selected_owner"] == "native"
     assert detail["operator_summary"]["execution_runtime_summary"]["adapter_family"] == "native_first_party"
     assert detail["operator_summary"]["execution_runtime_summary"]["session_compaction_stage"] is not None
+    assert detail["operator_summary"]["execution_runtime_summary"]["session_continuity_snapshot"]["artifact_backed"] is True
     assert detail["operator_summary"]["execution_runtime_summary"]["native_tool_trace_count"] >= 1
     assert detail["operator_summary"]["comparative_benchmark_summary"]["format"] == "agent_orchestrator.comparative_benchmark_summary.v1"
 

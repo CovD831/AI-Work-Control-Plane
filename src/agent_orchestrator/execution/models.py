@@ -13,6 +13,254 @@ StepStatus = Literal["pending", "running", "completed", "blocked", "failed"]
 DecisionDisposition = Literal["continue", "pause", "block", "complete"]
 
 
+def _as_dict(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def _derived_operator_recovery_surface(
+    *,
+    operator_recovery_surface: dict[str, object],
+    recovery_contract: dict[str, object],
+    approval_pause_supported: object,
+    evidence_outputs: list[object],
+    resume_contract_supported: object,
+    default_path: object,
+) -> dict[str, object]:
+    if operator_recovery_surface:
+        return dict(operator_recovery_surface)
+    fallback_allowed = recovery_contract.get("fallback_allowed") is True
+    handoff_allowed = recovery_contract.get("handoff_allowed") is True
+    lanes = ["continue_execution"]
+    if approval_pause_supported is True:
+        lanes.append("approval_pause")
+    if fallback_allowed:
+        lanes.append("fallback_external")
+    if handoff_allowed:
+        lanes.append("handoff_external")
+    if default_path == "external" and fallback_allowed:
+        default_lane = "fallback_external"
+    elif approval_pause_supported is True:
+        default_lane = "approval_pause"
+    else:
+        default_lane = "continue_execution"
+    return {
+        "format": "agent_orchestrator.adapter_operator_recovery_surface.v1",
+        "governed_lanes": lanes,
+        "default_recovery_lane": default_lane,
+        "continuity_expectation": "resume_contract_required" if resume_contract_supported is True else "fresh_or_external_reentry",
+        "evidence_backed_lanes": list(evidence_outputs),
+        "operator_visible": True,
+    }
+
+
+def derive_adapter_productization_surface(
+    *,
+    adapter_contract: dict[str, object] | None = None,
+    adapter_shared_contract: dict[str, object] | None = None,
+    shared_evidence_surface: list[object] | None = None,
+) -> dict[str, object]:
+    """Derive an adapter productization surface from native or compat contract shapes."""
+
+    adapter_contract = adapter_contract if isinstance(adapter_contract, dict) else {}
+    adapter_shared_contract = (
+        adapter_shared_contract if isinstance(adapter_shared_contract, dict) else {}
+    )
+    if not adapter_contract and not adapter_shared_contract:
+        return {}
+
+    if adapter_contract:
+        capability_surface = _as_dict(adapter_contract.get("capability_surface"))
+        governance = _as_dict(capability_surface.get("governance"))
+        comparability = _as_dict(capability_surface.get("comparability"))
+        shared_contract = _as_dict(capability_surface.get("shared_contract"))
+        approval_semantics = _as_dict(adapter_contract.get("approval_semantics"))
+        continuity_support = _as_dict(shared_contract.get("continuity_support"))
+        recovery_contract = _as_dict(shared_contract.get("recovery_contract"))
+        operator_recovery_surface = _as_dict(shared_contract.get("operator_recovery_surface"))
+        evidence_outputs = [item for item in _as_list(adapter_contract.get("evidence_outputs"))]
+        recovery_surfaces = [item for item in _as_list(adapter_contract.get("recovery_surfaces"))]
+        comparison_mode = comparability.get("comparison_mode") or shared_contract.get("comparison_mode")
+        hot_plug_supported = governance.get("hot_plug_supported")
+        fallback_governed = governance.get("fallback_governed")
+        default_path = (
+            _as_dict(shared_contract.get("path_selection")).get("default_path")
+        )
+        operating_boundary = (
+            _as_dict(shared_contract.get("path_selection")).get("operating_boundary")
+        )
+        approval_required = approval_semantics.get("approval_required")
+        approval_pause_supported = approval_semantics.get("approval_pause_supported")
+        resume_contract_supported = continuity_support.get("resume_contract")
+        shared_contract_format = shared_contract.get("format")
+        format_name = "agent_orchestrator.adapter_productization_surface.v1"
+        evidence_output_count = len(evidence_outputs)
+        recovery_surface_count = len(recovery_surfaces)
+    else:
+        recovery_contract = _as_dict(adapter_shared_contract.get("recovery_contract"))
+        operator_recovery_surface = _as_dict(adapter_shared_contract.get("operator_recovery_surface"))
+        comparison_mode = adapter_shared_contract.get("comparison_mode")
+        hot_plug_supported = adapter_shared_contract.get("hot_plug_supported")
+        fallback_governed = adapter_shared_contract.get("fallback_governed")
+        default_path = adapter_shared_contract.get("default_path")
+        operating_boundary = adapter_shared_contract.get("operating_boundary")
+        approval_required = adapter_shared_contract.get("approval_required")
+        approval_pause_supported = adapter_shared_contract.get("approval_pause_supported")
+        resume_contract_supported = adapter_shared_contract.get("shared_contract_resume_supported")
+        shared_contract_format = adapter_shared_contract.get("shared_contract_format")
+        evidence_outputs = [item for item in _as_list(adapter_shared_contract.get("evidence_outputs"))]
+        recovery_surfaces = [item for item in _as_list(adapter_shared_contract.get("recovery_surfaces"))]
+        format_name = "agent_orchestrator.adapter_productization_surface.compat.v1"
+        evidence_output_count = None
+        recovery_surface_count = None
+    operator_recovery_surface = _derived_operator_recovery_surface(
+        operator_recovery_surface=operator_recovery_surface,
+        recovery_contract=recovery_contract,
+        approval_pause_supported=approval_pause_supported,
+        evidence_outputs=evidence_outputs,
+        resume_contract_supported=resume_contract_supported,
+        default_path=default_path,
+    )
+
+    governed_recovery_ready = all(
+        key in recovery_contract
+        for key in [
+            "continue_allowed",
+            "scope_realign_required",
+            "fallback_allowed",
+            "handoff_allowed",
+            "remaining_budget_preserved",
+            "resume_continuity_required",
+        ]
+    )
+    surface = {
+        "format": format_name,
+        "adapter_family": (
+            adapter_contract.get("adapter_family")
+            if adapter_contract
+            else adapter_shared_contract.get("adapter_family")
+        ),
+        "agent_kind": (
+            adapter_contract.get("agent_kind")
+            if adapter_contract
+            else adapter_shared_contract.get("agent_kind")
+        ),
+        "surface_status": (
+            "same_contract_two_executors_governed"
+            if comparison_mode == "same_contract_two_executors"
+            and hot_plug_supported is True
+            and fallback_governed is True
+            and governed_recovery_ready
+            else "productization_gap_remaining"
+        ),
+        "default_path": default_path,
+        "operating_boundary": operating_boundary,
+        "comparison_mode": comparison_mode,
+        "hot_plug_supported": hot_plug_supported,
+        "fallback_governed": fallback_governed,
+        "approval_required": approval_required,
+        "approval_pause_supported": approval_pause_supported,
+        "resume_contract_supported": resume_contract_supported,
+        "resume_supported": resume_contract_supported,
+        "shared_contract_format": shared_contract_format,
+        "governed_recovery_ready": governed_recovery_ready,
+        "recovery_ready": governed_recovery_ready,
+        "evidence_outputs": evidence_outputs,
+        "recovery_surfaces": recovery_surfaces,
+        "recovery_contract": recovery_contract,
+        "operator_recovery_surface": operator_recovery_surface,
+        "shared_evidence_surface": list(
+            dict.fromkeys(
+                [
+                    "runtime_payload",
+                    "workspace_index",
+                    "ui_execution_summary",
+                    "cli_execution_summary",
+                    "evidence_report",
+                    *[str(item) for item in (shared_evidence_surface or []) if isinstance(item, str)],
+                ]
+            )
+        ),
+    }
+    if evidence_output_count is not None:
+        surface["evidence_output_count"] = evidence_output_count
+    if recovery_surface_count is not None:
+        surface["recovery_surface_count"] = recovery_surface_count
+    return surface
+
+
+def derive_adapter_capability_summary(
+    *,
+    adapter_contract: dict[str, object] | None = None,
+    adapter_capability_surface: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Derive an operator-facing adapter capability summary from raw contract shapes."""
+
+    adapter_contract = adapter_contract if isinstance(adapter_contract, dict) else {}
+    adapter_capability_surface = (
+        adapter_capability_surface if isinstance(adapter_capability_surface, dict) else {}
+    )
+    if not adapter_capability_surface and adapter_contract:
+        adapter_capability_surface = _as_dict(adapter_contract.get("capability_surface"))
+    if not adapter_capability_surface:
+        return {}
+
+    governance = _as_dict(adapter_capability_surface.get("governance"))
+    comparability = _as_dict(adapter_capability_surface.get("comparability"))
+    shared_contract = _as_dict(adapter_capability_surface.get("shared_contract"))
+    continuity_support = _as_dict(shared_contract.get("continuity_support"))
+    recovery_contract = _as_dict(shared_contract.get("recovery_contract"))
+    operator_recovery_surface = _as_dict(shared_contract.get("operator_recovery_surface"))
+    operator_recovery_surface = _derived_operator_recovery_surface(
+        operator_recovery_surface=operator_recovery_surface,
+        recovery_contract=recovery_contract,
+        approval_pause_supported=governance.get("approval_pause_supported"),
+        evidence_outputs=[item for item in _as_list(adapter_capability_surface.get("evidence_outputs"))],
+        resume_contract_supported=continuity_support.get("resume_contract"),
+        default_path=_as_dict(shared_contract.get("path_selection")).get("default_path"),
+    )
+
+    return {
+        "format": adapter_capability_surface.get("format"),
+        "adapter_family": (
+            adapter_contract.get("adapter_family")
+            if adapter_contract
+            else adapter_capability_surface.get("adapter_family")
+        ),
+        "agent_kind": (
+            adapter_contract.get("agent_kind")
+            if adapter_contract
+            else adapter_capability_surface.get("agent_kind")
+        ),
+        "comparison_mode": comparability.get("comparison_mode"),
+        "hot_plug_supported": governance.get("hot_plug_supported"),
+        "fallback_governed": governance.get("fallback_governed"),
+        "approval_required": governance.get("approval_required"),
+        "approval_pause_supported": governance.get("approval_pause_supported"),
+        "evidence_outputs": [item for item in _as_list(adapter_capability_surface.get("evidence_outputs"))],
+        "recovery_surfaces": [item for item in _as_list(adapter_capability_surface.get("recovery_surfaces"))],
+        "shared_contract_format": shared_contract.get("format"),
+        "shared_contract_path_default": _as_dict(shared_contract.get("path_selection")).get("default_path"),
+        "shared_contract_resume_supported": continuity_support.get("resume_contract"),
+        "shared_contract_recovery_contract": recovery_contract,
+        "shared_contract_operator_recovery_surface": operator_recovery_surface,
+        "shared_evidence_surface": list(
+            dict.fromkeys(
+                [
+                    "runtime_payload",
+                    "workspace_index",
+                    "ui_execution_summary",
+                    "cli_execution_summary",
+                    "evidence_report",
+                ]
+            )
+        ),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactReference:
     kind: str
@@ -118,6 +366,12 @@ class ExecutionResumeContract:
     approved_approval_id: str | None = None
     pending_approval: dict[str, object] | None = None
     resume_supported: bool = True
+    continuity_snapshot: dict[str, object] = field(default_factory=dict)
+    program_posture: dict[str, object] = field(default_factory=dict)
+    workflow_continuity: dict[str, object] = field(default_factory=dict)
+    native_tool_usage: dict[str, object] = field(default_factory=dict)
+    operator_posture_digest: dict[str, object] = field(default_factory=dict)
+    shared_evidence_surface: list[object] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -130,6 +384,12 @@ class ExecutionResumeContract:
             "approved_approval_id": self.approved_approval_id,
             "pending_approval": dict(self.pending_approval) if isinstance(self.pending_approval, dict) else None,
             "resume_supported": self.resume_supported,
+            "continuity_snapshot": dict(self.continuity_snapshot),
+            "program_posture": dict(self.program_posture),
+            "workflow_continuity": dict(self.workflow_continuity),
+            "native_tool_usage": dict(self.native_tool_usage),
+            "operator_posture_digest": dict(self.operator_posture_digest),
+            "shared_evidence_surface": list(self.shared_evidence_surface),
         }
 
     @classmethod
@@ -151,6 +411,24 @@ class ExecutionResumeContract:
             approved_approval_id=str(payload.get("approved_approval_id")) if payload.get("approved_approval_id") is not None else None,
             pending_approval=dict(pending_approval) if isinstance(pending_approval, dict) else None,
             resume_supported=bool(payload.get("resume_supported", True)),
+            continuity_snapshot=dict(payload.get("continuity_snapshot", {}))
+            if isinstance(payload.get("continuity_snapshot"), dict)
+            else {},
+            program_posture=dict(payload.get("program_posture", {}))
+            if isinstance(payload.get("program_posture"), dict)
+            else {},
+            workflow_continuity=dict(payload.get("workflow_continuity", {}))
+            if isinstance(payload.get("workflow_continuity"), dict)
+            else {},
+            native_tool_usage=dict(payload.get("native_tool_usage", {}))
+            if isinstance(payload.get("native_tool_usage"), dict)
+            else {},
+            operator_posture_digest=dict(payload.get("operator_posture_digest", {}))
+            if isinstance(payload.get("operator_posture_digest"), dict)
+            else {},
+            shared_evidence_surface=list(payload.get("shared_evidence_surface", []))
+            if isinstance(payload.get("shared_evidence_surface"), list)
+            else [],
         )
 
 

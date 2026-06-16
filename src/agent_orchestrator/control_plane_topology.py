@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_orchestrator.control_plane_posture import (
+    derive_session_continuity_outline,
+    derive_session_planner_decision,
+    infer_resume_posture,
+)
 from agent_orchestrator.control_plane_artifacts import resolve_root as _resolve_root
 from agent_orchestrator.control_plane_constants import CONTROL_PLANE_FORMATS, TOPOLOGY_NODE_TYPES
 from agent_orchestrator.jobs import now_iso
@@ -51,6 +56,24 @@ def build_execution_topology_snapshot(
         if isinstance(run_ledger.get("summary"), dict)
         else 0,
     }
+    session_planner_decision = derive_session_planner_decision(strategy)
+    topology_resume_kind = (
+        "approval_resume"
+        if bool(session_planner_decision.get("autonomy_posture", {}).get("approval_pause_state"))
+        else "fresh"
+        if session.status in {"drafting", "review_pending", "planned"}
+        else "resume_if_same_task"
+    )
+    session_continuity_outline = derive_session_continuity_outline(
+        strategy,
+        resume_kind=topology_resume_kind,
+        resume_posture=infer_resume_posture(
+            current_status=session.status,
+            human_required=bool(session_planner_decision.get("autonomy_posture", {}).get("approval_pause_state")),
+            resume_expectation=session_planner_decision.get("delegation_contract", {}).get("resume_expectation"),
+            resume_kind=topology_resume_kind,
+        ),
+    )
     graph = WorkGraphStore(root=plans_path).read_optional(session.id)
     nodes: list[dict[str, object]] = [
         _topology_node("state", "workspace-state", "Workspace state", session.status),
@@ -108,6 +131,8 @@ def build_execution_topology_snapshot(
         "delegation_contract": strategy.get("delegation_contract", {}),
         "milestone_verification": strategy.get("milestone_verification", {}),
         "operator_control": strategy.get("operator_control", {}),
+        "session_planner_decision": session_planner_decision,
+        "session_continuity_outline": session_continuity_outline,
         "strategy_decision": strategy,
         "execution_contract": execution_contract,
         "approval_queue": approvals,

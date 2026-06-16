@@ -65,6 +65,7 @@ class EditIntent:
     summary: str
     patch_plan: list[str] = field(default_factory=list)
     operations: list[dict[str, object]] = field(default_factory=list)
+    patch_preview: dict[str, object] | None = None
     refinement: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -74,6 +75,7 @@ class EditIntent:
             "summary": self.summary,
             "patch_plan": list(self.patch_plan),
             "operations": [dict(item) for item in self.operations],
+            "patch_preview": dict(self.patch_preview) if isinstance(self.patch_preview, dict) else None,
             "refinement": dict(self.refinement) if isinstance(self.refinement, dict) else None,
         }
 
@@ -86,6 +88,7 @@ class AppliedChange:
     summary: str
     before_sha256: str | None = None
     after_sha256: str | None = None
+    preview: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -95,6 +98,7 @@ class AppliedChange:
             "summary": self.summary,
             "before_sha256": self.before_sha256,
             "after_sha256": self.after_sha256,
+            "preview": dict(self.preview) if isinstance(self.preview, dict) else None,
         }
 
 
@@ -272,11 +276,68 @@ class ActionExecutor:
             if kind == "append":
                 addition = str(operation.get("content", ""))
                 updated = original + ("" if original.endswith("\n") or not original else "\n") + addition
+            elif kind == "insert_before":
+                anchor = str(operation.get("anchor", ""))
+                content = str(operation.get("content", ""))
+                matched_anchor = next((candidate for candidate in _operation_text_candidates(anchor) if candidate in original), "")
+                if matched_anchor:
+                    updated = original.replace(matched_anchor, f"{content}\n{matched_anchor}", 1)
+                else:
+                    changes.append(
+                        AppliedChange(
+                            path=str(operation.get("path", "")),
+                            status="failed",
+                            operation=kind,
+                            summary="Insert-before anchor text was not found.",
+                            before_sha256=_sha256_text(original),
+                            after_sha256=_sha256_text(original),
+                            preview=_mutation_preview(original, original),
+                        ).to_dict()
+                    )
+                    continue
+            elif kind == "insert_after":
+                anchor = str(operation.get("anchor", ""))
+                content = str(operation.get("content", ""))
+                matched_anchor = next((candidate for candidate in _operation_text_candidates(anchor) if candidate in original), "")
+                if matched_anchor:
+                    updated = original.replace(matched_anchor, f"{matched_anchor}\n{content}", 1)
+                else:
+                    changes.append(
+                        AppliedChange(
+                            path=str(operation.get("path", "")),
+                            status="failed",
+                            operation=kind,
+                            summary="Insert-after anchor text was not found.",
+                            before_sha256=_sha256_text(original),
+                            after_sha256=_sha256_text(original),
+                            preview=_mutation_preview(original, original),
+                        ).to_dict()
+                    )
+                    continue
+            elif kind == "delete":
+                old = str(operation.get("old", ""))
+                matched_old = next((candidate for candidate in _operation_text_candidates(old) if candidate in original), "")
+                if matched_old:
+                    updated = original.replace(matched_old, "", 1)
+                else:
+                    changes.append(
+                        AppliedChange(
+                            path=str(operation.get("path", "")),
+                            status="failed",
+                            operation=kind,
+                            summary="Delete target text was not found.",
+                            before_sha256=_sha256_text(original),
+                            after_sha256=_sha256_text(original),
+                            preview=_mutation_preview(original, original),
+                        ).to_dict()
+                    )
+                    continue
             elif kind == "replace":
                 old = str(operation.get("old", ""))
                 new = str(operation.get("new", ""))
-                if old and old in original:
-                    updated = original.replace(old, new, 1)
+                matched_old = next((candidate for candidate in _operation_text_candidates(old) if candidate in original), "")
+                if matched_old:
+                    updated = original.replace(matched_old, _decode_operation_text(new), 1)
                 else:
                     changes.append(
                         AppliedChange(
@@ -286,6 +347,7 @@ class ActionExecutor:
                             summary="Replace target text was not found.",
                             before_sha256=_sha256_text(original),
                             after_sha256=_sha256_text(original),
+                            preview=_mutation_preview(original, original),
                         ).to_dict()
                     )
                     continue
@@ -298,6 +360,7 @@ class ActionExecutor:
                         summary="Unsupported edit operation.",
                         before_sha256=_sha256_text(original),
                         after_sha256=_sha256_text(original),
+                        preview=_mutation_preview(original, original),
                     ).to_dict()
                 )
                 continue
@@ -310,6 +373,7 @@ class ActionExecutor:
                         summary="Edit produced no file change.",
                         before_sha256=_sha256_text(original),
                         after_sha256=_sha256_text(updated),
+                        preview=_mutation_preview(original, updated),
                     ).to_dict()
                 )
                 continue
@@ -322,6 +386,7 @@ class ActionExecutor:
                     summary="Applied bounded edit operation.",
                     before_sha256=_sha256_text(original),
                     after_sha256=_sha256_text(updated),
+                    preview=_mutation_preview(original, updated),
                 ).to_dict()
             )
         status = "completed" if any(item.get("status") == "applied" for item in changes) else "blocked" if changes else "skipped"
@@ -390,17 +455,54 @@ class RepoExplorer:
         mapped_files = list(repo_map_result.get("files", [])) if isinstance(repo_map_result.get("files"), list) else []
         glob_result = toolbox.glob(exploration_patterns)
         glob_matches = list(glob_result.get("matches", [])) if isinstance(glob_result.get("matches"), list) else []
-        search_paths = mapped_files or glob_matches
+        find_files_result = toolbox.find_files(request.requirement, max_matches=self.max_candidates)
+        filename_matches = (
+            [dict(item) for item in find_files_result.get("matches", []) if isinstance(item, dict)]
+            if isinstance(find_files_result.get("matches"), list)
+            else []
+        )
+        filename_match_paths = [str(item.get("path")) for item in filename_matches if item.get("path")]
+        search_paths = list(dict.fromkeys([*filename_match_paths, *mapped_files, *glob_matches]))
         search_result = toolbox.search(request.requirement, paths=search_paths, max_matches=self.max_candidates)
-        all_files = list(dict.fromkeys([*mapped_files, *glob_matches]))
+        all_files = list(dict.fromkeys([*filename_match_paths, *mapped_files, *glob_matches]))
         existing_paths = [path for path in explicit_paths if (self.workspace_root / path).exists()]
         candidate_paths = existing_paths[:]
+        if not candidate_paths:
+            candidate_paths = filename_match_paths[: self.max_candidates]
         if not candidate_paths:
             candidate_paths = [str(item.get("path")) for item in search_result.get("matches", []) if isinstance(item, dict) and item.get("path")]
         if not candidate_paths:
             candidate_paths = all_files[: self.max_candidates]
         candidate_paths = list(dict.fromkeys(path for path in candidate_paths if isinstance(path, str) and path.strip()))
-        read_result = toolbox.read(candidate_paths[: self.max_candidates], max_chars=8000)
+        outline_result = toolbox.outline(candidate_paths[: self.max_candidates], max_entries=6, max_files=self.max_candidates)
+        outline_records = (
+            [dict(item) for item in outline_result.get("records", []) if isinstance(item, dict)]
+            if isinstance(outline_result.get("records"), list)
+            else []
+        )
+        outlined_paths = [
+            str(item.get("path"))
+            for item in sorted(
+                outline_records,
+                key=lambda item: (
+                    -(len(item.get("outline", [])) if isinstance(item.get("outline"), list) else 0),
+                    str(item.get("path", "")),
+                ),
+            )
+            if item.get("path")
+        ]
+        read_targets = outlined_paths[: self.max_candidates] if outlined_paths else candidate_paths[: self.max_candidates]
+        read_result = toolbox.read(read_targets, max_chars=8000)
+        search_matches = (
+            [dict(item) for item in search_result.get("matches", []) if isinstance(item, dict)]
+            if isinstance(search_result.get("matches"), list)
+            else []
+        )
+        read_records = (
+            [dict(item) for item in read_result.get("records", []) if isinstance(item, dict)]
+            if isinstance(read_result.get("records"), list)
+            else []
+        )
         artifact = self.artifact_store.write_repo_exploration(
             run_id=_execution_run_id(request),
             workspace_root=str(self.workspace_root),
@@ -420,20 +522,66 @@ class RepoExplorer:
                 "tool_surface": toolbox.surface_summary(),
                 "repo_map": repo_map_result,
                 "glob": glob_result,
+                "find_files": find_files_result,
                 "search": search_result,
+                "outline": outline_result,
                 "read": read_result,
                 "exploration_profile": {
                     "patterns": exploration_patterns,
                     "search_path_count": len(search_paths),
                     "mapped_directory_count": repo_map_result.get("directory_count"),
+                    "filename_match_count": len(filename_matches),
+                    "outline_record_count": len(outline_records),
                     "candidate_reason": (
                         "explicit_existing_paths"
                         if existing_paths
+                        else "filename_matches"
+                        if filename_matches
                         else "search_matches"
                         if search_result.get("match_count")
                         else "repo_map_fallback"
                     ),
                     "selected_candidates": candidate_paths[: self.max_candidates],
+                },
+                "exploration_evidence": {
+                    "format": "agent_orchestrator.native_exploration_evidence.v1",
+                    "candidate_reason": (
+                        "explicit_existing_paths"
+                        if existing_paths
+                        else "filename_matches"
+                        if filename_matches
+                        else "search_matches"
+                        if search_result.get("match_count")
+                        else "repo_map_fallback"
+                    ),
+                    "explicit_path_hits": existing_paths,
+                    "filename_match_count": len(filename_matches),
+                    "filename_match_paths": filename_match_paths[: self.max_candidates],
+                    "search_match_count": len(search_matches),
+                    "search_match_paths": [
+                        str(item.get("path"))
+                        for item in search_matches[: self.max_candidates]
+                        if item.get("path")
+                    ],
+                    "outline_paths": [
+                        str(item.get("path"))
+                        for item in outline_records[: self.max_candidates]
+                        if item.get("path")
+                    ],
+                    "read_record_count": len(read_records),
+                    "read_paths": [
+                        str(item.get("path"))
+                        for item in read_records[: self.max_candidates]
+                        if item.get("path")
+                    ],
+                    "selected_candidates": candidate_paths[: self.max_candidates],
+                    "shared_evidence_surface": [
+                        "runtime_payload",
+                        "workspace_index",
+                        "ui_execution_summary",
+                        "cli_execution_summary",
+                        "outline_projection",
+                    ],
                 },
             },
         )
@@ -480,7 +628,20 @@ class EditExecutor:
         toolbox = self.toolbox or NativeToolbox(workspace_root=self.workspace_root, artifact_store=self.action_executor.artifact_store)
         toolbox.workspace_root = self.workspace_root
         toolbox.artifact_store = self.action_executor.artifact_store
+        self.toolbox = toolbox
         target_paths = repo_report.existing_paths or repo_report.candidate_paths[:3]
+        operations = _extract_operations(request.requirement)
+        operation_paths = [
+            str(item.get("path", "")).strip()
+            for item in operations
+            if isinstance(item, dict) and str(item.get("path", "")).strip()
+        ]
+        if operation_paths:
+            merged_target_paths = [*operation_paths]
+            for path in target_paths:
+                if path not in merged_target_paths:
+                    merged_target_paths.append(path)
+            target_paths = merged_target_paths
         explicit_paths = _extract_paths(request.requirement)
         if explicit_paths:
             merged_target_paths = [*target_paths]
@@ -488,7 +649,6 @@ class EditExecutor:
                 if path not in merged_target_paths:
                     merged_target_paths.append(path)
             target_paths = merged_target_paths
-        operations = _extract_operations(request.requirement)
         patch_plan = [f"Inspect {path} and update the implementation if needed." for path in target_paths]
         mode = "report_first"
         if operations:
@@ -516,18 +676,23 @@ class EditExecutor:
             else "Apply a bounded explicit edit operation and verify the result."
         )
         refined_patch_plan = patch_plan
+        patch_preview = None
         if isinstance(refinement.get("refined_target_paths"), list):
             refined_target_paths = [str(item) for item in refinement["refined_target_paths"] if str(item).strip()]
         if isinstance(refinement.get("refined_summary"), str) and refinement["refined_summary"].strip():
             refined_summary = refinement["refined_summary"].strip()
         if isinstance(refinement.get("refined_patch_plan"), list):
             refined_patch_plan = [str(item) for item in refinement["refined_patch_plan"] if str(item).strip()]
+        if operations:
+            preview_result = toolbox.patch_preview(list(operations))
+            patch_preview = dict(preview_result.payload) if isinstance(preview_result.payload, dict) else None
         return EditIntent(
             mode=mode,
             target_paths=refined_target_paths,
             summary=refined_summary,
             patch_plan=refined_patch_plan,
             operations=operations,
+            patch_preview=patch_preview,
             refinement=refinement,
         )
 
@@ -538,6 +703,7 @@ class EditExecutor:
         toolbox.workspace_root = self.workspace_root
         toolbox.artifact_store = self.action_executor.artifact_store
         toolbox.runner = self.action_executor.runner
+        self.toolbox = toolbox
         result = toolbox.structured_patch(list(edit_intent.operations))
         changes = result.payload.get("applied_changes", [])
         if not isinstance(changes, list):
@@ -554,6 +720,7 @@ class EditExecutor:
                     summary=str(item.get("summary", "")),
                     before_sha256=str(item.get("before_sha256")) if item.get("before_sha256") else None,
                     after_sha256=str(item.get("after_sha256")) if item.get("after_sha256") else None,
+                    preview=dict(item.get("preview", {})) if isinstance(item.get("preview"), dict) else None,
                 )
             )
         return applied
@@ -715,7 +882,9 @@ def _extract_paths(requirement: str) -> list[str]:
     paths: list[str] = []
     for token in tokens:
         normalized = token.strip("`'\".,:;()[]{}")
-        if "." not in normalized or "/" not in normalized:
+        if "." not in normalized:
+            continue
+        if "/" not in normalized and not re.fullmatch(r"[\w.-]+\.[A-Za-z0-9]+", normalized):
             continue
         paths.append(normalized)
     deduped: list[str] = []
@@ -924,6 +1093,53 @@ def _extract_operations(requirement: str) -> list[dict[str, object]]:
                 },
             )
         )
+    for match in re.finditer(
+        r"""insert\s+["'`](?P<content>.+?)["'`]\s+before\s+["'`](?P<anchor>.+?)["'`]\s+in\s+(?P<path>[\w./-]+\.[A-Za-z0-9]+)""",
+        requirement,
+        flags=re.IGNORECASE,
+    ):
+        operations_with_pos.append(
+            (
+                match.start(),
+                {
+                    "kind": "insert_before",
+                    "path": match.group("path"),
+                    "anchor": match.group("anchor"),
+                    "content": match.group("content"),
+                },
+            )
+        )
+    for match in re.finditer(
+        r"""insert\s+["'`](?P<content>.+?)["'`]\s+after\s+["'`](?P<anchor>.+?)["'`]\s+in\s+(?P<path>[\w./-]+\.[A-Za-z0-9]+)""",
+        requirement,
+        flags=re.IGNORECASE,
+    ):
+        operations_with_pos.append(
+            (
+                match.start(),
+                {
+                    "kind": "insert_after",
+                    "path": match.group("path"),
+                    "anchor": match.group("anchor"),
+                    "content": match.group("content"),
+                },
+            )
+        )
+    for match in re.finditer(
+        r"""delete\s+["'`](?P<old>.+?)["'`]\s+from\s+(?P<path>[\w./-]+\.[A-Za-z0-9]+)""",
+        requirement,
+        flags=re.IGNORECASE,
+    ):
+        operations_with_pos.append(
+            (
+                match.start(),
+                {
+                    "kind": "delete",
+                    "path": match.group("path"),
+                    "old": match.group("old"),
+                },
+            )
+        )
     operations_with_pos.sort(key=lambda item: item[0])
     return [item for _, item in operations_with_pos]
 
@@ -936,6 +1152,21 @@ def _verification_target_paths(target_paths: list[str]) -> list[str]:
         if path.suffix.lower() in verifiable_suffixes:
             filtered.append(str(item))
     return filtered
+
+
+def _operation_text_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    for candidate in (text, _decode_operation_text(text)):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def _decode_operation_text(text: str) -> str:
+    try:
+        return bytes(text, "utf-8").decode("unicode_escape")
+    except UnicodeDecodeError:
+        return text
 
 
 def _sha256_text(text: str) -> str:
@@ -968,6 +1199,14 @@ def _preview_text(text: str, *, limit: int = 500) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}\n...[truncated]"
+
+
+def _mutation_preview(before: str, after: str, *, limit: int = 160) -> dict[str, object]:
+    return {
+        "before_preview": _preview_text(before, limit=limit),
+        "after_preview": _preview_text(after, limit=limit),
+        "changed": before != after,
+    }
 
 
 def _execution_run_id(request: ExecutionRequest) -> str:

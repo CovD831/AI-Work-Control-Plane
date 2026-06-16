@@ -10,6 +10,12 @@ It exists to answer one question:
 
 Can the repository already prove the requested native closure end state, or only a narrower but meaningful subset of it?
 
+- not yet complete for the full upgrade objective
+- strongly evidenced
+- medium to strong
+- yes, for at least one bounded internal repository task class, with strong evidence
+- no, not yet
+
 ## Audit Scope
 
 This audit checks the current state against the six acceptance standards in:

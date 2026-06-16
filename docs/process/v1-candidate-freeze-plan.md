@@ -81,6 +81,7 @@ Phase 3 result:
 - Regenerate the evidence trend from a current benchmark baseline and the real-task evidence payload.
 - Confirm the report keeps planning, rescue, runtime limitation, and fixed-template advantage conclusions.
 - Confirm the trend keeps `current_version_assessment`, `current_is_better`, improvement signals, and limitation signals.
+- Confirm the trend also keeps the `Comparative Proof Strength` section for direct-proof and repeatability posture.
 - Run evidence/CLI targeted tests only.
 
 Phase 4 targeted test:
@@ -96,6 +97,7 @@ Phase 4 result:
 - Regenerated `docs/process/v1x-evidence-trend.md`.
 - Confirmed report includes planning, rescue, runtime limitation, and fixed-template advantage conclusions.
 - Confirmed trend includes current-version assessment, current-is-better verdict, improvement signals, and limitation signals.
+- Confirmed trend also includes the `Comparative Proof Strength` section.
 - Targeted test passed: `81 passed`.
 
 ## Phase 5 Plan: CLI Quickstart Dry Run

@@ -90,13 +90,19 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
         resume_context = payload.get("resume_context", {})
         repo_report = payload.get("repo_report", {})
         adapter_contract = payload.get("adapter_contract", {})
+        adapter_capability_surface = payload.get("adapter_capability_surface", {})
+        adapter_capability = payload.get("adapter_capability", {})
+        adapter_productization_surface = payload.get("adapter_productization_surface", {})
         path_selection = payload.get("path_selection", {})
         strategy_summary = payload.get("strategy_summary", {})
         native_tool_surface = payload.get("native_tool_surface", {})
+        native_tool_productization_surface = payload.get("native_tool_productization_surface", {})
         native_tool_trace = payload.get("native_tool_trace", {})
         native_task_proof = payload.get("native_task_proof", {})
         native_repo_task_acceptance = payload.get("native_repo_task_acceptance", {})
         native_complex_repo_task_acceptance = payload.get("native_complex_repo_task_acceptance", {})
+        planner_decision = payload.get("planner_decision", {})
+        continuity_outline = payload.get("continuity_outline", {})
         step_context_refs = (
             step_loop_contract.get("context_engineering_refs", {})
             if isinstance(step_loop_contract, dict)
@@ -119,6 +125,15 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
             "resume_context": dict(resume_context) if isinstance(resume_context, dict) else None,
             "repo_report": dict(repo_report) if isinstance(repo_report, dict) else None,
             "adapter_contract": dict(adapter_contract) if isinstance(adapter_contract, dict) else None,
+            "adapter_capability_surface": dict(adapter_capability_surface)
+            if isinstance(adapter_capability_surface, dict)
+            else None,
+            "adapter_capability": dict(adapter_capability)
+            if isinstance(adapter_capability, dict)
+            else None,
+            "adapter_productization_surface": dict(adapter_productization_surface)
+            if isinstance(adapter_productization_surface, dict)
+            else None,
             "path_selection": dict(path_selection) if isinstance(path_selection, dict) else None,
             "planner_shared_contract": {
                 "format": strategy_summary.get("decision_evidence", {}).get("format")
@@ -142,9 +157,24 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
                 if isinstance(strategy_summary.get("decision_evidence"), dict)
                 and isinstance(strategy_summary.get("decision_evidence", {}).get("decision_boundary"), dict)
                 else {},
+                "decision_candidates": list(strategy_summary.get("decision_evidence", {}).get("decision_candidates", []))
+                if isinstance(strategy_summary.get("decision_evidence"), dict)
+                and isinstance(strategy_summary.get("decision_evidence", {}).get("decision_candidates"), list)
+                else [],
                 "posture": dict(strategy_summary.get("decision_evidence", {}).get("posture", {}))
                 if isinstance(strategy_summary.get("decision_evidence"), dict)
                 and isinstance(strategy_summary.get("decision_evidence", {}).get("posture"), dict)
+                else {},
+                "delegation_contract": dict(strategy_summary.get("decision_evidence", {}).get("delegation_contract", {}))
+                if isinstance(strategy_summary.get("decision_evidence"), dict)
+                and isinstance(strategy_summary.get("decision_evidence", {}).get("delegation_contract"), dict)
+                else {},
+                "operator_control": dict(strategy_summary.get("decision_evidence", {}).get("operator_control", {}))
+                if isinstance(strategy_summary.get("decision_evidence"), dict)
+                and isinstance(strategy_summary.get("decision_evidence", {}).get("operator_control"), dict)
+                else {},
+                "route_planner_intent": dict(path_selection.get("planner_intent", {}))
+                if isinstance(path_selection.get("planner_intent"), dict)
                 else {},
             },
             "adapter_shared_contract": {
@@ -155,6 +185,9 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
                 "selection_reason": path_selection.get("selection_reason"),
                 "handoff_reason_code": path_selection.get("handoff_reason_code"),
                 "fallback_reason_code": path_selection.get("fallback_reason_code"),
+                "native_coverage_class": path_selection.get("native_coverage_class"),
+                "learning_consumed": path_selection.get("learning_consumed"),
+                "learning_source_count": path_selection.get("learning_source_count"),
                 "comparison_mode": (
                     adapter_contract.get("capability_surface", {}).get("comparability", {}).get("comparison_mode")
                     if isinstance(adapter_contract.get("capability_surface"), dict)
@@ -185,11 +218,28 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
                 "recovery_surfaces": list(adapter_contract.get("recovery_surfaces", []))
                 if isinstance(adapter_contract.get("recovery_surfaces"), list)
                 else [],
+                "recovery_contract": (
+                    dict(adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("recovery_contract", {}))
+                    if isinstance(adapter_contract.get("capability_surface"), dict)
+                    and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract"), dict)
+                    and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("recovery_contract"), dict)
+                    else {}
+                ),
+                "operator_recovery_surface": (
+                    dict(adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("operator_recovery_surface", {}))
+                    if isinstance(adapter_contract.get("capability_surface"), dict)
+                    and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract"), dict)
+                    and isinstance(adapter_contract.get("capability_surface", {}).get("shared_contract", {}).get("operator_recovery_surface"), dict)
+                    else {}
+                ),
             },
             "step_loop_context_surfaces": list(step_context_refs.get("required_surfaces", []))
             if isinstance(step_context_refs.get("required_surfaces"), list)
             else [],
             "native_tool_surface": dict(native_tool_surface) if isinstance(native_tool_surface, dict) else None,
+            "native_tool_productization_surface": dict(native_tool_productization_surface)
+            if isinstance(native_tool_productization_surface, dict)
+            else None,
             "native_tool_trace": dict(native_tool_trace) if isinstance(native_tool_trace, dict) else None,
             "native_tool_usage": {
                 "tool_count": len(native_tool_surface.get("tools", []))
@@ -202,6 +252,8 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
                     if isinstance(item, dict) and item.get("tool")
                 ],
             },
+            "planner_decision": dict(planner_decision) if isinstance(planner_decision, dict) else None,
+            "continuity_outline": dict(continuity_outline) if isinstance(continuity_outline, dict) else None,
             "native_task_proof": dict(native_task_proof) if isinstance(native_task_proof, dict) else None,
             "native_repo_task_acceptance": dict(native_repo_task_acceptance)
             if isinstance(native_repo_task_acceptance, dict)
