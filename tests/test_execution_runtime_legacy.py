@@ -52,6 +52,9 @@ def test_legacy_execution_runtime_runs_sync_requests() -> None:
     assert result.payload["adapter_productization_surface"]["surface_status"] == "same_contract_two_executors_governed"
     assert result.payload["adapter_productization_surface"]["resume_contract_supported"] is False
     assert result.payload["adapter_productization_surface"]["operator_recovery_surface"]["default_recovery_lane"] == "fallback_external"
+    assert result.payload["adapter_execution_fact"]["format"] == "agent_orchestrator.adapter_execution_fact.v1"
+    assert result.payload["adapter_execution_fact"]["default_path"] == "external"
+    assert result.payload["adapter_execution_fact"]["source_visibility"]["source_label"] == "external_hot_plug:legacy_provider_runtime"
     assert result.run_id
     assert result.status in {"completed", "failed", "blocked"}
     assert "run_id" in result.payload
@@ -80,6 +83,8 @@ def test_legacy_execution_runtime_starts_async_requests() -> None:
     assert result.payload["adapter_contract"]["adapter_family"] == "external_hot_plug"
     assert result.payload["adapter_contract"]["capability_surface"]["governance"]["hot_plug_supported"] is True
     assert result.payload["adapter_productization_surface"]["format"] == "agent_orchestrator.adapter_productization_surface.v1"
+    assert result.payload["adapter_execution_fact"]["format"] == "agent_orchestrator.adapter_execution_fact.v1"
+    assert result.payload["adapter_execution_fact"]["default_path"] == "external"
     assert "run_id" in result.payload
     assert result.payload["turn_id"] == "turn-2"
 

@@ -489,19 +489,26 @@ def test_print_workspace_state_summary_reports_comparative_benchmark_and_learnin
                         "no_repeatable_multi_family_daily_driver_proof",
                     ],
                 },
-                "comparison_posture": {
-                    "status": "shared_productization_ready_but_daily_driver_proof_gap_remaining",
-                    "confidence": "bounded_internal_evidence_only",
-                    "foundation_gap_remaining": False,
-                    "remaining_gap_classes": [
+                        "comparison_posture": {
+                            "status": "shared_productization_ready_but_daily_driver_proof_gap_remaining",
+                            "confidence": "bounded_internal_evidence_only",
+                            "foundation_gap_remaining": False,
+                            "remaining_gap_classes": [
                         "long_chain_repo_closure_repeatability",
                         "multi_family_daily_driver_repeatability",
                         "platform_breadth",
                         "plugin_ecosystem",
                         "wider_general_task_coverage",
-                        ],
-                    },
-                    "planner_closure_posture": {
+                            ],
+                        },
+                        "daily_driver_runner_artifact": {
+                            "format": "agent_orchestrator.daily_driver_runner_artifact.v1",
+                            "runner_status": "repeatability_gap_remaining",
+                            "runner_family_count": 1,
+                            "contract_outputs": ["runtime_payload", "workspace_index", "cli_summary"],
+                            "next_external_step": "authoritative_opencode_case_harness",
+                        },
+                        "planner_closure_posture": {
                         "format": "agent_orchestrator.planner_closure_posture.v1",
                         "closure_mode": "approval_pause",
                         "next_recommended_action": "verify",
@@ -713,6 +720,30 @@ def test_print_workspace_state_summary_reports_comparative_benchmark_and_learnin
                         "cli_execution_summary",
                     ],
                 },
+                "repository_understanding": {
+                    "format": "agent_orchestrator.repository_understanding.v1",
+                    "candidate_reason": "search_matches",
+                    "candidate_count": 3,
+                    "candidate_evidence": [
+                        {
+                            "path": "src/app.py",
+                            "selection_reason": "src/app.py ranked by content search terms from the requirement.",
+                        },
+                        {
+                            "path": "README.md",
+                            "selection_reason": "README.md ranked by content search terms from the requirement.",
+                        },
+                    ],
+                    "context_selection_reason": "Content-search matches were used because no stronger explicit or filename targets were found.",
+                    "operator_visibility": {
+                        "shared_evidence_surface": [
+                            "runtime_payload",
+                            "workspace_index",
+                            "ui_execution_summary",
+                            "cli_execution_summary",
+                        ],
+                    },
+                },
             },
             "execution_artifact_summary": {
                 "session_continuity": {
@@ -832,6 +863,30 @@ def test_print_workspace_state_summary_reports_comparative_benchmark_and_learnin
                     "tool_count": 9,
                     "trace_count": 4,
                     "recent_tools": ["repo_map", "diff_preview", "verify"],
+                },
+                "native_tool_evidence": {
+                    "format": "agent_orchestrator.native_tool_evidence.v1",
+                    "evidence_record_count": 3,
+                    "tool_counts": {"diff_preview": 1, "patch_preview": 1, "structured_patch": 0, "verify": 1},
+                    "patch_evidence_ready": True,
+                    "verify_evidence_ready": True,
+                    "latest_verification_status": "passed",
+                    "latest_verification_exit_code": 0,
+                    "shared_evidence_surface": [
+                        "runtime_event_stream",
+                        "session_continuity",
+                        "session_productization_surface",
+                        "planner_closure_posture",
+                        "native_tool_productization_surface",
+                        "adapter_productization_surface",
+                        "adapter_capability_surface",
+                        "workspace_index",
+                        "ui_execution_summary",
+                        "cli_execution_summary",
+                        "adapter_shared_contract",
+                        "planner_shared_contract",
+                        "evidence_report",
+                    ],
                 },
                     "native_tool_surface": {
                         "format": "agent_orchestrator.native_tool_surface.v1",
@@ -983,9 +1038,10 @@ def test_print_workspace_state_summary_reports_comparative_benchmark_and_learnin
     assert "comparative_benchmark: native_default=True bundle_ready=False acceptance_ready=False complex_acceptance_ready=False long_chain_ready=False daily_driver_ready=False task_class=bounded_internal_repo_task coverage_class=investigation_to_edit_verify learning_consumed=True shared_surface=runtime_event_stream,session_continuity,session_productization_surface,planner_closure_posture,native_tool_productization_surface,adapter_productization_surface,adapter_capability_surface,workspace_index,ui_execution_summary,cli_execution_summary,adapter_shared_contract,planner_shared_contract,evidence_report" in out
     assert "comparative_contract_alignment: session=True runtime_cost=True tool_usage=True planner=True adapter=True" in out
     assert "comparative_shared_productization_contract_ready: True" in out
-    assert "comparative_benchmark_digest: cases=None productization_cases=None comparison_status=shared_productization_ready_but_daily_driver_proof_gap_remaining direct_proof=foundational_productization_only repeatability=not_yet_proven daily_driver_repeatability_tier=None daily_driver_cases=None comparison_grade_status=internal_productization_ready_but_repeatability_or_external_gap_remaining external_harness_status=missing_authoritative_opencode_harness required_shared_surface_count=None required_external_artifact_count=None missing_external_artifact_count=None session_posture_cases=None remaining_gaps=long_chain_repo_closure_repeatability,multi_family_daily_driver_repeatability,platform_breadth,plugin_ecosystem,wider_general_task_coverage shared_surface=runtime_event_stream,session_continuity,session_productization_surface,planner_closure_posture,native_tool_productization_surface,adapter_productization_surface,adapter_capability_surface,workspace_index,ui_execution_summary,cli_execution_summary,adapter_shared_contract,planner_shared_contract,evidence_report" in out
+    assert "comparative_benchmark_digest: cases=None productization_cases=None comparison_status=shared_productization_ready_but_daily_driver_proof_gap_remaining direct_proof=foundational_productization_only repeatability=not_yet_proven daily_driver_repeatability_tier=None daily_driver_case_matrix_status=None daily_driver_case_matrix_families=None daily_driver_repeatability_harness_status=None daily_driver_repeatability_harness_families=None daily_driver_cases=None comparison_grade_status=internal_productization_ready_but_repeatability_or_external_gap_remaining external_harness_status=missing_authoritative_opencode_harness required_shared_surface_count=None required_external_artifact_count=None missing_external_artifact_count=None session_posture_cases=None remaining_gaps=long_chain_repo_closure_repeatability,multi_family_daily_driver_repeatability,platform_breadth,plugin_ecosystem,wider_general_task_coverage shared_surface=runtime_event_stream,session_continuity,session_productization_surface,planner_closure_posture,native_tool_productization_surface,adapter_productization_surface,adapter_capability_surface,workspace_index,ui_execution_summary,cli_execution_summary,adapter_shared_contract,planner_shared_contract,evidence_report" in out
     assert "comparative_planner_closure: mode=approval_pause next_action=verify resume_posture=None verify_selected=None verification_status=None" in out
     assert "comparative_native_tool_summary: posture=daily_driver_ready read_search=True patch=True verify=True daily_driver=repo_map,search,read,patch_preview,structured_patch,diff_preview,verify" in out
+    assert "comparative_daily_driver_runner_artifact: status=" in out
     assert "comparative_adapter_summary: status=same_contract_two_executors_governed comparison_mode=same_contract_two_executors hot_plug=True fallback_governed=True resume_supported=True recovery_ready=True default_path=native boundary=native_preferred unified_contract=False" in out
     assert "comparative_session_posture_summary: primary=explore" in out
     assert "workflow_stage=verify" in out
@@ -1014,7 +1070,9 @@ def test_print_workspace_state_summary_reports_comparative_benchmark_and_learnin
     assert "comparative_grade_assessment: status=internal_productization_ready_but_repeatability_or_external_gap_remaining comparison_grade_ready=False internal_repeatability_ready=False external_harness_ready=False blocking_gap=no_authoritative_external_opencode_harness" in out
     assert "comparative_harness_surface: format=agent_orchestrator.external_comparison_harness_surface.v1 status=missing_authoritative_opencode_harness authoritative=False next_milestone=authoritative_opencode_case_harness operator_action=maintain_human_audit_until_external_harness_ready missing_external_artifacts=authoritative_opencode_case_harness,same_contract_executor_comparison,governed_recovery_and_cost_comparison" in out
     assert "native_exploration: existing=1 candidates=3 files=12 repo_map_dirs=4 reason=search_matches selected=src/app.py,README.md" in out
+    assert "repository_understanding: reason=search_matches candidates=3 context_reason=Content-search matches were used because no stronger explicit or filename targets were found. selected=src/app.py,README.md" in out
     assert "native_exploration_evidence: reason=search_matches search_matches=2 read_records=2 search_paths=src/app.py,README.md read_paths=src/app.py,README.md shared_surface=runtime_payload,workspace_index,ui_execution_summary,cli_execution_summary" in out
+    assert "adapter_execution_fact: format=agent_orchestrator.adapter_execution_fact.v1 runtime_name=coding_agent execution_mode=coding_agent task_kind=direct_fix default_path=native boundary=native_preferred comparison_mode=same_contract_two_executors source_label=native_first_party:coding_agent" in out
     assert "session_continuity: resume_supported=True compaction_stage=light_compaction summarization_triggered=False resume_kind=None" in out
     assert "continuity_snapshot: status=ready artifact_backed=True goal=Ship dashboard active=verify pending=2 compaction=light_compaction" in out
     assert "daily_driver_readiness: tool_surface=True planner=True session=True adapter=True shared_productization=True long_chain=False main_path=False gap=long_chain_repo_closure_not_yet_proven" in out
@@ -1035,6 +1093,7 @@ def test_print_workspace_state_summary_reports_comparative_benchmark_and_learnin
     assert "runtime_cost: duration_seconds=0.8 usage_cost_status=placeholder" in out
     assert "compacted_context: objective=Ship dashboard status=blocked compaction_stage=light_compaction masked=1 pending_steps=2 recovery_hint=retry verify after review" in out
     assert "native_tool_usage: tool_count=9 trace_count=4 recent=repo_map,diff_preview,verify" in out
+    assert "native_tool_evidence: format=agent_orchestrator.native_tool_evidence.v1 records=3 patch_ready=True verify_ready=True patch_preview=1 structured_patch=0 diff_preview=1 verify=1 latest_verify=passed exit_code=0" in out
     assert "native_tool_surface: format=agent_orchestrator.native_tool_surface.v1 repo_exploration_ready=True glob_ready=True structured_patch_ready=True patch_preview_ready=True diff_preview_ready=True verification_ready=True" in out
     assert "native_tool_productization_surface: format=agent_orchestrator.native_tool_productization_surface.compat.v1 posture=daily_driver_ready operator_visible=True read_search=True glob=True patch=True verify=True" in out
     assert "native_tool_capabilities: patch_preview=pre-apply bounded mutation preview for operator-visible review structured_patch=auditable bounded mutations with preview evidence diff_preview=governed bounded change preview for operator-visible review verify=governed command verification" in out

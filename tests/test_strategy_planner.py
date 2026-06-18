@@ -65,6 +65,11 @@ def test_native_strategy_planner_promotes_investigation_to_explore_then_edit() -
     assert plan.decision_evidence["autonomy_surface"]["format"] == "agent_orchestrator.native_planner_autonomy_surface.v1"
     assert plan.decision_evidence["autonomy_surface"]["decision_mode"] == "native_first_autonomous"
     assert plan.decision_evidence["autonomy_surface"]["primary_action"] == "explore"
+    assert plan.decision_evidence["next_action_contract"]["format"] == "agent_orchestrator.native_planner_next_action_contract.v1"
+    assert plan.decision_evidence["next_action_contract"]["primary_action"] == "explore"
+    assert plan.decision_evidence["next_action_contract"]["decision_points"]["explore"]["selected"] is True
+    assert plan.decision_evidence["next_action_contract"]["decision_points"]["verify"]["selected"] is True
+    assert "stop" in plan.decision_evidence["next_action_contract"]["supported_actions"]
     assert plan.decision_evidence["autonomy_surface"]["actions"]["explore"]["selected"] is True
     assert plan.decision_evidence["autonomy_surface"]["actions"]["verify"]["selected"] is True
     assert plan.decision_evidence["control_surface"]["format"] == "agent_orchestrator.native_planner_control_surface.v1"
@@ -135,6 +140,9 @@ def test_native_strategy_planner_marks_main_path_as_native() -> None:
     assert plan.decision_evidence["posture"]["explore_first"] is False
     assert plan.decision_evidence["autonomy_surface"]["primary_action"] == "edit"
     assert plan.decision_evidence["autonomy_surface"]["actions"]["edit"]["selected"] is True
+    assert plan.decision_evidence["next_action_contract"]["primary_action"] == "edit"
+    assert plan.decision_evidence["next_action_contract"]["decision_points"]["edit"]["selected"] is True
+    assert plan.decision_evidence["next_action_contract"]["decision_points"]["verify"]["selected"] is True
     assert plan.decision_evidence["autonomy_surface"]["actions"]["pause"]["selected"] is False
     assert plan.decision_evidence["tool_workflow_plan"]["workflow_stages"]["explore"]["selected"] is False
     assert plan.decision_evidence["tool_workflow_plan"]["workflow_stages"]["edit"]["selected"] is True
@@ -205,6 +213,9 @@ def test_native_strategy_planner_uses_clarify_step_for_deep_clarify_routes() -> 
     assert plan.decision_evidence["autonomy_surface"]["actions"]["clarify"]["selected"] is True
     assert plan.decision_evidence["autonomy_surface"]["actions"]["pause"]["selected"] is True
     assert plan.decision_evidence["autonomy_surface"]["primary_action"] == "clarify"
+    assert plan.decision_evidence["next_action_contract"]["primary_action"] == "clarify"
+    assert plan.decision_evidence["next_action_contract"]["decision_points"]["clarify"]["selected"] is True
+    assert plan.decision_evidence["next_action_contract"]["decision_points"]["pause"]["selected"] is True
     assert plan.decision_evidence["control_surface"]["clarify"] is True
     assert plan.decision_evidence["control_surface"]["pause"] is True
     assert plan.decision_evidence["control_surface"]["resume_posture"] == "continue_native"

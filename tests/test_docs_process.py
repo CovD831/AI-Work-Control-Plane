@@ -234,6 +234,8 @@ def test_control_plane_artifact_contracts_document_stable_formats() -> None:
     assert "comparison_posture_basis" in text
     assert "comparison_proof_strength" in text
     assert "daily_driver_repeatability_tier" in text
+    assert "daily_driver_repeatability_harness" in text
+    assert "daily_driver_case_matrix" in text
     assert "independent_daily_driver_repo_task_families_proven" in text
     assert "external_comparison_harness_surface" in text
     assert "stronger_task_families" in text
@@ -337,6 +339,8 @@ def test_native_coding_agent_dogfood_evidence_records_task_class_and_three_proof
     assert "comparative_daily_driver_summary" in text
     assert "comparative_completion_summary" in text
     assert "daily_driver_repeatability_tier" in text
+    assert "daily_driver_repeatability_harness" in text
+    assert "daily_driver_case_matrix" in text
     assert "independent_daily_driver_repo_task_families_proven" in text
     assert "stronger_task_families" in text
     assert "broader_repeatability_gap_families" in text
@@ -420,6 +424,53 @@ def test_native_agent_productization_closure_audit_tracks_current_strength_and_r
     assert "Current conclusion: `not yet complete for this goal`" in audit
     assert "yes, with strong evidence" in audit
     assert "`no, not yet`" in audit
+
+
+def test_daily_driver_repeatability_goal_docs_define_multi_family_acceptance_contract() -> None:
+    project_index = _repo_text("docs/process/project-index.md")
+    summary = _repo_text("docs/process/goal-mode-daily-driver-repeatability-summary.md")
+    detail = _repo_text("docs/process/goal-mode-daily-driver-repeatability.md")
+
+    assert "docs/process/goal-mode-daily-driver-repeatability-summary.md" in project_index
+    assert "docs/process/goal-mode-daily-driver-repeatability.md" in project_index
+
+    assert "P0 Multi-Task Baseline" in summary
+    assert "P1 Repeatability Harness" in summary
+    assert "P2 Daily Driver Acceptance" in summary
+    assert "P3 Gap Report vs OpenCode" in summary
+    assert "至少 3 类真实 repo 任务通过" in summary
+    assert "runtime payload / workspace index / CLI summary" in summary
+    assert "Current Evidence Snapshot" in summary
+    assert "P0 complete" in summary
+    assert "P1 complete" in summary
+    assert "P2 complete" in summary
+    assert "P3 complete" in summary
+    assert "agent_orchestrator.daily_driver_runner_artifact.v1" in summary
+
+    assert "文档更新任务" in detail
+    assert "单文件代码修复" in detail
+    assert "多文件 operator surface / CLI 投影修复" in detail
+    assert "测试驱动的小功能补齐" in detail
+    assert "failure / clarify / approval pause 路径任务" in detail
+    assert "同一类任务可重复跑" in detail
+    assert "每次输出 runtime payload" in detail
+    assert "每次输出 workspace index" in detail
+    assert "每次输出 CLI summary" in detail
+    assert "每个 case 都有 verify 或明确 stop" in detail
+    assert "不能只用 mock case" in detail
+    assert "native tool surface" in detail
+    assert "planner" in detail
+    assert "adapter fact" in detail
+    assert "TUI" in detail
+    assert "插件生态" in detail
+    assert "外部 opencode harness" in detail
+    assert "canonical daily-driver runner artifact" in detail
+    assert "Required Verification Evidence" in detail
+    assert "Explicit Non-Goals" in detail
+    assert "Current Operator Readout" in detail
+    assert "Operator Gap Report" in detail
+    assert "still missing" in detail
+    assert "next best move" in detail
 
 
 def test_control_plane_reference_rescreen_maps_research_repos_to_new_direction() -> None:
@@ -726,3 +777,32 @@ def test_hook_script_scopes_changed_file_checks_to_compliance_inputs() -> None:
     assert "git diff --cached --name-only -z" in text
     assert "changed_args+=(--changed-file=\"$file\")" in text
     assert '"${changed_args[@]}"' in text
+
+
+def test_native_productization_install_release_doc_exists() -> None:
+    assert Path("docs/process/native-productization-after-instrumentation-install-release.md").exists()
+
+
+def test_native_operator_ux_tui_deepening_doc_exists() -> None:
+    assert Path("docs/process/native-operator-ux-tui-deepening.md").exists()
+
+
+def test_native_install_release_candidate_hardening_doc_exists() -> None:
+    text = Path("docs/process/native-install-release-candidate-hardening.md").read_text(encoding="utf-8")
+    assert "rc-validate" in text
+    assert "rc-bundle" in text
+
+
+def test_provider_runtime_readiness_hardening_doc_exists() -> None:
+    assert Path("docs/process/provider-runtime-readiness-hardening.md").exists()
+
+
+
+def test_native_rc_to_dogfood_adoption_doc_declares_cli_and_schema() -> None:
+    text = Path("docs/process/goal-mode-native-rc-to-dogfood-adoption.md").read_text(encoding="utf-8")
+    assert "repo_change_lane" in text
+    assert "validation_lane" in text
+    assert "recovery_lane" in text
+    assert "rc-adopt" in text
+    assert "rc-adoption-report" in text
+    assert "agent_orchestrator.native_rc_adoption_ledger.v1" in text

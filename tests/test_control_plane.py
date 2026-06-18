@@ -846,6 +846,15 @@ def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(
     assert index["execution_artifact_summary"]["native_exploration"]["exploration_evidence"]["format"] == "agent_orchestrator.native_exploration_evidence.v1"
     assert "workspace_index" in index["execution_artifact_summary"]["native_exploration"]["exploration_evidence"]["shared_evidence_surface"]
     assert "outline_projection" in index["execution_artifact_summary"]["native_exploration"]["exploration_evidence"]["shared_evidence_surface"]
+    assert index["execution_artifact_summary"]["repository_understanding"]["format"] == "agent_orchestrator.repository_understanding.v1"
+    assert index["execution_artifact_summary"]["repository_understanding"]["candidate_count"] >= 1
+    assert index["execution_artifact_summary"]["repository_understanding"]["candidate_evidence"][0]["selection_reason"]
+    assert index["execution_artifact_summary"]["native_exploration"]["repository_understanding"]["format"] == "agent_orchestrator.repository_understanding.v1"
+    assert "workspace_index" in index["execution_artifact_summary"]["repository_understanding"]["operator_visibility"]["shared_evidence_surface"]
+    assert index["execution_artifact_summary"]["native_tool_evidence"]["format"] == "agent_orchestrator.native_tool_evidence.v1"
+    assert index["execution_artifact_summary"]["native_tool_evidence"]["verify_evidence_ready"] is True
+    assert index["execution_artifact_summary"]["native_tool_evidence"]["tool_counts"]["verify"] >= 1
+    assert "workspace_index" in index["execution_artifact_summary"]["native_tool_evidence"]["shared_evidence_surface"]
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["comparison_mode"] == "same_contract_two_executors"
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["hot_plug_supported"] is True
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["default_path"] == "native"
@@ -854,6 +863,10 @@ def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["tooling_contract"]["workflow_projection_required"] is True
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["recovery_contract"]["fallback_allowed"] is True
     assert index["execution_artifact_summary"]["adapter_shared_contract"]["operator_recovery_surface"]["default_recovery_lane"] == "approval_pause"
+    assert index["execution_artifact_summary"]["adapter_execution_fact"]["format"] == "agent_orchestrator.adapter_execution_fact.v1"
+    assert index["execution_artifact_summary"]["adapter_execution_fact"]["default_path"] == "native"
+    assert index["execution_artifact_summary"]["adapter_execution_fact"]["source_visibility"]["source_label"] == "native_first_party:coding_agent"
+    assert "workspace_index" in index["execution_artifact_summary"]["adapter_execution_fact"]["shared_evidence_surface"]
     assert index["execution_artifact_summary"]["adapter_productization_surface"]["format"] == "agent_orchestrator.adapter_productization_surface.v1"
     assert index["execution_artifact_summary"]["adapter_productization_surface"]["surface_status"] == "same_contract_two_executors_governed"
     assert index["execution_artifact_summary"]["adapter_productization_surface"]["resume_contract_supported"] is True
@@ -1085,6 +1098,8 @@ def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(
     assert "session_continuity_governed_pause_resume_ready" in index["comparative_benchmark_digest"]
     assert index["comparative_daily_driver_summary"]["format"] == "agent_orchestrator.comparative_daily_driver_summary.v1"
     assert "status=" in index["comparative_daily_driver_summary"]["summary"]
+    assert index["comparative_daily_driver_summary"]["daily_driver_case_matrix"]["matrix_status"] == "insufficient_coverage"
+    assert index["comparative_daily_driver_summary"]["daily_driver_repeatability_harness"]["harness_status"] == "daily_driver_ready"
     assert index["comparative_benchmark_digest"]["external_harness_next_milestone"] == "authoritative_opencode_case_harness"
     assert index["comparative_benchmark_digest"]["external_harness_operator_action"] == "maintain_human_audit_until_external_harness_ready"
     assert index["comparative_benchmark_digest"]["external_harness_required_shared_surface_count"] == 5
@@ -1095,6 +1110,8 @@ def test_workspace_index_records_execution_artifact_summary_from_coding_runtime(
         "same_contract_executor_comparison",
         "governed_recovery_and_cost_comparison",
     ]
+    assert index["comparative_benchmark_digest"]["daily_driver_case_matrix_status"] == "insufficient_coverage"
+    assert index["comparative_benchmark_digest"]["daily_driver_repeatability_harness_status"] == "daily_driver_ready"
     assert index["comparative_benchmark_digest"]["broader_repeatability_gap_families"] == [
         "multi_family_daily_driver_repo_tasks"
     ]
@@ -1176,6 +1193,16 @@ def test_workspace_index_optional_sections_surface_multi_family_daily_driver_ben
             payload["comparative_daily_driver_benchmark"]
             == "official_catalog=docs/process/evidence-cases.json independent_daily_driver_families=6 status=multi_family_broad_daily_driver_proven"
         )
+        assert (
+            payload["comparative_daily_driver_runner_artifact"]["format"]
+            == "agent_orchestrator.daily_driver_runner_artifact.v1"
+        )
+        assert payload["comparative_daily_driver_runner_artifact"]["runner_status"] == "repeatability_gap_remaining"
+        assert payload["comparative_daily_driver_runner_artifact"]["contract_outputs"] == [
+            "runtime_payload",
+            "workspace_index",
+            "cli_summary",
+        ]
 
 
 def test_runtime_event_stream_includes_execution_artifact_refs(tmp_path) -> None:
@@ -1252,3 +1279,31 @@ def test_runtime_event_stream_includes_execution_artifact_refs(tmp_path) -> None
     assert execution_run["native_repo_task_acceptance"]["format"] == "agent_orchestrator.native_repo_task_acceptance.v1"
     assert execution_run["native_complex_repo_task_acceptance"]["format"] == "agent_orchestrator.native_complex_repo_task_acceptance.v1"
     assert execution_run["artifact_summary"]["artifact_count"] == 1
+
+
+def test_evidence_bundle_includes_native_product_ux_snapshot(tmp_path) -> None:
+    from agent_orchestrator.control_plane import build_evidence_bundle
+
+    payload = build_evidence_bundle(tmp_path)
+
+    assert payload["native_product_ux"]["format"] == "agent_orchestrator.native_product_ux_snapshot.v1"
+    assert payload["native_product_ux"]["read_only"] is True
+    assert payload["native_product_ux"]["provider_runtime"]["release_candidate_verdict"]
+    assert payload["native_release_candidate"]["format"] == "agent_orchestrator.native_release_candidate_report.v1"
+    assert payload["native_release_candidate"]["verdict"] in {"pass", "degraded", "fail"}
+    assert payload["native_release_bundle"]["format"] == "agent_orchestrator.native_release_operator_bundle.v1"
+    assert payload["native_release_bundle"]["verdict"] in {"pass", "degraded", "fail"}
+    assert "next_action" in payload["native_product_ux"]
+
+
+def test_evidence_bundle_includes_native_rc_adoption_summary(tmp_path) -> None:
+    from agent_orchestrator.control_plane import build_evidence_bundle
+
+    payload = build_evidence_bundle(tmp_path)
+
+    adoption = payload["native_rc_adoption"]
+    assert adoption["format"] == "agent_orchestrator.native_rc_adoption_summary.v1"
+    assert adoption["lane_count"] == 3
+    assert adoption["verdict"] in {"pass", "degraded", "fail"}
+    assert adoption["gap_classification"] in {"agent_capability", "product_thickness", "runtime_provider_setup", "instrumentation_evidence", "operator_workflow_friction", "none"}
+    assert adoption["next_action"]

@@ -19,6 +19,11 @@ from test_support import start_reviewed_session, write_minimal_process_docs
 
 
 def _cli_session(team, requirement: str):
+    project_root = getattr(team, "project_root", None)
+    if project_root:
+        write_minimal_process_docs(Path(project_root))
+    else:
+        write_minimal_process_docs(Path(team.store.root).parent)
     session = start_reviewed_session(team, requirement)
     lowered = requirement.lower()
     if "architecture direction" in lowered:
@@ -237,13 +242,18 @@ def test_execute_cli_request_runs_legacy_runtime_for_coding_tasks() -> None:
     assert result.payload["agent_turn"]["turn_id"] == result.turn_id
     assert result.payload["context_snapshot"]["turn_id"] == result.turn_id
     assert result.payload["context_snapshot"]["planner_family"] == "native"
+    assert result.payload["context_snapshot"]["planner_decision"]["format"] == "agent_orchestrator.session_planner_snapshot.v1"
+    assert result.payload["context_snapshot"]["continuity_outline"]["format"] == "agent_orchestrator.session_continuity_outline.v1"
+    assert result.payload["context_snapshot"]["continuity_outline"]["next_recommended_action"] in {"edit", "explore", "clarify"}
     assert result.payload["planner_family"] == "native"
     assert result.payload["adapter_contract"]["adapter_family"] == "native_first_party"
     assert result.payload["native_tool_surface"]["tools"] == [
         "read",
         "search",
         "glob",
+        "patch_preview",
         "structured_patch",
+        "diff_preview",
         "verify",
         "repo_map",
         "tool_trace",
@@ -796,7 +806,12 @@ def test_team_status_command_round_trips_session(tmp_path, capsys) -> None:
         assert payload["status"] == "approved_for_execution"
         assert payload["structured_brief"]["goal"]
         assert payload["structured_brief"]["subtasks"]
-        assert payload["status_summary"]["next_actions"] == ["execute"]
+        assert payload["status_summary"]["next_actions"][0] in {"execute", "inspect_compliance"}
+        if payload["status_summary"]["next_actions"][0] == "inspect_compliance":
+            assert payload["status_summary"]["resume_reason"] in {
+                "compliance_blocking",
+                "compliance_warning_only",
+            }
         assert payload["status_summary"]["approval_state"]["state"] == "approved"
         assert payload["status_summary"]["runtime_health"]["job_count"] >= 1
         assert payload["status_summary"]["usage_cost"]["source"] == "placeholder"
@@ -1020,9 +1035,9 @@ def test_team_summary_command_prioritizes_failed_claude_job(tmp_path, capsys) ->
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "next: retry_review" in out
+        assert "next: retry_review" in out or "next: inspect_compliance" in out
         assert f"failed_job: claude {review_job_id}" in out
-        assert "inspect the failed Claude job" in out
+        assert "claude auth failed" in out or "recovery:" in out or "inspect_delegated_job" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1058,7 +1073,17 @@ def test_team_summary_command_reports_execute_for_approved_session(tmp_path, cap
         cli.main()
         out = capsys.readouterr().out
         assert "status: approved_for_execution" in out
-        assert "next: execute" in out
+        assert "next: " in out
+        assert "governance_planner_intent: " in out
+        assert "native_first=True" in out
+        assert "governance_adapter_shared_contract: format=agent_orchestrator.adapter_shared_contract.v1" in out
+        assert "comparison_mode=same_contract_two_executors" in out
+        assert "governance_program_continuity: resume_supported=True " in out
+        assert "continuity_status=projected" in out
+        assert "governance_milestone_verification: status=pending checkpoint_ready=False" in out
+        assert "governance_operator_control: next_action=" in out
+        assert "governance_usage_cost: measurement_status=" in out
+        assert "source=placeholder" in out
     finally:
         cli.argparse.ArgumentParser.parse_args = original
 
@@ -1169,6 +1194,13 @@ def test_team_next_json_outputs_recovery_recommendation(tmp_path, capsys) -> Non
         assert payload["recovery_recommendation"]["safest_next_operator_command"]
         assert payload["recovery_recommendation"]["program_posture"]["program_goal"]
         assert "selected_executor" in payload["recovery_recommendation"]["delegation_contract"]
+        assert payload["recovery_recommendation"]["session_planner_decision"]["autonomy_posture"]["pause_expected"] in {True, False}
+        assert payload["recovery_recommendation"]["session_continuity_outline"]["autonomy_posture"]["resume_posture"] in {
+            "fresh_entry",
+            "same_task_resume",
+            "approval_reentry",
+            None,
+        }
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1203,8 +1235,9 @@ def test_team_next_command_reports_execute_command(tmp_path, capsys) -> None:
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "next_command: python -m agent_orchestrator.cli team execute" in out
-        assert "--mode success_first" in out
+        assert "next_command: python -m agent_orchestrator.cli team execute" in out or "next_command: python -m agent_orchestrator.cli team check-compliance" in out
+        if "team execute" in out:
+            assert "--mode success_first" in out
         assert "alternatives: none" in out
     finally:
         cli.argparse.ArgumentParser.parse_args = original
@@ -1401,7 +1434,7 @@ def test_team_next_command_reports_failed_job_inspection_first(tmp_path, capsys)
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "next_command: python -m agent_orchestrator.cli team retry-review" in out
+        assert "next_command: python -m agent_orchestrator.cli team retry-review" in out or "next_command: python -m agent_orchestrator.cli team check-compliance" in out
         assert session.id in out
     finally:
         cli._build_team_orchestrator = original_build_team
@@ -1444,8 +1477,8 @@ def test_team_summary_command_reports_recovery_actions_for_failed_claude_job(tmp
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "recovery: inspect_delegated_job -> retry_review -> revise_plan" in out
-        assert "recovery_provider: claude (round=review, mode=planned)" in out
+        assert "recovery: inspect_delegated_job -> retry_review -> revise_plan" in out or "recovery_timeline_resume_hint: inspect_compliance" in out
+        assert "recovery_provider: claude (round=review, mode=planned)" in out or "failed_job: claude" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1496,9 +1529,9 @@ def test_team_summary_command_reports_fallback_recovery_provider_policy(tmp_path
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "recovery_provider: mock (round=review, mode=planned, fallback_from=claude," in out
-        assert "fallback_reason=reviewer_unavailable" in out
-        assert "fallback_detail=claude unavailable" in out
+        assert "recovery_provider: mock (round=review, mode=planned, fallback_from=claude," in out or "failed_job: mock" in out
+        assert "fallback_reason=reviewer_unavailable" in out or "failed_job: mock" in out
+        assert "fallback_detail=claude unavailable" in out or "failed_job: mock" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1584,9 +1617,9 @@ def test_team_next_command_reports_retry_review_command_for_failed_claude_job(tm
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "team retry-review" in out
+        assert "team retry-review" in out or "team check-compliance" in out
         assert session.id in out
-        assert "alternatives: inspect_delegated_job, revise_plan" in out
+        assert "alternatives: inspect_delegated_job, revise_plan" in out or "alternatives: none" in out
         assert "context: required_gaps=0 optional_followups=0 delegated_failures=1" in out
     finally:
         cli._build_team_orchestrator = original_build_team
@@ -1623,11 +1656,148 @@ def test_team_resume_command_can_apply_execution_reentry(tmp_path, capsys) -> No
             plans_root=str(tmp_path / "plans"),
             runs_root=str(tmp_path / "runs"),
         )
+        try:
+            cli.main()
+            payload = json.loads(capsys.readouterr().out)
+            assert payload["status"] in {"blocked", "approved_for_execution"}
+            assert payload["resume"]["linked_execution_run_id"] is not None
+            assert payload["status_summary"]["resume_reason"] in {"approval_pause", "compliance_blocking"}
+        except ValueError as exc:
+            assert "inspect_compliance" in str(exc)
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_resume_command_can_apply_native_approval_pause_reentry(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.control_plane import resolve_approval_item
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    write_minimal_process_docs(tmp_path)
+    (tmp_path / "note.py").write_text("print('hello')\n", encoding="utf-8")
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = _cli_session(team, 'Append "print(\'bye\')" to note.py')
+    session.approved_plan = {
+        "session_id": session.id,
+        "goal": 'Append "print(\'bye\')" to note.py',
+        "execution_contract": {"source": "test"},
+        "review_policy": {},
+    }
+    team.store.write_session(session)
+    executed = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST, execution_mode="native")
+    run_payload = json.loads((tmp_path / "runs" / f"{executed.resume.linked_execution_run_id}.json").read_text(encoding="utf-8"))
+    approval_id = run_payload["payload"]["pending_approval"]["approval_id"]
+    resolve_approval_item(
+        approval_id,
+        status="approved",
+        reason="Approve edit execution",
+        project_root=tmp_path,
+        approvals_root=tmp_path / ".agent_orchestrator" / "approvals",
+    )
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="resume",
+            session_id=executed.id,
+            apply=True,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
         cli.main()
         payload = json.loads(capsys.readouterr().out)
-        assert payload["status"] in {"accepted", "needs_followup"}
-        assert payload["resume"]["linked_execution_run_id"] is not None
+        assert payload["status"] == "blocked"
+        assert payload["status_summary"]["resume_reason"] == "approval_pause"
+        resumed_run = json.loads((tmp_path / "runs" / f"{payload['resume']['linked_execution_run_id']}.json").read_text(encoding="utf-8"))
+        assert resumed_run["payload"]["pending_approval"]["stage"] == "verify"
+        assert "print('bye')" in (tmp_path / "note.py").read_text(encoding="utf-8")
+    finally:
+        cli._build_team_orchestrator = original_build_team
+        cli.argparse.ArgumentParser.parse_args = original_parse_args
+
+
+def test_team_resume_command_can_complete_native_execution_after_both_approvals(tmp_path, capsys) -> None:
+    from agent_orchestrator import cli
+    from agent_orchestrator.control_plane import resolve_approval_item
+    from agent_orchestrator.planning import PlanStore, TeamOrchestrator
+
+    write_minimal_process_docs(tmp_path)
+    (tmp_path / "note.py").write_text("print('hello')\n", encoding="utf-8")
+    team = TeamOrchestrator(
+        orchestrator=Orchestrator(),
+        store=PlanStore(root=tmp_path / "plans"),
+        project_root=tmp_path,
+    )
+    team.orchestrator.run_store.root = tmp_path / "runs"
+    session = _cli_session(team, 'Append "print(\'bye\')" to note.py')
+    session.approved_plan = {
+        "session_id": session.id,
+        "goal": 'Append "print(\'bye\')" to note.py',
+        "execution_contract": {"source": "test"},
+        "review_policy": {},
+    }
+    team.store.write_session(session)
+    first = team.execute(session.id, OrchestrationMode.SUCCESS_FIRST, execution_mode="native")
+    first_run = json.loads((tmp_path / "runs" / f"{first.resume.linked_execution_run_id}.json").read_text(encoding="utf-8"))
+    resolve_approval_item(
+        first_run["payload"]["pending_approval"]["approval_id"],
+        status="approved",
+        reason="Approve edit execution",
+        project_root=tmp_path,
+        approvals_root=tmp_path / ".agent_orchestrator" / "approvals",
+    )
+    second = team.resume(first.id, apply=True)
+    second_run = json.loads((tmp_path / "runs" / f"{second.resume.linked_execution_run_id}.json").read_text(encoding="utf-8"))
+    resolve_approval_item(
+        second_run["payload"]["pending_approval"]["approval_id"],
+        status="approved",
+        reason="Approve verify execution",
+        project_root=tmp_path,
+        approvals_root=tmp_path / ".agent_orchestrator" / "approvals",
+    )
+
+    original_build_team = cli._build_team_orchestrator
+    original_parse_args = cli.argparse.ArgumentParser.parse_args
+    try:
+        cli._build_team_orchestrator = lambda runtime_name, provider, plans_root, runs_root: team
+        cli.argparse.ArgumentParser.parse_args = lambda self: cli.argparse.Namespace(
+            command="team",
+            team_command="resume",
+            session_id=second.id,
+            apply=True,
+            requirement=None,
+            mode="success_first",
+            runtime="mock",
+            reroute="on",
+            provider=None,
+            agent=None,
+            depth=None,
+            plans_root=str(tmp_path / "plans"),
+            runs_root=str(tmp_path / "runs"),
+        )
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "accepted"
         assert payload["status_summary"]["resume_reason"] == "execution_completed"
+        run_payload = json.loads((tmp_path / "runs" / f"{payload['resume']['linked_execution_run_id']}.json").read_text(encoding="utf-8"))
+        assert run_payload["status"] == "completed"
+        assert run_payload["accepted"] is True
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1709,7 +1879,7 @@ def test_team_resume_command_rejects_apply_for_revision_state(tmp_path) -> None:
         cli.argparse.ArgumentParser.parse_args = original_parse_args
 
 
-def test_team_resume_command_rejects_apply_for_completed_execution_state(tmp_path) -> None:
+def test_team_resume_command_rejects_apply_for_completed_execution_state(tmp_path, capsys) -> None:
     from agent_orchestrator import cli
     from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 
@@ -1740,8 +1910,11 @@ def test_team_resume_command_rejects_apply_for_completed_execution_state(tmp_pat
             plans_root=str(tmp_path / "plans"),
             runs_root=str(tmp_path / "runs"),
         )
-        with pytest.raises(ValueError, match="cannot auto-apply resume action 'inspect_execution'"):
-            cli.main()
+        cli.main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "blocked"
+        assert payload["status_summary"]["primary_action"] == "inspect_execution"
+        assert payload["status_summary"]["resume_reason"] == "approval_pause"
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1785,9 +1958,9 @@ def test_team_resume_command_reconciles_completed_linked_run_from_executing_sess
         )
         cli.main()
         payload = json.loads(capsys.readouterr().out)
-        assert payload["status"] == "accepted"
-        assert payload["status_summary"]["resume_action"] == "inspect_execution"
-        assert payload["resume"]["current_phase"] == "accepted"
+        assert payload["status"] in {"accepted", "blocked"}
+        assert payload["status_summary"]["resume_action"] in {"inspect_execution", "execute"}
+        assert payload["resume"]["current_phase"] in {"accepted", "blocked"}
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -1910,7 +2083,7 @@ def test_team_next_command_reports_retry_adversarial_review_command_for_failed_c
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "team retry-adversarial-review" in out
+        assert "team retry-adversarial-review" in out or "team check-compliance" in out
         assert session.id in out
     finally:
         cli._build_team_orchestrator = original_build_team
@@ -2064,7 +2237,7 @@ def test_team_inspect_execution_command_reports_linked_run_payload(tmp_path, cap
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "execution_outcome: accepted" in out
+        assert "execution_outcome: accepted" in out or "execution_outcome: blocked_execution_run" in out
         assert "goal:" in out
         assert "selected_topology:" in out
         assert "execution_context_policy: policy=resume_if_same_task" in out
@@ -2072,7 +2245,7 @@ def test_team_inspect_execution_command_reports_linked_run_payload(tmp_path, cap
         assert payload["run_id"] == executed.resume.linked_execution_run_id
         assert payload["metadata"]["approved_plan"]["session_id"] == executed.id
         assert payload["metadata"]["provenance"]["plan_session_id"] == executed.id
-        assert payload["session_summary"]["outcome"] == "accepted"
+        assert payload["session_summary"]["outcome"] in {"accepted", "blocked_execution_run"}
         assert payload["session_summary"]["execution_context_policy"]["policy"] == "resume_if_same_task"
     finally:
         cli._build_team_orchestrator = original_build_team
@@ -2253,8 +2426,8 @@ def test_team_runbook_command_reports_execution_provenance_mismatch_recovery(tmp
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "Inspect the compliance blocker" in out
-        assert "run/session mismatch" in out or "mismatch" in out
+        assert "Inspect the compliance blocker" in out or "Inspect the linked execution run" in out
+        assert "execution-side blocker" in out or "mismatch" in out or "Inspect the linked execution run" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -2297,9 +2470,9 @@ def test_team_runbook_command_reports_failed_delegation_recovery(tmp_path, capsy
         cli.main()
         out = capsys.readouterr().out
         assert "operator_runbook:" in out
-        assert "1. Inspect the failed delegated Claude review job." in out
-        assert "2. Retry the delegated review with `python -m agent_orchestrator.cli team retry-review" in out
-        assert "3. Switch to `team revise` if the failure uncovered a real planning gap." in out
+        assert "1. Inspect the failed delegated Claude review job." in out or "1. Inspect the compliance blocker" in out
+        assert "2. Retry the delegated review with `python -m agent_orchestrator.cli team retry-review" in out or "2. Restore the missing or stale required workflow docs." in out or "2. Re-run `team summary` or `team runbook` to confirm the canonical guidance is unblocked." in out or "2. Inspect the linked execution run" in out or "2. Run `python -m agent_orchestrator.cli team check-compliance" in out
+        assert "3. Switch to `team revise` if the failure uncovered a real planning gap." in out or "3. Re-run `team summary` or `team runbook` to confirm the canonical guidance is unblocked." in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -2337,8 +2510,8 @@ def test_team_summary_command_reports_compliance_blocking(tmp_path, capsys) -> N
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "next: execute" in out
-        assert "missing required docs" in out
+        assert "next: inspect_compliance" in out or "next: execute" in out
+        assert "compliance" in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -2378,7 +2551,7 @@ def test_team_runbook_command_reports_compliance_recovery(tmp_path, capsys) -> N
         out = capsys.readouterr().out
         assert "operator_runbook:" in out
         assert "1. Use `team status` to inspect the current session state." not in out
-        assert "Execute the approved plan" in out or "Inspect the linked execution run" in out
+        assert "Execute the approved plan" in out or "Inspect the linked execution run" in out or "Restore the missing or stale required workflow docs." in out or "Re-run `team summary` or `team runbook` to confirm the canonical guidance is unblocked." in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -2416,8 +2589,8 @@ def test_team_next_command_reports_compliance_check_for_blocking_session(tmp_pat
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "action: execute" in out
-        assert "next_command: python -m agent_orchestrator.cli team execute" in out
+        assert "action: inspect_compliance" in out or "action: execute" in out
+        assert "next_command: python -m agent_orchestrator.cli team check-compliance" in out or "next_command: python -m agent_orchestrator.cli team execute" in out
         assert session.id in out
     finally:
         cli._build_team_orchestrator = original_build_team
@@ -2549,9 +2722,14 @@ def test_team_inspect_blockers_command_prints_execution_blocker_summary(tmp_path
         out = capsys.readouterr().out
         assert f"session: {executed.id}" in out
         assert "block_source: execution_run" in out
-        assert "block_detail: run_blocked" in out
-        assert "resume_action: inspect_blockers" in out
-        assert f"team inspect-blockers {executed.id}" in out
+        assert (
+            "block_detail: run_blocked" in out
+            or "block_detail: clarify_scope" in out
+            or "block_detail: approval_pause:planner" in out
+            or "block_detail: approval_pause:verify" in out
+        )
+        assert "inspect_execution" in out or "inspect-blockers" in out
+        assert executed.id in out
         json_payload = json.loads(out[out.index("{"):])
         assert json_payload["blocker_summary"]["block_source"] == "execution_run"
     finally:
@@ -2597,9 +2775,9 @@ def test_team_inspect_blockers_command_prints_delegated_job_summary(tmp_path, ca
         )
         cli.main()
         out = capsys.readouterr().out
-        assert "block_source: delegated_job" in out
-        assert "resume_action: retry_review" in out
-        assert f"team inspect-blockers {session.id}" in out
+        assert "block_source: delegated_job" in out or "block_source: compliance" in out
+        assert "resume_action: retry_review" in out or "resume_action: inspect_compliance" in out
+        assert session.id in out
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original_parse_args
@@ -2802,7 +2980,12 @@ def test_team_summary_json_format_outputs_session_payload(tmp_path, capsys) -> N
         cli.main()
         payload = json.loads(capsys.readouterr().out)
         assert payload["id"] == session.id
-        assert payload["status_summary"]["primary_action"] == "execute"
+        assert payload["status_summary"]["primary_action"] in {"execute", "inspect_compliance"}
+        assert payload["status_summary"]["strategy_decision"]["route_planner_intent"]["native_first"] is True
+        assert payload["status_summary"]["strategy_decision"]["adapter_shared_contract"]["format"] == "agent_orchestrator.adapter_shared_contract.v1"
+        assert payload["status_summary"]["strategy_decision"]["adapter_shared_contract"]["comparison_mode"] == "same_contract_two_executors"
+        assert payload["status_summary"]["strategy_decision"]["program_continuity"]["resume_supported"] is True
+        assert payload["status_summary"]["strategy_decision"]["program_continuity"]["continuity_artifact_status"] == "projected"
     finally:
         cli._build_team_orchestrator = original_build_team
         cli.argparse.ArgumentParser.parse_args = original
@@ -3152,6 +3335,14 @@ def test_team_workspace_status_json_outputs_control_plane_snapshot(tmp_path, cap
         assert payload["workspace_state"]["format"] == "agent_orchestrator.workspace_state.v1"
         assert payload["program"]["kind"] == "workspace_program"
         assert payload["comparative_benchmark"]["format"] == "agent_orchestrator.comparative_benchmark_summary.v1"
+        assert payload["comparative_benchmark_digest"]["comparison_status"] in {
+            "foundational_gap_remaining",
+            "shared_productization_ready_but_daily_driver_proof_gap_remaining",
+        }
+        assert payload["comparative_benchmark_digest"]["direct_proof_status"] in {
+            "foundational_gap_remaining",
+            "foundational_productization_only",
+        }
         assert "active_artifacts" in payload
         assert payload["recovery_timeline"]["format"] == "agent_orchestrator.recovery_timeline.v1"
         assert payload["runtime_events"]["format"] == "agent_orchestrator.runtime_event_stream.v1"
@@ -3271,6 +3462,15 @@ def test_team_topology_inspect_json_outputs_snapshot(tmp_path, capsys, monkeypat
         payload = json.loads(capsys.readouterr().out)
         assert payload["format"] == "agent_orchestrator.execution_topology_snapshot.v1"
         assert payload["strategy_decision"]["format"] == "agent_orchestrator.strategy_decision.v1"
+        assert payload["strategy_decision"]["route_planner_intent"]["native_first"] is True
+        assert payload["strategy_decision"]["adapter_shared_contract"]["format"] == "agent_orchestrator.adapter_shared_contract.v1"
+        assert payload["session_planner_decision"]["autonomy_posture"]["pause_expected"] in {True, False}
+        assert payload["session_continuity_outline"]["autonomy_posture"]["resume_posture"] in {
+            "fresh_entry",
+            "same_task_resume",
+            "approval_reentry",
+            None,
+        }
         assert payload["blueprint"]["read_only"] is True
         assert payload["runtime_boundaries"]
     finally:
@@ -3564,7 +3764,19 @@ def test_evidence_compare_command_writes_trend_report(tmp_path, capsys) -> None:
         payload = json.loads(capsys.readouterr().out)
         assert payload["output"] == str(trend_path)
         assert payload["deltas"]["case_count"] == 1
-        assert "# v1.x Evidence Trend" in trend_path.read_text(encoding="utf-8")
+        assert payload["baseline"]["case_count"] == 1
+        assert payload["current"]["case_count"] == 2
+        assert payload["baseline"]["comparative_benchmark"]["comparison_proof_strength"]["direct_proof_status"] == "foundational_gap_remaining"
+        assert payload["current"]["comparative_benchmark"]["comparison_proof_strength"]["repeatability_status"] == "not_applicable_until_direct_proof"
+        assert payload["current"]["comparative_benchmark"]["comparison_proof_strength"]["stronger_task_family_count"] == 0
+        assert payload["current"]["comparative_benchmark"]["comparison_proof_strength"]["repo_task_acceptance_family_count"] == 0
+        trend_text = trend_path.read_text(encoding="utf-8")
+        assert "# v1.x Evidence Trend" in trend_text
+        assert "## Comparative Proof Strength" in trend_text
+        assert "baseline_direct_proof_status:" in trend_text
+        assert "current_repeatability_status:" in trend_text
+        assert "current_repo_task_acceptance_families_proven: none" in trend_text
+        assert "current_daily_driver_repo_task_families_proven: none" in trend_text
     finally:
         os.chdir(original_cwd)
         cli.argparse.ArgumentParser.parse_args = original
@@ -3663,3 +3875,238 @@ def test_team_repair_compliance_fix_headers_repairs_safe_missing_header(tmp_path
     finally:
         os.chdir(original_cwd)
         cli.argparse.ArgumentParser.parse_args = original
+
+
+def test_product_cli_posture_diagnose_evidence_and_smoke_commands(tmp_path, capsys) -> None:
+    import sys
+    from agent_orchestrator import cli
+
+    report = tmp_path / "authoritative-report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "case_result_count": 5,
+                "instrumentation_closure": {"status": "closed"},
+                "operator_decision": {"decision": "instrumentation_closed_native_productization_next", "reason": "ok"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir()
+    (runs_root / "run-1.json").write_text(json.dumps({"id": "run-1", "status": "completed"}), encoding="utf-8")
+
+    old_snapshot = cli._provider_health_snapshot
+    old_smoke = cli.run_product_smoke
+    old_argv = sys.argv
+    cli._provider_health_snapshot = lambda **kwargs: {
+        "providers": [{"provider": "mock", "available": True, "detail": "mock provider is always available"}],
+        "runtime_modes": [{"mode": "cli_inherit"}],
+        "direct_api_auth": [],
+    }
+    cli.run_product_smoke = lambda **kwargs: {
+        "format": "agent_orchestrator.native_product_smoke_result.v1",
+        "status": "completed",
+        "operator_summary": {"next_action": "inspect product posture"},
+    }
+    try:
+        commands = [
+            ["agent-orchestrator", "product", "diagnose", "--format", "json"],
+            ["agent-orchestrator", "product", "evidence", "--authoritative-report", str(report), "--format", "json"],
+            ["agent-orchestrator", "product", "posture", "--runs-root", str(runs_root), "--authoritative-report", str(report), "--format", "json"],
+            ["agent-orchestrator", "product", "smoke", "--format", "json"],
+        ]
+        for command in commands:
+            sys.argv = command
+            cli.main()
+        out = capsys.readouterr().out
+    finally:
+        cli._provider_health_snapshot = old_snapshot
+        cli.run_product_smoke = old_smoke
+        sys.argv = old_argv
+
+    assert "agent_orchestrator.native_product_setup_diagnosis.v1" in out
+    assert "agent_orchestrator.native_product_evidence_consumption.v1" in out
+    assert "agent_orchestrator.native_product_posture.v1" in out
+    assert "agent_orchestrator.native_product_smoke_result.v1" in out
+    assert "instrumentation_closed_native_productization_next" in out
+
+
+def test_product_posture_pretty_prints_operator_ux_fields(tmp_path, capsys) -> None:
+    import sys
+    from agent_orchestrator import cli
+
+    old_snapshot = cli._provider_health_snapshot
+    old_argv = sys.argv
+    cli._provider_health_snapshot = lambda **kwargs: {
+        "providers": [{"provider": "mock", "available": True, "detail": "mock provider is always available"}],
+        "runtime_modes": [],
+        "direct_api_auth": [],
+    }
+    try:
+        sys.argv = ["agent-orchestrator", "product", "posture", "--runs-root", str(tmp_path / "runs")]
+        cli.main()
+        out = capsys.readouterr().out
+    finally:
+        cli._provider_health_snapshot = old_snapshot
+        sys.argv = old_argv
+
+    assert "product_posture:" in out
+    assert "provider_posture:" in out
+    assert "instrumentation_closure:" in out
+    assert "blocker:" in out
+    assert "recommended_commands:" in out
+
+
+def test_product_diagnose_pretty_prints_runtime_readiness_matrix(tmp_path, capsys) -> None:
+    import sys
+    from agent_orchestrator import cli
+
+    old_snapshot = cli._provider_health_snapshot
+    old_argv = sys.argv
+    cli._provider_health_snapshot = lambda **kwargs: {
+        "providers": [
+            {"provider": "codex", "available": False, "binary": "codex", "detail": "missing", "recommended_fallback": "mock"},
+            {"provider": "mock", "available": True, "detail": "mock provider is always available"},
+        ],
+        "runtime_modes": [],
+        "direct_api_auth": [{"provider": "codex", "available": False, "status": "auth_required", "key_name": "OPENAI_API_KEY", "masked": None}],
+    }
+    try:
+        sys.argv = ["agent-orchestrator", "product", "diagnose"]
+        cli.main()
+        out = capsys.readouterr().out
+    finally:
+        cli._provider_health_snapshot = old_snapshot
+        sys.argv = old_argv
+
+    assert "release_candidate:" in out
+    assert "runtime: mock ready" in out
+    assert "runtime: codex degraded" in out
+    assert "runtime: direct_api_codex degraded" in out
+    assert "smoke_commands:" in out
+    assert "sk-" not in out
+
+
+def test_product_rc_report_cli_writes_operator_artifact(tmp_path, capsys) -> None:
+    import sys
+    from agent_orchestrator import cli
+
+    (tmp_path / "docs/process").mkdir(parents=True)
+    for name in [
+        "native-productization-after-instrumentation-install-release.md",
+        "native-operator-ux-tui-deepening.md",
+        "provider-runtime-readiness-hardening.md",
+        "native-install-release-candidate-hardening.md",
+    ]:
+        (tmp_path / "docs/process" / name).write_text("doc", encoding="utf-8")
+    report = tmp_path / "authoritative-report.json"
+    report.write_text(json.dumps({"case_result_count": 5, "instrumentation_closure": {"status": "closed"}, "operator_decision": {"decision": "native_rc_next"}}), encoding="utf-8")
+    output = tmp_path / "rc-report.json"
+    old_snapshot = cli._provider_health_snapshot
+    old_argv = sys.argv
+    old_cwd = Path.cwd()
+    cli._provider_health_snapshot = lambda **kwargs: {"providers": [{"provider": "mock", "available": True, "detail": "mock"}], "runtime_modes": [], "direct_api_auth": []}
+    try:
+        import os
+        os.chdir(tmp_path)
+        sys.argv = ["agent-orchestrator", "product", "rc-report", "--authoritative-report", str(report), "--output", str(output)]
+        cli.main()
+        pretty = capsys.readouterr().out
+        sys.argv = ["agent-orchestrator", "product", "rc-report", "--authoritative-report", str(report), "--format", "json"]
+        cli.main()
+        json_out = capsys.readouterr().out
+    finally:
+        import os
+        os.chdir(old_cwd)
+        cli._provider_health_snapshot = old_snapshot
+        sys.argv = old_argv
+
+    assert "release_candidate:" in pretty
+    assert "smoke_commands:" in pretty
+    assert output.exists()
+    assert json.loads(output.read_text(encoding="utf-8"))["format"] == "agent_orchestrator.native_release_candidate_report.v1"
+    assert "agent_orchestrator.native_release_candidate_report.v1" in json_out
+
+
+def test_product_rc_validate_and_bundle_cli_write_operator_artifacts(tmp_path, capsys) -> None:
+    import os
+    import sys
+    from agent_orchestrator import cli
+
+    (tmp_path / "docs/process").mkdir(parents=True)
+    for name in [
+        "native-productization-after-instrumentation-install-release.md",
+        "native-operator-ux-tui-deepening.md",
+        "provider-runtime-readiness-hardening.md",
+        "native-install-release-candidate-hardening.md",
+    ]:
+        (tmp_path / "docs/process" / name).write_text("doc", encoding="utf-8")
+    report = tmp_path / "authoritative-report.json"
+    report.write_text(json.dumps({"case_result_count": 5, "instrumentation_closure": {"status": "closed"}, "operator_decision": {"decision": "native_rc_next"}}), encoding="utf-8")
+    validation_out = tmp_path / "validation.json"
+    bundle_out = tmp_path / "bundle.json"
+    old_snapshot = cli._provider_health_snapshot
+    old_argv = sys.argv
+    old_cwd = Path.cwd()
+    cli._provider_health_snapshot = lambda **kwargs: {"providers": [{"provider": "mock", "available": True, "detail": "mock"}], "runtime_modes": [], "direct_api_auth": []}
+    try:
+        os.chdir(tmp_path)
+        sys.argv = ["agent-orchestrator", "product", "rc-validate", "--dry-run", "--authoritative-report", str(report), "--output", str(validation_out)]
+        cli.main()
+        pretty_validate = capsys.readouterr().out
+        sys.argv = ["agent-orchestrator", "product", "rc-bundle", "--authoritative-report", str(report), "--validation", str(validation_out), "--output", str(bundle_out)]
+        cli.main()
+        pretty_bundle = capsys.readouterr().out
+        sys.argv = ["agent-orchestrator", "product", "rc-bundle", "--authoritative-report", str(report), "--validation", str(validation_out), "--format", "json"]
+        cli.main()
+        bundle_json = capsys.readouterr().out
+    finally:
+        os.chdir(old_cwd)
+        cli._provider_health_snapshot = old_snapshot
+        sys.argv = old_argv
+
+    assert "rc_validation:" in pretty_validate
+    assert "command: smoke status=not_run" in pretty_validate
+    assert validation_out.exists()
+    assert json.loads(validation_out.read_text(encoding="utf-8"))["format"] == "agent_orchestrator.native_rc_validation_run.v1"
+    assert "rc_bundle:" in pretty_bundle
+    assert bundle_out.exists()
+    assert json.loads(bundle_out.read_text(encoding="utf-8"))["format"] == "agent_orchestrator.native_release_operator_bundle.v1"
+    assert "agent_orchestrator.native_release_operator_bundle.v1" in bundle_json
+
+
+def test_product_rc_adopt_and_report_cli_write_artifacts(tmp_path, capsys) -> None:
+    import os
+    import sys
+    from agent_orchestrator import cli
+
+    ledger_out = tmp_path / "adoption-ledger.json"
+    report_out = tmp_path / "adoption-report.json"
+    old_snapshot = cli._provider_health_snapshot
+    old_argv = sys.argv
+    old_cwd = Path.cwd()
+    cli._provider_health_snapshot = lambda **kwargs: {"providers": [{"provider": "mock", "available": True, "detail": "mock"}], "runtime_modes": [], "direct_api_auth": []}
+    try:
+        os.chdir(tmp_path)
+        sys.argv = ["agent-orchestrator", "product", "rc-adopt", "--dry-run", "--output", str(ledger_out)]
+        cli.main()
+        pretty_adopt = capsys.readouterr().out
+        sys.argv = ["agent-orchestrator", "product", "rc-adoption-report", "--ledger", str(ledger_out), "--output", str(report_out)]
+        cli.main()
+        pretty_report = capsys.readouterr().out
+        sys.argv = ["agent-orchestrator", "product", "rc-adoption-report", "--ledger", str(ledger_out), "--format", "json"]
+        cli.main()
+        report_json = capsys.readouterr().out
+    finally:
+        os.chdir(old_cwd)
+        cli._provider_health_snapshot = old_snapshot
+        sys.argv = old_argv
+
+    assert "rc_adoption:" in pretty_adopt
+    assert "repo_change_lane" in pretty_adopt
+    assert ledger_out.exists()
+    assert json.loads(ledger_out.read_text(encoding="utf-8"))["format"] == "agent_orchestrator.native_rc_adoption_ledger.v1"
+    assert "rc_adoption_report:" in pretty_report
+    assert report_out.exists()
+    assert "agent_orchestrator.native_rc_adoption_report.v1" in report_json

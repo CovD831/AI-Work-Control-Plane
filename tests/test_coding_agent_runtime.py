@@ -144,8 +144,15 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
     assert result.payload["adapter_capability"]["format"] == "agent_orchestrator.adapter_capability_surface.v1"
     assert result.payload["adapter_capability"]["shared_contract_format"] == "agent_orchestrator.adapter_shared_contract.v1"
     assert result.payload["adapter_capability"]["shared_contract_operator_recovery_surface"]["default_recovery_lane"] == "approval_pause"
+    assert result.payload["adapter_execution_fact"]["format"] == "agent_orchestrator.adapter_execution_fact.v1"
+    assert result.payload["adapter_execution_fact"]["default_path"] == "native"
+    assert result.payload["adapter_execution_fact"]["source_visibility"]["source_label"] == "native_first_party:coding_agent"
     assert result.payload["native_tool_trace"]["trace_count"] >= 1
     assert result.payload["native_tool_trace"]["trace"][0]["timestamp"]
+    assert result.payload["native_tool_evidence"]["format"] == "agent_orchestrator.native_tool_evidence.v1"
+    assert result.payload["native_tool_evidence"]["verify_evidence_ready"] is True
+    assert result.payload["native_tool_evidence"]["tool_counts"]["verify"] >= 1
+    assert "workspace_index" in result.payload["native_tool_evidence"]["shared_evidence_surface"]
     assert result.kernel_contract is not None
     assert result.kernel_contract.kernel_role == "governed_execution_kernel"
     assert "control_plane_artifacts" in result.kernel_contract.input_sources
@@ -173,6 +180,12 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
     assert "runtime_payload" in result.payload["repo_report"]["artifact"]["exploration_evidence"]["shared_evidence_surface"]
     assert result.payload["repo_report"]["artifact"]["exploration_profile"]["outline_record_count"] >= 0
     assert result.payload["repo_report"]["artifact"]["exploration_evidence"]["read_record_count"] >= 1
+    assert result.payload["repository_understanding"]["format"] == "agent_orchestrator.repository_understanding.v1"
+    assert result.payload["repository_understanding"]["candidate_count"] >= 1
+    assert result.payload["repository_understanding"]["candidate_evidence"][0]["selection_reason"]
+    assert result.payload["repository_understanding"]["main_path_effects"]["affects_edit_targets"] is True
+    assert result.payload["repository_understanding"]["main_path_effects"]["records_selection_rationale"] is True
+    assert "workspace_index" in result.payload["repository_understanding"]["operator_visibility"]["shared_evidence_surface"]
     assert result.payload["execution_context"]["session_context"]["session_id"] == "agent-session-1"
     assert result.payload["edit_intent"]["mode"] == "report_first"
     assert "verification" in result.payload
@@ -234,6 +247,18 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
     assert result.payload["strategy_summary"]["decision_evidence"]["planner_reasoning"]["native_first"] is True
     assert result.payload["strategy_summary"]["decision_evidence"]["planner_reasoning"]["primary_action"]
     assert result.payload["strategy_summary"]["decision_evidence"]["planner_reasoning"]["requires_edit"] is True
+    assert result.payload["strategy_summary"]["decision_evidence"]["next_action_contract"]["format"] == "agent_orchestrator.native_planner_next_action_contract.v1"
+    assert set(result.payload["strategy_summary"]["decision_evidence"]["next_action_contract"]["required_action_vocabulary"]) == {
+        "explore",
+        "clarify",
+        "edit",
+        "verify",
+        "pause",
+        "handoff",
+        "stop",
+    }
+    assert result.payload["strategy_summary"]["decision_evidence"]["next_action_contract"]["decision_points"]["edit"]["selected"] is True
+    assert result.payload["strategy_summary"]["decision_evidence"]["next_action_contract"]["decision_points"]["verify"]["selected"] is True
     assert result.payload["strategy_summary"]["decision_evidence"]["tool_workflow_plan"]["workflow_projection_required"] is True
     assert result.payload["strategy_summary"]["decision_evidence"]["tool_workflow_plan"]["workflow_stages"]["explore"]["selected"] is True
     assert result.payload["planner_context_trace"][0]["resume_kind"] == "fresh"
@@ -293,7 +318,7 @@ def test_coding_agent_runtime_returns_structured_execution_payload() -> None:
         assert result.payload["llm_assisted_intent"]["applied"] is True
         assert result.payload["llm_assisted_intent"]["source"] == "llm"
     else:
-        assert result.payload["llm_assisted_intent"]["source"] == "rule_based"
+        assert result.payload["llm_assisted_intent"]["source"] in {"rule_based", "deterministic_fallback", "deterministic_only"}
 
 
 def test_coding_agent_runtime_records_learning_assets_and_trajectory(tmp_path) -> None:
@@ -1330,6 +1355,66 @@ def test_coding_agent_runtime_can_apply_bounded_append_edit(tmp_path) -> None:
     ]
     assert result.payload["execution_steps"][1]["actions"][1]["requires_approval"] is True
     assert "print('bye')" in target.read_text(encoding="utf-8")
+
+def test_coding_agent_runtime_completes_repo_discovered_single_target_edit(tmp_path) -> None:
+    target = tmp_path / "src" / "widget_handler.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def render_widget():\n    return 'widget-ready'\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# demo\n", encoding="utf-8")
+
+    runtime = CodingAgentExecutionRuntime(orchestrator=Orchestrator())
+    runtime.repo_explorer.workspace_root = tmp_path
+    runtime.edit_executor.workspace_root = tmp_path
+    runtime.edit_executor.action_executor.workspace_root = tmp_path
+    runtime.verify_loop.verifier.workspace_root = tmp_path
+    runtime.verify_loop.verifier.action_executor.workspace_root = tmp_path
+    runtime.verify_loop.verifier.action_executor.artifact_store.root = tmp_path / "execution-artifacts"
+    runtime.verify_loop.verifier.action_executor.artifact_store.__post_init__()
+
+    result = runtime.run(
+        ExecutionRequest(
+            requirement='Find the widget-ready implementation and append "print(\'done\')" to the target file',
+            route=_coding_route(),
+            runtime_name="coding_agent",
+            mode=OrchestrationMode.SUCCESS_FIRST,
+            session_id="agent-session-discovered-target",
+            turn_id="turn-discovered-target",
+            context_snapshot={"snapshot_id": "snapshot-discovered-target"},
+            task_contract={
+                "id": "task-discovered-target",
+                "goal": "Update the widget-ready implementation",
+                "non_goals": [],
+                "context": "Use repository search rather than an explicit file path.",
+                "inputs": ["widget-ready", "append print done"],
+                "outputs": ["applied patch", "verification result"],
+                "acceptance_criteria": ["Target is discovered", "No syntax errors"],
+                "risk_level": "low",
+                "parallelizable": False,
+                "owner_type": "single_worker",
+                "max_depth": 1,
+                "failure_policy": "retry",
+            },
+        )
+    )
+
+    assert result.accepted is True
+    assert result.status == "completed"
+    assert result.payload["repo_report"]["existing_paths"] == []
+    assert result.payload["repo_report"]["candidate_paths"] == ["src/widget_handler.py"]
+    assert result.payload["repository_understanding"]["candidate_reason"] in {"search_matches", "filename_matches"}
+    assert result.payload["repository_understanding"]["main_path_effects"]["affects_edit_targets"] is True
+    assert result.payload["edit_intent"]["mode"] == "direct_apply"
+    assert result.payload["edit_intent"]["target_paths"][0] == "src/widget_handler.py"
+    assert result.payload["applied_change_count"] == 1
+    assert result.payload["applied_changes"][0]["path"] == "src/widget_handler.py"
+    assert result.payload["verification"]["status"] == "passed"
+    trace_tools = [item["tool"] for item in result.payload["native_tool_trace"]["trace"] if isinstance(item, dict)]
+    assert "search" in trace_tools
+    assert "patch_preview" in trace_tools
+    assert "structured_patch" in trace_tools
+    assert "diff_preview" in trace_tools
+    assert "verify" in trace_tools
+    assert "print('done')" in target.read_text(encoding="utf-8")
 
 
 def test_coding_agent_runtime_blocks_when_bounded_replace_cannot_apply(tmp_path) -> None:

@@ -23,6 +23,23 @@ from agent_orchestrator.evidence import (
     write_workflow_evidence_markdown,
 )
 from agent_orchestrator.productization_surface import build_comparative_daily_driver_benchmark
+
+
+from agent_orchestrator.opencode_harness import (
+    AUTHORITATIVE_REPORT_VERSION,
+    CASE_PACK_VERSION,
+    COMPARATIVE_REPORT_VERSION,
+    NORMALIZED_RECORD_VERSION,
+    OPENCODE_RUN_RECORD_VERSION,
+    build_authoritative_comparative_report,
+    build_comparative_evidence_report,
+    build_external_opencode_harness_bundle,
+    build_native_run_records,
+    build_opencode_run_records,
+    build_same_contract_case_pack,
+    normalize_run_records,
+    write_case_pack,
+)
 from test_support import write_minimal_process_docs
 
 
@@ -691,6 +708,11 @@ def test_capture_workflow_evidence_tracks_multiple_proven_repo_task_families_wit
 
     proof_strength = payload["summary"]["comparative_benchmark"]["comparison_proof_strength"]
     digest = payload["summary"]["comparative_benchmark_digest"]
+    harness = payload["summary"]["daily_driver_repeatability_harness"]
+    benchmark_harness = payload["summary"]["comparative_benchmark"]["daily_driver_repeatability_harness"]
+    case_matrix = payload["summary"]["daily_driver_case_matrix"]
+    runner = payload["summary"]["daily_driver_runner_artifact"]
+    benchmark_runner = payload["summary"]["comparative_benchmark"]["daily_driver_runner_artifact"]
 
     assert proof_strength["direct_proof_status"] == "multiple_stronger_task_families_proven"
     assert proof_strength["repeatability_status"] == "broadly_proven_on_internal_repo_task_slice"
@@ -731,6 +753,75 @@ def test_capture_workflow_evidence_tracks_multiple_proven_repo_task_families_wit
         "workspace_index_alignment_repo_task",
     ]
     assert proof_strength["broader_repeatability_gap_families"] == []
+    assert harness == benchmark_harness
+    assert harness["format"] == "agent_orchestrator.daily_driver_repeatability_harness.v1"
+    assert harness["harness_status"] == "daily_driver_ready"
+    assert harness["same_contract_for_external_comparison"] is True
+    assert harness["contract_outputs"] == ["runtime_payload", "workspace_index", "cli_summary"]
+    assert harness["minimum_required_passing_family_count"] == 3
+    assert harness["proven_family_count"] == 6
+    assert harness["passing_family_count"] == 6
+    assert harness["paused_family_count"] == 0
+    assert harness["failed_family_count"] == 0
+    assert harness["recovery_family_count"] == 6
+    assert harness["stop_or_verify_coverage_ready"] is True
+    assert harness["mock_only"] is False
+    assert harness["external_opencode_harness_ready"] is False
+    assert harness["next_external_step"] == "authoritative_opencode_case_harness"
+    assert set(harness["family_results"]) == {
+        "compliance_process_repo_task",
+        "evidence_contract_alignment_repo_task",
+        "helper_implementation_repo_task",
+        "long_chain_native_first_repo_task",
+        "multi_file_operator_surface_repo_task",
+        "workspace_index_alignment_repo_task",
+    }
+    assert all(item["status"] == "passed" for item in harness["family_results"].values())
+    assert all(item["verify_or_stop"] == "verify" for item in harness["family_results"].values())
+    assert all(item["resume_reason"] for item in harness["family_results"].values())
+    assert case_matrix["format"] == "agent_orchestrator.daily_driver_case_matrix.v1"
+    assert case_matrix["matrix_status"] == "insufficient_coverage"
+    assert case_matrix["minimum_required_family_count"] == 3
+    assert case_matrix["covered_family_count"] == 1
+    assert case_matrix["covered_case_count"] == 6
+    assert case_matrix["covered_families"] == [
+        "multi_file_operator_surface",
+    ]
+    assert case_matrix["missing_families"] == [
+        "docs_update",
+        "single_file_code_fix",
+        "test_driven_feature",
+        "failure_clarify_approval_pause",
+    ]
+    assert [row["task_family"] for row in case_matrix["matrix_rows"]] == [
+        "docs_update",
+        "single_file_code_fix",
+        "multi_file_operator_surface",
+        "test_driven_feature",
+        "failure_clarify_approval_pause",
+    ]
+    assert case_matrix["matrix_rows"][0]["status"] == "missing"
+    assert case_matrix["matrix_rows"][0]["verify_or_stop"] == "verify"
+    assert runner == benchmark_runner
+    assert runner["format"] == "agent_orchestrator.daily_driver_runner_artifact.v1"
+    assert runner["runner_status"] == "repeatability_gap_remaining"
+    assert runner["runner_family_count"] == 1
+    assert runner["contract_outputs"] == ["runtime_payload", "workspace_index", "cli_summary"]
+    assert runner["next_external_step"] == "authoritative_opencode_case_harness"
+    assert runner["matrix_status"] == case_matrix["matrix_status"]
+    assert runner["harness_status"] == harness["harness_status"]
+    assert runner["runner_family_runs"][2]["task_family"] == "multi_file_operator_surface"
+    assert "verify" in runner["runner_family_runs"][2]["steps"]
+    assert payload["summary"]["comparative_benchmark"]["comparative_daily_driver_summary"]["daily_driver_runner_artifact"]["runner_status"] == "repeatability_gap_remaining"
+    assert digest["daily_driver_runner_artifact_status"] == "repeatability_gap_remaining"
+    assert digest["daily_driver_runner_artifact_contract_outputs"] == [
+        "runtime_payload",
+        "workspace_index",
+        "cli_summary",
+    ]
+    assert case_matrix["matrix_rows"][2]["input"]["real_repo_case_count"] == 6
+    assert case_matrix["matrix_rows"][2]["execution"]["repeatable"] is True
+    assert case_matrix["matrix_rows"][4]["verification"]["required_stop_or_verify"] == "stop"
     assert payload["summary"]["comparative_benchmark"]["comparison_grade_assessment"]["status"] == "internal_repeatability_strong_external_comparison_gap_remaining"
     assert payload["summary"]["comparative_benchmark"]["comparison_grade_assessment"]["comparison_grade_ready"] is False
     assert payload["summary"]["comparative_benchmark"]["comparison_grade_assessment"]["internal_repeatability_ready"] is True
@@ -1041,6 +1132,7 @@ def test_repository_evidence_case_catalog_can_prove_multi_family_daily_driver_be
     proof_strength = payload["summary"]["comparative_benchmark"]["comparison_proof_strength"]
     benchmark = payload["summary"]["comparative_benchmark"]
     digest = payload["summary"]["comparative_benchmark_digest"]
+    case_matrix = payload["summary"]["daily_driver_case_matrix"]
 
     assert len(cases) == 6
     assert proof_strength["direct_proof_status"] == "multiple_stronger_task_families_proven"
@@ -1073,6 +1165,42 @@ def test_repository_evidence_case_catalog_can_prove_multi_family_daily_driver_be
     assert "workspace_index" in digest["shared_evidence_surface"]
     assert "ui_execution_summary" in digest["shared_evidence_surface"] or "team_summary" in digest["shared_evidence_surface"]
     assert payload["summary"]["comparative_benchmark"]["comparative_daily_driver_summary"]["format"] == "agent_orchestrator.comparative_daily_driver_summary.v1"
+    assert case_matrix["format"] == "agent_orchestrator.daily_driver_case_matrix.v1"
+    assert case_matrix["matrix_status"] == "insufficient_coverage"
+    assert case_matrix["minimum_required_family_count"] == 3
+    assert case_matrix["covered_family_count"] == 1
+    assert case_matrix["covered_case_count"] == 6
+    assert case_matrix["covered_families"] == [
+        "multi_file_operator_surface",
+    ]
+    assert all(row["evidence"]["contract_outputs"] == ["runtime_payload", "workspace_index", "cli_summary"] for row in case_matrix["matrix_rows"])
+
+
+def test_repository_evidence_case_catalog_can_prove_daily_driver_case_matrix(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+
+    cases = load_workflow_evidence_cases("docs/process/evidence-cases.json")
+
+    payload = capture_workflow_evidence(cases, project_root=tmp_path)
+    case_matrix = payload["summary"]["daily_driver_case_matrix"]
+
+    assert case_matrix["format"] == "agent_orchestrator.daily_driver_case_matrix.v1"
+    assert case_matrix["matrix_status"] == "multi_family_case_matrix_ready"
+    assert case_matrix["minimum_required_family_count"] == 3
+    assert case_matrix["covered_family_count"] == 5
+    assert case_matrix["covered_case_count"] >= 15
+    assert case_matrix["covered_families"] == [
+        "docs_update",
+        "single_file_code_fix",
+        "multi_file_operator_surface",
+        "test_driven_feature",
+        "failure_clarify_approval_pause",
+    ]
+    assert case_matrix["missing_families"] == []
+    assert all(row["coverage_ready"] is True for row in case_matrix["matrix_rows"])
+    assert all(row["input"]["real_repo_case_count"] >= 1 for row in case_matrix["matrix_rows"])
+    assert all(row["execution"]["repeatable"] is True for row in case_matrix["matrix_rows"])
+    assert all(row["evidence"]["contract_outputs"] == ["runtime_payload", "workspace_index", "cli_summary"] for row in case_matrix["matrix_rows"])
 
 
 def test_build_comparative_daily_driver_benchmark_matches_shared_operator_text() -> None:
@@ -1087,6 +1215,220 @@ def test_build_comparative_daily_driver_benchmark_matches_shared_operator_text()
     )
     assert build_comparative_daily_driver_benchmark({}) is None
 
+
+
+
+def test_external_opencode_same_contract_harness_builds_case_pack_and_comparison_report(tmp_path) -> None:
+    case_pack = build_same_contract_case_pack()
+    case_pack_path = write_case_pack(tmp_path / "external-opencode-same-contract-cases.json", case_pack)
+    native_records = build_native_run_records(case_pack)
+    opencode_records = build_opencode_run_records(case_pack)
+    report = build_comparative_evidence_report(case_pack, native_records, opencode_records)
+    bundle = build_external_opencode_harness_bundle()
+
+    assert case_pack_path.exists()
+    assert case_pack["contract_version"] == CASE_PACK_VERSION
+    assert case_pack["case_family_count"] == 5
+    assert case_pack["required_task_families"] == [
+        "docs_update",
+        "single_file_repair",
+        "multi_file_operator_surface",
+        "test_driven_small_feature",
+        "failure_clarify_approval_path",
+    ]
+    assert len(case_pack["cases"]) == 5
+    assert case_pack["cases"][0]["required_evidence_surface"] == [
+        "runtime_payload",
+        "workspace_index_summary",
+        "operator_summary",
+        "failure_pause_recovery_reason",
+    ]
+    assert native_records["run_record_set_version"] == "native_external_runner_record.v1"
+    assert native_records["runner"] == "native"
+    assert opencode_records["run_record_set_version"] == OPENCODE_RUN_RECORD_VERSION
+    assert opencode_records["runner"] == "opencode"
+    assert len(native_records["records"]) == 5
+    assert len(opencode_records["records"]) == 5
+    assert all(record["runtime_payload"]["model"]["value"] == "unavailable" for record in opencode_records["records"])
+    assert all(record["runtime_payload"]["provider"]["value"] == "unavailable" for record in opencode_records["records"])
+    assert all(record["workspace_index_summary"]["verify_commands"] is not None for record in opencode_records["records"])
+    assert report["report_version"] == COMPARATIVE_REPORT_VERSION
+    assert report["case_result_count"] == 5
+    assert report["operator_decision"]["recommended_path"] in {
+        "continue_opencode_ecosystem_chase",
+        "native_productization_next",
+        "instrumentation_first",
+        "mixed_strategy",
+        "instrumentation_still_blocking",
+        "instrumentation_closed_native_productization_next",
+        "instrumentation_closed_continue_opencode_ecosystem_chase",
+        "instrumentation_partially_closed_mixed_strategy",
+    }
+    assert report["case_results"][0]["gap_classification"]
+    assert bundle["case_pack"]["contract_version"] == CASE_PACK_VERSION
+    assert bundle["comparative_evidence_report"]["report_version"] == COMPARATIVE_REPORT_VERSION
+    assert bundle["authoritative_comparative_report"]["report_version"] == AUTHORITATIVE_REPORT_VERSION
+    assert bundle["instrumentation_closure"]["status"] == "still_blocking"
+    assert bundle["operator_decision"]["decision"] == "instrumentation_still_blocking"
+
+
+
+
+
+
+def test_authoritative_opencode_harness_normalizes_records_and_closes_executed_timing_surface(tmp_path) -> None:
+    case_pack = build_same_contract_case_pack()
+    native_records = build_native_run_records(case_pack)
+    opencode_records = build_opencode_run_records(case_pack, command_template="printf case:{case_id}", authoritative_runner=True)
+    normalized = normalize_run_records(opencode_records, case_pack)
+    report = build_authoritative_comparative_report(case_pack, native_records, opencode_records)
+
+    assert normalized["normalized_record_set_version"] == NORMALIZED_RECORD_VERSION
+    assert normalized["runner"] == "opencode"
+    first = normalized["records"][0]
+    assert first["normalized_record_version"] == NORMALIZED_RECORD_VERSION
+    assert first["runtime_payload"]["command"]["state"] == "available"
+    assert first["runtime_payload"]["exit_status"]["state"] == "available"
+    assert first["runtime_payload"]["started_at"]["state"] == "available"
+    assert first["runtime_payload"]["ended_at"]["state"] == "available"
+    assert first["runtime_payload"]["duration_ms"]["state"] == "available"
+    assert first["workspace_index_summary"]["state"] == "available"
+    assert first["operator_summary"]["readability"] == "clear"
+    assert report["report_version"] == AUTHORITATIVE_REPORT_VERSION
+    assert report["normalized_record_version"] == NORMALIZED_RECORD_VERSION
+    assert report["case_result_count"] == 5
+    assert report["instrumentation_closure"]["status"] == "closed"
+    assert report["instrumentation_closure"]["blocked_case_count"] == 0
+    assert report["operator_decision"]["decision"] == "instrumentation_closed_native_productization_next"
+    assert all(result["command_execution_evidence"]["opencode"] is True for result in report["case_results"])
+
+def test_external_opencode_harness_cli_runs_case_pack_records_and_report(tmp_path) -> None:
+    from agent_orchestrator.cli import main
+    import sys
+
+    case_pack = tmp_path / "case-pack.json"
+    native_records = tmp_path / "native-run.json"
+    opencode_records = tmp_path / "opencode-run.json"
+    report = tmp_path / "report.json"
+    normalized = tmp_path / "opencode-normalized.json"
+    authoritative_report = tmp_path / "authoritative-report.json"
+
+    commands = [
+        ["agent-orchestrator", "evidence", "case-pack", "--output", str(case_pack), "--format", "json"],
+        ["agent-orchestrator", "evidence", "native-run", "--case-pack", str(case_pack), "--output", str(native_records), "--format", "json"],
+        ["agent-orchestrator", "evidence", "opencode-run", "--case-pack", str(case_pack), "--output", str(opencode_records), "--format", "json", "--command-template", "printf case:{case_id}"],
+        ["agent-orchestrator", "evidence", "normalize-records", "--case-pack", str(case_pack), "--records", str(opencode_records), "--output", str(normalized), "--format", "json"],
+        [
+            "agent-orchestrator",
+            "evidence",
+            "external-report",
+            "--case-pack",
+            str(case_pack),
+            "--native-records",
+            str(native_records),
+            "--opencode-records",
+            str(opencode_records),
+            "--output",
+            str(report),
+            "--format",
+            "json",
+        ],
+        [
+            "agent-orchestrator",
+            "evidence",
+            "authoritative-report",
+            "--case-pack",
+            str(case_pack),
+            "--native-records",
+            str(native_records),
+            "--opencode-records",
+            str(opencode_records),
+            "--output",
+            str(authoritative_report),
+            "--format",
+            "json",
+        ],
+    ]
+    old_argv = sys.argv
+    try:
+        for command in commands:
+            sys.argv = command
+            main()
+    finally:
+        sys.argv = old_argv
+
+    assert json.loads(case_pack.read_text())["contract_version"] == CASE_PACK_VERSION
+    assert json.loads(native_records.read_text())["runner"] == "native"
+    opencode_payload = json.loads(opencode_records.read_text())
+    assert opencode_payload["runner"] == "opencode"
+    assert opencode_payload["records"][0]["runtime_payload"]["command"].startswith("printf case:")
+    payload = json.loads(report.read_text())
+    assert payload["report_version"] == COMPARATIVE_REPORT_VERSION
+    assert payload["case_result_count"] == 5
+    assert payload["operator_decision"]["recommended_path"] == "instrumentation_first"
+    assert json.loads(normalized.read_text())["normalized_record_set_version"] == NORMALIZED_RECORD_VERSION
+    authoritative_payload = json.loads(authoritative_report.read_text())
+    assert authoritative_payload["report_version"] == AUTHORITATIVE_REPORT_VERSION
+    assert authoritative_payload["instrumentation_closure"]["status"] == "still_blocking"
+    assert authoritative_payload["operator_decision"]["decision"] == "instrumentation_still_blocking"
+
+
+
+def test_authoritative_opencode_cli_requires_explicit_authoritative_runner_flag(tmp_path) -> None:
+    from agent_orchestrator.cli import main
+    import sys
+
+    case_pack = tmp_path / "case-pack.json"
+    native_records = tmp_path / "native-run.json"
+    opencode_records = tmp_path / "opencode-authoritative-run.json"
+    report = tmp_path / "authoritative-report.json"
+    commands = [
+        ["agent-orchestrator", "evidence", "case-pack", "--output", str(case_pack), "--format", "json"],
+        ["agent-orchestrator", "evidence", "native-run", "--case-pack", str(case_pack), "--output", str(native_records), "--format", "json"],
+        ["agent-orchestrator", "evidence", "opencode-run", "--case-pack", str(case_pack), "--output", str(opencode_records), "--format", "json", "--command-template", "printf case:{case_id}", "--authoritative-runner"],
+        ["agent-orchestrator", "evidence", "authoritative-report", "--case-pack", str(case_pack), "--native-records", str(native_records), "--opencode-records", str(opencode_records), "--output", str(report), "--format", "json"],
+    ]
+    old_argv = sys.argv
+    try:
+        for command in commands:
+            sys.argv = command
+            main()
+    finally:
+        sys.argv = old_argv
+    opencode_payload = json.loads(opencode_records.read_text())
+    assert opencode_payload["records"][0]["runner_authority"]["authoritative"] is True
+    payload = json.loads(report.read_text())
+    assert payload["instrumentation_closure"]["status"] == "closed"
+    assert payload["operator_decision"]["decision"] == "instrumentation_closed_native_productization_next"
+
+def test_external_opencode_harness_summary_exposes_comparison_artifacts(tmp_path) -> None:
+    write_minimal_process_docs(tmp_path)
+    payload = capture_workflow_evidence(load_workflow_evidence_cases("docs/process/evidence-cases.json"), project_root=tmp_path)
+    summary = payload["summary"]
+    benchmark = summary["comparative_benchmark"]
+    digest = payload["summary"]["comparative_benchmark_digest"]
+
+    assert summary["external_opencode_harness"]["case_pack"]["contract_version"] == CASE_PACK_VERSION
+    assert summary["external_opencode_case_pack"]["contract_version"] == CASE_PACK_VERSION
+    assert summary["opencode_runner_adapter"]["run_record_set_version"] == OPENCODE_RUN_RECORD_VERSION
+    assert summary["native_vs_opencode_comparative_report"]["report_version"] == COMPARATIVE_REPORT_VERSION
+    assert summary["authoritative_native_vs_opencode_report"]["report_version"] == AUTHORITATIVE_REPORT_VERSION
+    assert summary["external_opencode_instrumentation_closure"]["status"] == "still_blocking"
+    assert summary["external_opencode_operator_decision"]["decision"] == "instrumentation_still_blocking"
+    assert summary["external_opencode_operator_decision"].get("recommended_path") in {
+        "instrumentation_still_blocking",
+        "instrumentation_closed_native_productization_next",
+        "instrumentation_closed_continue_opencode_ecosystem_chase",
+        "instrumentation_partially_closed_mixed_strategy",
+    }
+    assert benchmark["external_opencode_harness"]["case_pack"]["contract_version"] == CASE_PACK_VERSION
+    assert benchmark["external_opencode_case_pack"]["contract_version"] == CASE_PACK_VERSION
+    assert benchmark["opencode_runner_adapter"]["run_record_set_version"] == OPENCODE_RUN_RECORD_VERSION
+    assert benchmark["native_vs_opencode_comparative_report"]["case_result_count"] == 5
+    assert benchmark["authoritative_native_vs_opencode_report"]["case_result_count"] == 5
+    assert benchmark["external_opencode_instrumentation_closure"]["status"] == "still_blocking"
+    assert benchmark["external_opencode_operator_decision"]["gap_counts"]
+    assert digest["external_harness_status"] == "missing_authoritative_opencode_harness"
 
 def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path) -> None:
     write_minimal_process_docs(tmp_path)
@@ -1123,6 +1465,10 @@ def test_render_workflow_evidence_markdown_reports_summary_and_signals(tmp_path)
     assert "## Comparative Benchmark Digest" in markdown
     assert "shared_productization_contract_ready" in markdown
     assert "comparison_grade_assessment: status=" in markdown
+    assert "daily_driver_case_matrix: status=" in markdown
+    assert "covered_family_count=" in markdown
+    assert "daily_driver_repeatability_harness: status=" in markdown
+    assert "contract_outputs=runtime_payload,workspace_index,cli_summary" in markdown
     assert "external_comparison_harness_surface: status=" in markdown
     assert "required_shared_surface_count=" in markdown
     assert "required_external_artifact_count=" in markdown

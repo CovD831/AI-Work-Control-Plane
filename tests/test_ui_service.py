@@ -233,7 +233,22 @@ def test_build_operator_summary_surfaces_multi_family_daily_driver_benchmark() -
                 "comparison_proof_strength": {
                     "daily_driver_repeatability_tier": "multi_family_broad_daily_driver_proven",
                     "independent_daily_driver_repo_task_family_count": 6,
-                }
+                },
+                "daily_driver_case_matrix": {
+                    "matrix_status": "multi_family_case_matrix_ready",
+                    "covered_family_count": 5,
+                },
+                "daily_driver_repeatability_harness": {
+                    "harness_status": "daily_driver_ready",
+                    "passing_family_count": 6,
+                },
+                "daily_driver_runner_artifact": {
+                    "format": "agent_orchestrator.daily_driver_runner_artifact.v1",
+                    "runner_status": "daily_driver_ready",
+                    "runner_family_count": 5,
+                    "contract_outputs": ["runtime_payload", "workspace_index", "cli_summary"],
+                    "next_external_step": "authoritative_opencode_case_harness",
+                },
             }
         },
     )
@@ -243,6 +258,10 @@ def test_build_operator_summary_surfaces_multi_family_daily_driver_benchmark() -
         == "official_catalog=docs/process/evidence-cases.json independent_daily_driver_families=6 status=multi_family_broad_daily_driver_proven"
     )
     assert operator["comparative_daily_driver_summary"]["format"] == "agent_orchestrator.comparative_daily_driver_summary.v1"
+    assert operator["comparative_daily_driver_summary"]["daily_driver_case_matrix"]["matrix_status"] == "multi_family_case_matrix_ready"
+    assert operator["comparative_daily_driver_summary"]["daily_driver_repeatability_harness"]["harness_status"] == "daily_driver_ready"
+    assert operator["comparative_daily_driver_runner_artifact"]["runner_status"] == "daily_driver_ready"
+    assert operator["comparative_daily_driver_summary"]["daily_driver_runner_artifact"]["runner_family_count"] == 5
 
 
 def test_dashboard_service_can_use_tmux_job_runtime(tmp_path) -> None:
@@ -374,6 +393,8 @@ def test_dashboard_actions_execute_and_read_run(tmp_path) -> None:
     assert operator["comparative_benchmark_digest"]["productization_case_count"] == 1
     assert operator["comparative_benchmark_digest"]["daily_driver_main_path_ready"] is False
     assert operator["comparative_benchmark_digest"]["daily_driver_main_path_ready_cases"] == 0
+    assert operator["comparative_benchmark_digest"]["daily_driver_case_matrix_status"] == "insufficient_coverage"
+    assert operator["comparative_benchmark_digest"]["daily_driver_repeatability_harness_status"] == "daily_driver_ready"
     assert operator["comparative_benchmark_digest"]["comparison_status"] == "shared_productization_ready_but_daily_driver_proof_gap_remaining"
     assert operator["comparative_benchmark_digest"]["evidence_scope"] == "bounded_internal_evidence_only"
     assert operator["comparative_benchmark_digest"]["direct_proof_status"] == "foundational_productization_only"
@@ -521,6 +542,26 @@ def test_dashboard_actions_execute_and_read_run(tmp_path) -> None:
     }
     assert operator["execution_runtime_summary"]["native_exploration"]["exploration_evidence"]["format"] == "agent_orchestrator.native_exploration_evidence.v1"
     assert "ui_execution_summary" in operator["execution_runtime_summary"]["native_exploration"]["exploration_evidence"]["shared_evidence_surface"]
+    assert operator["execution_runtime_summary"]["repository_understanding"]["format"] == "agent_orchestrator.repository_understanding.v1"
+    assert operator["execution_runtime_summary"]["repository_understanding"]["candidate_count"] >= 1
+    assert operator["execution_runtime_summary"]["repository_understanding"]["candidate_evidence"][0]["selection_reason"]
+    assert operator["execution_runtime_summary"]["native_exploration"]["repository_understanding"]["format"] == "agent_orchestrator.repository_understanding.v1"
+    assert "ui_execution_summary" in operator["execution_runtime_summary"]["repository_understanding"]["operator_visibility"]["shared_evidence_surface"]
+    assert operator["execution_runtime_summary"]["native_tool_evidence"]["format"] == "agent_orchestrator.native_tool_evidence.v1"
+    if pending_approval is not None:
+        assert operator["execution_runtime_summary"]["native_tool_evidence"]["verify_evidence_ready"] is True
+        assert operator["execution_runtime_summary"]["native_tool_evidence"]["tool_counts"]["verify"] >= 1
+    else:
+        assert operator["execution_runtime_summary"]["native_tool_evidence"]["verify_evidence_ready"] is False
+        assert operator["execution_runtime_summary"]["native_tool_evidence"]["tool_counts"]["verify"] == 0
+        assert (
+            operator["execution_runtime_summary"]["native_tool_evidence"]["operator_visibility"]["status"]
+            == "no_patch_diff_verify_trace"
+        )
+    assert operator["execution_runtime_summary"]["adapter_execution_fact"]["format"] == "agent_orchestrator.adapter_execution_fact.v1"
+    assert operator["execution_runtime_summary"]["adapter_execution_fact"]["default_path"] == "native"
+    assert operator["execution_runtime_summary"]["adapter_execution_fact"]["source_visibility"]["source_label"] == "native_first_party:coding_agent"
+    assert "ui_execution_summary" in operator["execution_runtime_summary"]["adapter_execution_fact"]["shared_evidence_surface"]
     assert operator["execution_runtime_summary"]["native_tool_surface"]["capability_profile"]["read"]["purpose"] == "bounded file inspection"
     assert operator["execution_runtime_summary"]["native_tool_surface"]["capability_profile"]["structured_patch"]["purpose"] == "auditable bounded mutations with preview evidence"
     assert operator["execution_runtime_summary"]["native_tool_surface"]["capability_profile"]["diff_preview"]["purpose"] == "governed bounded change preview for operator-visible review"
@@ -1554,3 +1595,26 @@ def test_dashboard_lists_execution_step_events(tmp_path) -> None:
     assert any(event["type"] == "execution.action_requested" for event in events)
     assert any(event["type"] == "execution.action_completed" for event in events)
     assert any(event["type"] == "execution.context_compressed" for event in events)
+
+
+def test_dashboard_surfaces_native_product_ux_snapshot(tmp_path) -> None:
+    service = _service(tmp_path)
+    session = service.create_session("Build a persisted plan artifact")
+
+    health = service.health()
+    detail = service.get_session(str(session["id"]))
+
+    assert health["native_product_ux"]["format"] == "agent_orchestrator.native_product_ux_snapshot.v1"
+    assert health["release_candidate"]["verdict"] in {"pass", "degraded", "fail"}
+    assert health["release_bundle"]["verdict"] in {"pass", "degraded", "fail"}
+    assert health["native_rc_adoption"]["format"] == "agent_orchestrator.native_rc_adoption_summary.v1"
+    assert health["native_rc_adoption"]["lane_count"] == 3
+    assert detail["native_product_ux"]["format"] == "agent_orchestrator.native_product_ux_snapshot.v1"
+    assert detail["operator_summary"]["native_product_ux"]["next_action"]
+    assert detail["native_product_ux"]["provider_runtime"]["release_candidate_verdict"]
+    assert detail["native_release_candidate"]["format"] == "agent_orchestrator.native_release_candidate_report.v1"
+    assert detail["native_release_bundle"]["format"] == "agent_orchestrator.native_release_operator_bundle.v1"
+    assert detail["native_rc_adoption"]["next_action"]
+    assert detail["control_plane"]["evidence_bundle"]["native_product_ux"]["format"] == "agent_orchestrator.native_product_ux_snapshot.v1"
+    assert detail["control_plane"]["evidence_bundle"]["native_rc_adoption"]["lane_count"] == 3
+    assert detail["control_plane"]["evidence_bundle"]["native_product_ux"]["provider_runtime"]["install_release_candidate_ready"] in {True, False}
