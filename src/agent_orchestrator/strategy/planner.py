@@ -683,11 +683,18 @@ def _decision_evidence(
         ),
         "next_recommended_action": planner_actions[0] if planner_actions else "inspect",
     }
+    next_action_contract = _next_action_contract(
+        planner_family=planner_family,
+        planner_actions=planner_actions,
+        pause_expected=pause_expected,
+        selected_owner=selected_owner,
+    )
     return {
         "format": "agent_orchestrator.native_planner_decision.v1" if planner_family == "native" else "agent_orchestrator.compatibility_planner_decision.v1",
         "planner_family": planner_family,
         "selected_strategy": strategy.value,
         "selected_actions": planner_actions,
+        "next_action_contract": next_action_contract,
         "selected_owner": selected_owner,
         "decision_boundary": {
             "task_type": contract.task_type,
@@ -755,6 +762,7 @@ def _decision_evidence(
             "selected_action_count": len(planner_actions),
             "actions": autonomy_actions,
             "primary_action": planner_actions[0] if planner_actions else None,
+            "next_action_contract": next_action_contract,
         },
         "control_surface": control_surface,
         "tool_workflow_plan": tool_workflow_plan,
@@ -790,6 +798,7 @@ def _decision_evidence(
             "runbook_recovery_lane": "handoff_external" if "handoff_external" in planner_actions else "approval_pause" if "approval_pause" in planner_actions else "continue_native",
             "approval_pause_state": "approval_pause" in planner_actions,
             "clarify_pause_state": planner_actions[:1] == ["clarify"],
+            "supported_next_actions": list(next_action_contract["supported_actions"]),
         },
         "native_work_units": native_work_units,
         "planner_independence": {
@@ -873,6 +882,79 @@ def _tool_workflow_plan(
             "evidence_report",
         ],
     }
+
+
+def _next_action_contract(
+    *,
+    planner_family: str,
+    planner_actions: list[str],
+    pause_expected: bool,
+    selected_owner: str,
+) -> dict[str, object]:
+    normalized_actions = [_normalize_next_action(item) for item in planner_actions]
+    supported_actions: list[str] = []
+    for action in normalized_actions:
+        if action and action not in supported_actions:
+            supported_actions.append(action)
+    if pause_expected and "pause" not in supported_actions:
+        supported_actions.append("pause")
+    if selected_owner == "external" and "handoff" not in supported_actions:
+        supported_actions.append("handoff")
+    if "stop" not in supported_actions:
+        supported_actions.append("stop")
+    decision_points = {
+        "explore": {
+            "selected": "explore" in supported_actions,
+            "runtime_effect": "discover repository candidates and context evidence",
+        },
+        "clarify": {
+            "selected": "clarify" in supported_actions,
+            "runtime_effect": "pause for missing scope or approval boundary clarification",
+        },
+        "edit": {
+            "selected": "edit" in supported_actions,
+            "runtime_effect": "prepare or apply bounded patch operations",
+        },
+        "verify": {
+            "selected": "verify" in supported_actions,
+            "runtime_effect": "run governed verification and classify closure",
+        },
+        "pause": {
+            "selected": "pause" in supported_actions,
+            "runtime_effect": "preserve approval or clarification pause state",
+        },
+        "handoff": {
+            "selected": "handoff" in supported_actions,
+            "runtime_effect": "emit governed external-agent handoff facts",
+        },
+        "stop": {
+            "selected": "stop" in supported_actions,
+            "runtime_effect": "stop with explicit reason and recovery guidance",
+        },
+    }
+    return {
+        "format": "agent_orchestrator.native_planner_next_action_contract.v1"
+        if planner_family == "native"
+        else "agent_orchestrator.compatibility_planner_next_action_contract.v1",
+        "planner_family": planner_family,
+        "primary_action": supported_actions[0] if supported_actions else "stop",
+        "supported_actions": supported_actions,
+        "required_action_vocabulary": ["explore", "clarify", "edit", "verify", "pause", "handoff", "stop"],
+        "decision_points": decision_points,
+        "runtime_alignment_required": True,
+        "operator_visible": True,
+    }
+
+
+def _normalize_next_action(action: str) -> str:
+    normalized = str(action or "").strip()
+    if normalized == "approval_pause":
+        return "pause"
+    if normalized in {"handoff_external", "fallback_external"}:
+        return "handoff"
+    if normalized == "resume_learning":
+        return "verify"
+    return normalized if normalized in {"explore", "clarify", "edit", "verify", "pause", "handoff", "stop"} else normalized
 
 
 def _planner_ready_next_units(*, strategy: ExecutionStrategy, contract: TaskContract) -> list[str]:

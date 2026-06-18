@@ -28,6 +28,7 @@ from agent_orchestrator.execution.models import (
     ActionResult,
     CompressedExecutionContext,
     derive_adapter_capability_summary,
+    derive_adapter_execution_fact,
     derive_adapter_productization_surface,
     ExecutionKernelContract,
     ExecutionRequest,
@@ -342,6 +343,7 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
             "turn_id": request.turn_id,
             "context_snapshot": dict(request.context_snapshot or {}),
             "repo_report": repo_report.to_dict(),
+            "repository_understanding": _repository_understanding_from_repo_report(repo_report.to_dict()),
             "execution_context": context.to_dict(),
             "context_selection": context_selection.to_dict(),
             "isolation_state": isolation_state.to_dict(),
@@ -459,7 +461,20 @@ class CodingAgentExecutionRuntime(ExecutionRuntime):
         payload["native_tool_productization_surface"] = _native_tool_productization_surface(payload)
         payload["session_continuity_contract"] = _session_continuity_contract(payload=payload)
         payload["adapter_shared_contract"] = _adapter_shared_contract_summary_from_payload(payload)
+        payload["adapter_execution_fact"] = derive_adapter_execution_fact(
+            runtime_name=self.name,
+            execution_mode=ExecutionMode.CODING_AGENT.value,
+            task_kind=request.route.task_kind.value,
+            status=status,
+            run_id=_runtime_run_id(request),
+            session_id=request.session_id,
+            turn_id=request.turn_id,
+            adapter_contract=payload.get("adapter_contract", {}),
+            adapter_shared_contract=payload.get("adapter_shared_contract", {}),
+            adapter_capability_surface=payload.get("adapter_capability_surface", {}),
+        )
         payload["native_tool_usage"] = _native_tool_usage_summary(payload)
+        payload["native_tool_evidence"] = _native_tool_evidence_summary(payload)
         payload["resume_contract"] = _resume_contract(
             request,
             pending_approval,
@@ -5614,16 +5629,19 @@ def _record_execution_artifacts(
             "native_tool_surface": payload.get("native_tool_surface"),
             "native_tool_workflow_surface": payload.get("native_tool_workflow_surface"),
             "native_tool_usage": payload.get("native_tool_usage"),
+            "native_tool_evidence": payload.get("native_tool_evidence"),
             "native_tool_productization_surface": payload.get("native_tool_productization_surface"),
             "adapter_capability_surface": payload.get("adapter_capability_surface"),
             "adapter_capability": payload.get("adapter_capability"),
             "adapter_shared_contract": payload.get("adapter_shared_contract"),
+            "adapter_execution_fact": payload.get("adapter_execution_fact"),
             "adapter_productization_surface": payload.get("adapter_productization_surface"),
             "shared_productization_surface": payload.get("shared_productization_surface"),
             "comparative_benchmark": payload.get("comparative_benchmark"),
             "comparative_benchmark_digest": payload.get("comparative_benchmark_digest"),
             "native_tool_trace": payload.get("native_tool_trace"),
             "repo_report": payload.get("repo_report"),
+            "repository_understanding": payload.get("repository_understanding"),
         "strategy_summary": payload.get("strategy_summary"),
         "planner_shared_contract": payload.get("strategy_summary", {}).get("decision_evidence")
         if isinstance(payload.get("strategy_summary"), dict)
@@ -5887,6 +5905,42 @@ def _adapter_shared_contract_summary_from_payload(payload: dict[str, object]) ->
     }
 
 
+def _repository_understanding_from_repo_report(repo_report: dict[str, object]) -> dict[str, object]:
+    artifact = repo_report.get("artifact", {}) if isinstance(repo_report.get("artifact"), dict) else {}
+    understanding = (
+        artifact.get("repository_understanding", {})
+        if isinstance(artifact.get("repository_understanding"), dict)
+        else {}
+    )
+    if understanding:
+        return dict(understanding)
+    return {
+        "format": "agent_orchestrator.repository_understanding.v1",
+        "candidate_reason": None,
+        "explicit_paths": list(repo_report.get("explicit_paths", []))
+        if isinstance(repo_report.get("explicit_paths"), list)
+        else [],
+        "explicit_path_hits": list(repo_report.get("existing_paths", []))
+        if isinstance(repo_report.get("existing_paths"), list)
+        else [],
+        "candidate_count": len(repo_report.get("candidate_paths", []))
+        if isinstance(repo_report.get("candidate_paths"), list)
+        else 0,
+        "candidate_evidence": [],
+        "context_selection_reason": "Repository understanding evidence was unavailable in the exploration artifact.",
+        "main_path_effects": {
+            "affects_edit_targets": bool(repo_report.get("candidate_paths")),
+            "affects_verification_targets": bool(repo_report.get("candidate_paths")),
+            "records_selection_rationale": False,
+            "can_trigger_clarify_or_stop_when_empty": True,
+        },
+        "operator_visibility": {
+            "shared_evidence_surface": ["runtime_payload"],
+            "status": "fallback_summary_only",
+        },
+    }
+
+
 def _native_tool_usage_summary(payload: dict[str, object]) -> dict[str, object]:
     native_tool_trace = (
         payload.get("native_tool_trace", {})
@@ -5916,6 +5970,69 @@ def _native_tool_usage_summary(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _native_tool_evidence_summary(payload: dict[str, object]) -> dict[str, object]:
+    native_tool_trace = (
+        payload.get("native_tool_trace", {})
+        if isinstance(payload.get("native_tool_trace"), dict)
+        else {}
+    )
+    trace_entries = (
+        native_tool_trace.get("trace", [])
+        if isinstance(native_tool_trace.get("trace"), list)
+        else []
+    )
+    evidence_tools = {"patch_preview", "structured_patch", "diff_preview", "verify"}
+    evidence_records = [
+        {
+            "tool": item.get("tool"),
+            "summary": item.get("summary"),
+            "timestamp": item.get("timestamp"),
+            "arguments": dict(item.get("arguments", {})) if isinstance(item.get("arguments"), dict) else {},
+            "result": dict(item.get("result", {})) if isinstance(item.get("result"), dict) else {},
+        }
+        for item in trace_entries
+        if isinstance(item, dict) and item.get("tool") in evidence_tools
+    ]
+    tool_counts = {
+        tool_name: len([item for item in evidence_records if item.get("tool") == tool_name])
+        for tool_name in sorted(evidence_tools)
+    }
+    verification_records = [item for item in evidence_records if item.get("tool") == "verify"]
+    patch_records = [
+        item
+        for item in evidence_records
+        if item.get("tool") in {"patch_preview", "structured_patch", "diff_preview"}
+    ]
+    latest_verification = verification_records[-1] if verification_records else {}
+    latest_verification_result = (
+        latest_verification.get("result", {})
+        if isinstance(latest_verification.get("result"), dict)
+        else {}
+    )
+    return {
+        "format": "agent_orchestrator.native_tool_evidence.v1",
+        "evidence_record_count": len(evidence_records),
+        "tool_counts": tool_counts,
+        "patch_evidence_ready": bool(patch_records),
+        "verify_evidence_ready": bool(verification_records),
+        "latest_verification_status": latest_verification_result.get("status"),
+        "latest_verification_exit_code": latest_verification_result.get("exit_code"),
+        "latest_verification_artifact": latest_verification_result.get("artifact"),
+        "records": evidence_records,
+        "shared_evidence_surface": [
+            "runtime_payload",
+            "workspace_index",
+            "ui_execution_summary",
+            "cli_execution_summary",
+            "evidence_report",
+        ],
+        "operator_visibility": {
+            "patch_diff_verify_visible": bool(evidence_records),
+            "status": "tool_evidence_recorded" if evidence_records else "no_patch_diff_verify_trace",
+        },
+    }
+
+
 def _runtime_comparative_execution_artifact_summary(payload: dict[str, object]) -> dict[str, object]:
     continuity_contract = (
         payload.get("session_continuity_contract", {})
@@ -5927,6 +6044,7 @@ def _runtime_comparative_execution_artifact_summary(payload: dict[str, object]) 
         "native_repo_task_acceptance": payload.get("native_repo_task_acceptance", {}),
         "native_complex_repo_task_acceptance": payload.get("native_complex_repo_task_acceptance", {}),
         "adapter_shared_contract": payload.get("adapter_shared_contract", {}),
+        "adapter_execution_fact": payload.get("adapter_execution_fact", {}),
         "session_continuity": {
             "continuity_snapshot": continuity_contract.get("continuity_snapshot", {}),
             "session_productization_surface": continuity_contract.get("session_productization_surface", {}),

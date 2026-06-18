@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent_orchestrator.execution.models import (
+    derive_adapter_execution_fact,
     derive_adapter_productization_surface,
     ExecutionKernelContract,
     ExecutionRequest,
@@ -94,6 +95,16 @@ class LegacyExecutionRuntime(ExecutionRuntime):
         payload.setdefault("kernel_contract", self._kernel_contract().to_dict())
         payload.setdefault("adapter_contract", self._adapter_contract().to_dict())
         payload.setdefault("adapter_productization_surface", _adapter_productization_surface(payload.get("adapter_contract", {})))
+        payload.setdefault("adapter_execution_fact", _adapter_execution_fact(
+            runtime_name=self.name,
+            execution_mode=request.route.execution_mode.value,
+            task_kind=request.route.task_kind.value,
+            status=run.status,
+            run_id=run.run_id,
+            session_id=request.session_id,
+            turn_id=request.turn_id,
+            adapter_contract=payload.get("adapter_contract", {}),
+        ))
         payload.setdefault("session_id", request.session_id)
         payload.setdefault("turn_id", request.turn_id)
         if isinstance(request.context_snapshot, dict):
@@ -126,6 +137,16 @@ class LegacyExecutionRuntime(ExecutionRuntime):
         payload.setdefault("kernel_contract", self._kernel_contract().to_dict())
         payload.setdefault("adapter_contract", self._adapter_contract().to_dict())
         payload.setdefault("adapter_productization_surface", _adapter_productization_surface(payload.get("adapter_contract", {})))
+        payload.setdefault("adapter_execution_fact", _adapter_execution_fact(
+            runtime_name=self.name,
+            execution_mode=request.route.execution_mode.value,
+            task_kind=request.route.task_kind.value,
+            status=handle.status,
+            run_id=handle.run_id,
+            session_id=request.session_id,
+            turn_id=request.turn_id,
+            adapter_contract=payload.get("adapter_contract", {}),
+        ))
         payload.setdefault("session_id", request.session_id)
         payload.setdefault("turn_id", request.turn_id)
         if isinstance(request.context_snapshot, dict):
@@ -229,3 +250,7 @@ def _shared_adapter_capability_surface(
 
 def _adapter_productization_surface(adapter_contract: dict[str, object]) -> dict[str, object]:
     return derive_adapter_productization_surface(adapter_contract=adapter_contract)
+
+
+def _adapter_execution_fact(**kwargs: object) -> dict[str, object]:
+    return derive_adapter_execution_fact(**kwargs)  # type: ignore[arg-type]

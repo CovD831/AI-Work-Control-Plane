@@ -488,6 +488,11 @@ def workspace_index_optional_sections(
             benchmark_digest=comparative_benchmark_digest,
             comparative_benchmark=comparative_benchmark,
         ),
+        "comparative_daily_driver_runner_artifact": (
+            comparative_benchmark.get("daily_driver_runner_artifact", {})
+            if isinstance(comparative_benchmark.get("daily_driver_runner_artifact"), dict)
+            else {}
+        ),
         "comparative_completion_summary": build_comparative_completion_summary(
             benchmark_digest=comparative_benchmark_digest,
             comparative_benchmark=comparative_benchmark,
@@ -554,6 +559,11 @@ def _execution_artifact_summary(artifacts: dict[str, object]) -> dict[str, objec
         if isinstance(execution_artifact_summary.get("native_tool_trace"), dict)
         else {}
     )
+    native_tool_evidence = (
+        execution_artifact_summary.get("native_tool_evidence", {})
+        if isinstance(execution_artifact_summary.get("native_tool_evidence"), dict)
+        else {}
+    )
     native_task_proof = (
         execution_artifact_summary.get("native_task_proof", {})
         if isinstance(execution_artifact_summary.get("native_task_proof"), dict)
@@ -577,6 +587,11 @@ def _execution_artifact_summary(artifacts: dict[str, object]) -> dict[str, objec
     adapter_shared_contract = (
         execution_artifact_summary.get("adapter_shared_contract", {})
         if isinstance(execution_artifact_summary.get("adapter_shared_contract"), dict)
+        else {}
+    )
+    adapter_execution_fact = (
+        execution_artifact_summary.get("adapter_execution_fact", {})
+        if isinstance(execution_artifact_summary.get("adapter_execution_fact"), dict)
         else {}
     )
     adapter_contract = (
@@ -933,6 +948,7 @@ def _execution_artifact_summary(artifacts: dict[str, object]) -> dict[str, objec
         or None,
         "native_tool_productization_surface": tool_productization_surface or None,
         "native_tool_usage": synthesized_native_tool_usage,
+        "native_tool_evidence": native_tool_evidence or None,
         "planner_decision": planner_decision
         or _derived_session_planner_decision(
             execution_artifact_summary=execution_artifact_summary,
@@ -986,7 +1002,17 @@ def _execution_artifact_summary(artifacts: dict[str, object]) -> dict[str, objec
                 if isinstance(repo_report.get("artifact"), dict) and isinstance(repo_report.get("artifact", {}).get("exploration_evidence"), dict)
                 else {}
             ),
+            "repository_understanding": (
+                repo_report.get("artifact", {}).get("repository_understanding", {})
+                if isinstance(repo_report.get("artifact"), dict) and isinstance(repo_report.get("artifact", {}).get("repository_understanding"), dict)
+                else {}
+            ),
         },
+        "repository_understanding": (
+            repo_report.get("artifact", {}).get("repository_understanding", {})
+            if isinstance(repo_report.get("artifact"), dict) and isinstance(repo_report.get("artifact", {}).get("repository_understanding"), dict)
+            else {}
+        ),
         "context_isolation_strategy": isolate_contract.get("strategy"),
         "context_isolation_reinjection_mode": isolate_contract.get("reinjection_mode"),
         "step_loop_context_surfaces": (
@@ -1002,6 +1028,7 @@ def _execution_artifact_summary(artifacts: dict[str, object]) -> dict[str, objec
         "adapter_capability_surface": adapter_capability_surface or None,
         "adapter_capability": normalized_adapter_capability,
         "adapter_shared_contract": adapter_shared_contract or None,
+        "adapter_execution_fact": adapter_execution_fact or None,
         "adapter_productization_surface": adapter_productization_surface or None,
         "shared_productization_surface": shared_productization_surface,
         "comparative_benchmark": comparative_benchmark or None,

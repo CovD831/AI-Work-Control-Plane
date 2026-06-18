@@ -33,6 +33,7 @@ from agent_orchestrator.execution.models import (
     derive_adapter_productization_surface,
 )
 from agent_orchestrator.jobs import FileJobRuntime
+from agent_orchestrator.native_productization import build_product_ux_snapshot, build_rc_adoption_report, build_release_candidate_report, build_release_operator_bundle, run_rc_adoption
 from agent_orchestrator.memory import MemoryStore
 from agent_orchestrator.messages import MessageStore
 from agent_orchestrator.planning import TeamOrchestrator, build_operator_runbook
@@ -114,7 +115,20 @@ class DashboardService:
     def health(self) -> dict[str, object]:
         providers = [self.health_check.check(provider).to_dict() for provider in ("codex", "claude")]
         providers.append({"provider": "mock", "available": True, "detail": "mock provider is always available"})
-        return {"providers": providers, "job_runtime": self.job_runtime.__class__.__name__}
+        provider_health = {"providers": providers, "runtime_modes": [], "direct_api_auth": []}
+        product_ux = build_product_ux_snapshot(
+            provider_health_snapshot=provider_health,
+            runs_root=self.runs_root,
+            project_root=self.project_root,
+        )
+        return {
+            "providers": providers,
+            "job_runtime": self.job_runtime.__class__.__name__,
+            "native_product_ux": product_ux,
+            "release_candidate": product_ux.get("release_candidate", {}) if isinstance(product_ux, dict) else {},
+            "release_bundle": product_ux.get("release_bundle", {}) if isinstance(product_ux, dict) else {},
+            "native_rc_adoption": product_ux.get("native_rc_adoption", {}) if isinstance(product_ux, dict) else {},
+        }
 
     def get_agent_config(self) -> dict[str, object]:
         return self.agent_config_store.read().to_dict()
@@ -175,6 +189,13 @@ class DashboardService:
             self.project_root,
             compliance=session.compliance if isinstance(session.compliance, dict) else None,
         )
+        product_ux = build_product_ux_snapshot(
+            runs_root=self.runs_root,
+            project_root=self.project_root,
+        )
+        release_candidate = build_release_candidate_report(runs_root=self.runs_root, project_root=self.project_root)
+        release_bundle = build_release_operator_bundle(runs_root=self.runs_root, project_root=self.project_root)
+        native_rc_adoption = build_rc_adoption_report(run_rc_adoption(runs_root=self.runs_root, project_root=self.project_root, dry_run=True)).get("summary", {})
         return {
             "session": payload,
             "timeline": _build_timeline(payload),
@@ -189,7 +210,11 @@ class DashboardService:
             "agent_cards": _build_agent_cards(payload),
             "role_groups": _build_role_groups(payload, graph, messages),
             "governance_summary": _build_governance_summary(payload),
-            "operator_summary": _build_operator_summary(payload, linked_run, graph, messages, workspace_index),
+            "operator_summary": _build_operator_summary(payload, linked_run, graph, messages, workspace_index, product_ux),
+            "native_product_ux": product_ux,
+            "native_release_candidate": release_candidate,
+            "native_release_bundle": release_bundle,
+            "native_rc_adoption": native_rc_adoption,
             "control_plane": {
                 "read_only": True,
                 "workspace_index": workspace_index,
@@ -888,6 +913,7 @@ def _build_operator_summary(
     graph: WorkUnitGraph | None,
     messages: list[dict[str, object]],
     workspace_index: dict[str, object] | None = None,
+    product_ux: dict[str, object] | None = None,
 ) -> dict[str, object]:
     summary = get_governance_status(payload)
     verdict = payload.get("decision_verdict", {}) if isinstance(payload.get("decision_verdict"), dict) else {}
@@ -983,6 +1009,9 @@ def _build_operator_summary(
         "approval_boundary_digest": approval_boundary_digest,
         "comparative_benchmark_summary": workspace_benchmark,
         "comparative_benchmark_digest": comparative_digest,
+        "native_product_ux": product_ux if isinstance(product_ux, dict) else {},
+        "native_release_candidate": (product_ux.get("release_candidate", {}) if isinstance(product_ux, dict) else {}),
+        "native_release_bundle": (product_ux.get("release_bundle", {}) if isinstance(product_ux, dict) else {}),
         "comparative_planner_closure_summary": _comparative_planner_closure_summary(comparative_digest),
         "comparative_planner_autonomy_summary": build_comparative_planner_autonomy_summary(
             planner_shared_contract=(
@@ -1130,6 +1159,11 @@ def _build_operator_summary(
             proof_strength=proof_strength,
             benchmark_digest=comparative_digest,
             comparative_benchmark=workspace_benchmark,
+        ),
+        "comparative_daily_driver_runner_artifact": (
+            workspace_benchmark.get("daily_driver_runner_artifact", {})
+            if isinstance(workspace_benchmark.get("daily_driver_runner_artifact"), dict)
+            else {}
         ),
         "comparative_completion_summary": build_comparative_completion_summary(
             benchmark_digest=comparative_digest,
@@ -1810,6 +1844,12 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
             )
         ),
         "native_tool_productization_surface": tool_productization_surface,
+        "adapter_execution_fact": payload.get("adapter_execution_fact", {})
+        if isinstance(payload.get("adapter_execution_fact"), dict)
+        else {},
+        "native_tool_evidence": payload.get("native_tool_evidence", {})
+        if isinstance(payload.get("native_tool_evidence"), dict)
+        else {},
         "native_tool_trace": payload.get("native_tool_trace", {}),
         "native_tool_trace_count": len(payload.get("native_tool_trace", {}).get("trace", []))
         if isinstance(payload.get("native_tool_trace"), dict) and isinstance(payload.get("native_tool_trace", {}).get("trace"), list)
@@ -1842,7 +1882,21 @@ def _linked_execution_summary(linked_run: dict[str, object] | None) -> dict[str,
                 and isinstance(repo_report.get("artifact", {}).get("exploration_evidence"), dict)
                 else {}
             ),
+            "repository_understanding": (
+                dict(repo_report.get("artifact", {}).get("repository_understanding", {}))
+                if isinstance(repo_report.get("artifact"), dict)
+                and isinstance(repo_report.get("artifact", {}).get("repository_understanding"), dict)
+                else {}
+            ),
         },
+        "repository_understanding": (
+            dict(payload.get("repository_understanding", {}))
+            if isinstance(payload.get("repository_understanding"), dict)
+            else dict(repo_report.get("artifact", {}).get("repository_understanding", {}))
+            if isinstance(repo_report.get("artifact"), dict)
+            and isinstance(repo_report.get("artifact", {}).get("repository_understanding"), dict)
+            else {}
+        ),
         "adapter_shared_contract": adapter_shared_contract,
         "adapter_productization_surface": adapter_productization_surface,
     }

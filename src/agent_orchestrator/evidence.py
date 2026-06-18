@@ -20,6 +20,7 @@ from agent_orchestrator.execution import CodingAgentExecutionRuntime, ExecutionR
 from agent_orchestrator.execution.coding_components import VerificationReport
 from agent_orchestrator.intake import ClarifyPolicy, ExecutionMode, TaskKind, TaskRouterResult
 from agent_orchestrator.orchestrator import Orchestrator
+from agent_orchestrator.opencode_harness import build_external_opencode_harness_bundle
 from agent_orchestrator.policies import OrchestrationMode
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
 from agent_orchestrator.productization_surface import (
@@ -763,6 +764,30 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
                 f"direct={comparative_daily_driver_summary.get('direct_proof_status')}, "
                 f"repeatability={comparative_daily_driver_summary.get('repeatability_status')}"
             )
+        daily_driver_case_matrix = (
+            summary.get("daily_driver_case_matrix", {})
+            if isinstance(summary.get("daily_driver_case_matrix"), dict)
+            else {}
+        )
+        if daily_driver_case_matrix:
+            matrix_rows = daily_driver_case_matrix.get("matrix_rows", [])
+            covered_rows = []
+            if isinstance(matrix_rows, list):
+                for row in matrix_rows:
+                    if isinstance(row, dict):
+                        covered_rows.append(
+                            f"{row.get('task_family')}:{row.get('status')}:{row.get('present_case_count')}"
+                        )
+            lines.append(
+                "- daily_driver_case_matrix: "
+                f"status={daily_driver_case_matrix.get('matrix_status')}, "
+                f"minimum_required_family_count={daily_driver_case_matrix.get('minimum_required_family_count')}, "
+                f"covered_family_count={daily_driver_case_matrix.get('covered_family_count')}, "
+                f"covered_case_count={daily_driver_case_matrix.get('covered_case_count')}, "
+                f"covered_families={','.join(str(item) for item in daily_driver_case_matrix.get('covered_families', [])) if isinstance(daily_driver_case_matrix.get('covered_families'), list) else 'none'}, "
+                f"missing_families={','.join(str(item) for item in daily_driver_case_matrix.get('missing_families', [])) if isinstance(daily_driver_case_matrix.get('missing_families'), list) else 'none'}, "
+                f"matrix_rows={';'.join(covered_rows) if covered_rows else 'none'}"
+            )
         if comparative.get("daily_driver_main_path_anchor"):
             lines.append(
                 "- daily_driver_main_path_anchor: "
@@ -791,6 +816,38 @@ def render_workflow_evidence_markdown(payload: dict[str, object]) -> str:
                 f"grade_status={comparative_completion_summary.get('comparison_grade_status')}, "
                 f"blocking_gap={comparative_completion_summary.get('blocking_gap')}, "
                 f"operator_action={comparative_completion_summary.get('operator_action')}"
+            )
+        repeatability_harness = (
+            comparative.get("daily_driver_repeatability_harness", {})
+            if isinstance(comparative.get("daily_driver_repeatability_harness"), dict)
+            else {}
+        )
+        if repeatability_harness:
+            family_results = repeatability_harness.get("family_results", {})
+            family_statuses = []
+            if isinstance(family_results, dict):
+                for family, result in family_results.items():
+                    if isinstance(result, dict):
+                        family_statuses.append(
+                            f"{family}:{result.get('status')}:{result.get('verify_or_stop')}"
+                        )
+            lines.append(
+                "- daily_driver_repeatability_harness: "
+                f"status={repeatability_harness.get('harness_status')}, "
+                f"format={repeatability_harness.get('format')}, "
+                f"same_contract_for_external_comparison={repeatability_harness.get('same_contract_for_external_comparison')}, "
+                f"contract_outputs={','.join(str(item) for item in repeatability_harness.get('contract_outputs', [])) if isinstance(repeatability_harness.get('contract_outputs'), list) else 'none'}, "
+                f"minimum_required_passing_family_count={repeatability_harness.get('minimum_required_passing_family_count')}, "
+                f"proven_family_count={repeatability_harness.get('proven_family_count')}, "
+                f"passing_family_count={repeatability_harness.get('passing_family_count')}, "
+                f"paused_family_count={repeatability_harness.get('paused_family_count')}, "
+                f"failed_family_count={repeatability_harness.get('failed_family_count')}, "
+                f"recovery_family_count={repeatability_harness.get('recovery_family_count')}, "
+                f"stop_or_verify_coverage_ready={repeatability_harness.get('stop_or_verify_coverage_ready')}, "
+                f"mock_only={repeatability_harness.get('mock_only')}, "
+                f"external_opencode_harness_ready={repeatability_harness.get('external_opencode_harness_ready')}, "
+                f"next_external_step={repeatability_harness.get('next_external_step')}, "
+                f"family_results={';'.join(family_statuses) if family_statuses else 'none'}"
             )
         comparative_native_closure_summary = (
             comparative.get("comparative_native_closure_summary", {})
@@ -2935,6 +2992,10 @@ def _build_summary(cases: list[dict[str, object]]) -> dict[str, object]:
     direct_runs = [case.get("direct_run", {}) for case in cases if isinstance(case, dict)]
     signals = [case.get("signals", {}) for case in cases if isinstance(case, dict)]
     comparative_benchmark = _comparative_benchmark_summary(cases)
+    daily_driver_repeatability_harness = _daily_driver_repeatability_harness(cases)
+    daily_driver_case_matrix = _daily_driver_case_matrix(cases)
+    daily_driver_runner_artifact = _daily_driver_runner_artifact(cases)
+    external_opencode_harness = build_external_opencode_harness_bundle()
     return {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "reportable_format": REPORTABLE_FORMAT,
@@ -2976,6 +3037,16 @@ def _build_summary(cases: list[dict[str, object]]) -> dict[str, object]:
         "comparative_native_closure_summary": comparative_benchmark.get("comparative_native_closure_summary", {})
         if isinstance(comparative_benchmark.get("comparative_native_closure_summary"), dict)
         else {},
+        "daily_driver_repeatability_harness": daily_driver_repeatability_harness,
+        "daily_driver_case_matrix": daily_driver_case_matrix,
+        "daily_driver_runner_artifact": daily_driver_runner_artifact,
+        "external_opencode_harness": external_opencode_harness,
+        "external_opencode_case_pack": external_opencode_harness.get("case_pack", {}),
+        "opencode_runner_adapter": external_opencode_harness.get("opencode_run_records", {}),
+        "native_vs_opencode_comparative_report": external_opencode_harness.get("comparative_evidence_report", {}),
+        "authoritative_native_vs_opencode_report": external_opencode_harness.get("authoritative_comparative_report", {}),
+        "external_opencode_instrumentation_closure": external_opencode_harness.get("instrumentation_closure", {}),
+        "external_opencode_operator_decision": external_opencode_harness.get("operator_decision", {}),
         "clarify_boundary_digest": comparative_benchmark.get("clarify_boundary_digest", {})
         if isinstance(comparative_benchmark.get("clarify_boundary_digest"), dict)
         else {},
@@ -4700,6 +4771,268 @@ def _real_task_metrics(cases: list[dict[str, object]]) -> dict[str, int]:
     }
 
 
+def _daily_driver_repeatability_harness(cases: list[dict[str, object]]) -> dict[str, object]:
+    repo_task_cases = [
+        case
+        for case in cases
+        if isinstance(case, dict) and str(case.get("scenario_type")) == "repo_task_acceptance"
+    ]
+    family_results: dict[str, dict[str, object]] = {}
+    for case in repo_task_cases:
+        family = _proven_daily_driver_repo_task_family(case) or _proven_repo_task_family(case)
+        if not family or family in family_results:
+            continue
+        repo_acceptance = case.get("native_repo_task_acceptance", {})
+        if not isinstance(repo_acceptance, dict):
+            repo_acceptance = {}
+        complex_acceptance = case.get("native_complex_repo_task_acceptance", {})
+        if not isinstance(complex_acceptance, dict):
+            complex_acceptance = {}
+        surface_checks = (
+            case.get("native_dogfood_surfaces", {}).get("surface_checks", {})
+            if isinstance(case.get("native_dogfood_surfaces"), dict)
+            and isinstance(case.get("native_dogfood_surfaces", {}).get("surface_checks"), dict)
+            else {}
+        )
+        workspace_ready = bool(
+            surface_checks.get("workspace_daily_driver_main_path_visible", {})
+            .get("evidence", {})
+            .get("ready")
+        ) if isinstance(surface_checks.get("workspace_daily_driver_main_path_visible"), dict) else False
+        ui_ready = bool(
+            surface_checks.get("ui_daily_driver_main_path_visible", {})
+            .get("evidence", {})
+            .get("ready")
+        ) if isinstance(surface_checks.get("ui_daily_driver_main_path_visible"), dict) else False
+        passed = (
+            repo_acceptance.get("real_repo_task_acceptance_ready") is True
+            and complex_acceptance.get("complex_repo_task_ready") is True
+            and workspace_ready
+            and ui_ready
+        )
+        family_results[family] = {
+            "status": "passed" if passed else "failed",
+            "verify_or_stop": "verify" if passed else "stop",
+            "resume_reason": (
+                "workspace_index_cli_summary_runtime_payload_aligned"
+                if passed
+                else "repeatability_contract_missing"
+            ),
+            "runtime_payload": bool(case.get("team_workflow", {}).get("linked_execution_run_id"))
+            if isinstance(case.get("team_workflow"), dict)
+            else False,
+            "workspace_index": workspace_ready,
+            "cli_summary": ui_ready,
+        }
+    passed_families = [family for family, result in family_results.items() if result.get("status") == "passed"]
+    paused_families = [family for family, result in family_results.items() if result.get("status") == "paused"]
+    failed_families = [family for family, result in family_results.items() if result.get("status") == "failed"]
+    recovery_families = [family for family, result in family_results.items() if result.get("resume_reason")]
+    return {
+        "format": "agent_orchestrator.daily_driver_repeatability_harness.v1",
+        "harness_status": "daily_driver_ready" if len(passed_families) >= 3 else "insufficient_passing_families",
+        "same_contract_for_external_comparison": True,
+        "contract_outputs": ["runtime_payload", "workspace_index", "cli_summary"],
+        "minimum_required_passing_family_count": 3,
+        "proven_family_count": len(family_results),
+        "passing_family_count": len(passed_families),
+        "paused_family_count": len(paused_families),
+        "failed_family_count": len(failed_families),
+        "recovery_family_count": len(recovery_families),
+        "stop_or_verify_coverage_ready": len(passed_families) >= 3 and not failed_families,
+        "mock_only": False,
+        "external_opencode_harness_ready": False,
+        "next_external_step": "authoritative_opencode_case_harness",
+        "family_results": family_results,
+    }
+
+
+def _daily_driver_case_matrix(cases: list[dict[str, object]]) -> dict[str, object]:
+    by_label = {
+        str(case.get("label")): case
+        for case in cases
+        if isinstance(case, dict) and case.get("label")
+    }
+    by_normalized_label = {label.replace("-", "_"): case for label, case in by_label.items()}
+
+    def _row(
+        *,
+        task_family: str,
+        labels: list[str],
+        inferred_from: str,
+        verify_or_stop: str,
+        evidence_markers: list[str],
+        execution_markers: list[str],
+    ) -> dict[str, object]:
+        present_labels = [
+            label
+            for label in labels
+            if label in by_label or label.replace("-", "_") in by_normalized_label
+        ]
+        missing_labels = [
+            label
+            for label in labels
+            if label not in by_label and label.replace("-", "_") not in by_normalized_label
+        ]
+        return {
+            "task_family": task_family,
+            "status": "covered" if present_labels else "missing",
+            "coverage_ready": bool(present_labels),
+            "present_case_count": len(present_labels),
+            "missing_case_count": len(missing_labels),
+            "case_labels": present_labels,
+            "missing_case_labels": missing_labels,
+            "inferred_from": inferred_from,
+            "verify_or_stop": verify_or_stop,
+            "input": {
+                "labels": labels,
+                "real_repo_case_count": len(present_labels),
+            },
+            "execution": {
+                "markers": execution_markers,
+                "repeatable": bool(present_labels),
+            },
+            "verification": {
+                "markers": evidence_markers,
+                "required_stop_or_verify": verify_or_stop,
+            },
+            "evidence": {
+                "markers": evidence_markers,
+                "contract_outputs": ["runtime_payload", "workspace_index", "cli_summary"],
+            },
+        }
+
+    rows = [
+        _row(
+            task_family="docs_update",
+            labels=["standard_plan_artifact", "followup_checklist_recovery", "cli_workflow_hardening"],
+            inferred_from="standard-and-followup evidence cases",
+            verify_or_stop="verify",
+            evidence_markers=["doc_sync", "approval_observability", "cost_latency"],
+            execution_markers=["plan_artifact", "doc_sync", "recovery_guidance"],
+        ),
+        _row(
+            task_family="single_file_code_fix",
+            labels=["repair_resume_success"],
+            inferred_from="verify-repair native evidence case",
+            verify_or_stop="verify",
+            evidence_markers=["runtime_fidelity", "doc_sync", "cost_latency"],
+            execution_markers=["edit", "verify", "repair"],
+        ),
+        _row(
+            task_family="multi_file_operator_surface",
+            labels=[
+                "repo_task_acceptance",
+                "repo_task_acceptance_compliance",
+                "repo_task_acceptance_helper_impl",
+                "repo_task_acceptance_helper",
+                "repo_task_acceptance_long_chain_native_first",
+                "repo_task_acceptance_workspace_index_long_chain",
+                "repo_task_acceptance_evidence_contract_long_chain",
+            ],
+            inferred_from="repo-task acceptance families",
+            verify_or_stop="verify",
+            evidence_markers=["workspace_index", "cli_summary", "doc_sync"],
+            execution_markers=["explore", "edit", "verify", "workspace_index", "cli_summary"],
+        ),
+        _row(
+            task_family="test_driven_feature",
+            labels=["repair_resume_success", "multi_milestone_program_execution"],
+            inferred_from="resume and program-execution evidence cases",
+            verify_or_stop="verify",
+            evidence_markers=["interruption_recovery", "runtime_fidelity", "approval_observability"],
+            execution_markers=["verify", "repair", "resume", "continue"],
+        ),
+        _row(
+            task_family="failure_clarify_approval_pause",
+            labels=["compliance_blocking_recovery", "interrupted_task_resume", "repair_resume_success"],
+            inferred_from="failure and recovery evidence cases",
+            verify_or_stop="stop",
+            evidence_markers=["recovery_guidance", "approval_observability", "interruption_recovery"],
+            execution_markers=["clarify", "pause", "resume", "stop"],
+        ),
+    ]
+    covered_rows = [row for row in rows if row.get("coverage_ready")]
+    return {
+        "format": "agent_orchestrator.daily_driver_case_matrix.v1",
+        "matrix_status": "multi_family_case_matrix_ready" if len(covered_rows) >= 3 else "insufficient_coverage",
+        "minimum_required_family_count": 3,
+        "covered_family_count": len(covered_rows),
+        "covered_case_count": sum(int(row.get("present_case_count", 0)) for row in covered_rows),
+        "matrix_rows": rows,
+        "covered_families": [row["task_family"] for row in covered_rows],
+        "missing_families": [row["task_family"] for row in rows if not row.get("coverage_ready")],
+    }
+
+
+def _daily_driver_runner_artifact(cases: list[dict[str, object]]) -> dict[str, object]:
+    matrix = _daily_driver_case_matrix(cases)
+    harness = _daily_driver_repeatability_harness(cases)
+    matrix_rows = matrix.get("matrix_rows", []) if isinstance(matrix.get("matrix_rows"), list) else []
+    family_results = (
+        harness.get("family_results", {}) if isinstance(harness.get("family_results"), dict) else {}
+    )
+
+    family_runs: list[dict[str, object]] = []
+    for row in matrix_rows:
+        if not isinstance(row, dict):
+            continue
+        task_family = str(row.get("task_family") or "unknown")
+        harness_result = family_results.get(task_family, {}) if isinstance(family_results, dict) else {}
+        steps: list[str] = []
+        execution = row.get("execution", {}) if isinstance(row.get("execution"), dict) else {}
+        verification = row.get("verification", {}) if isinstance(row.get("verification"), dict) else {}
+        if isinstance(execution.get("markers"), list):
+            steps.extend(str(item) for item in execution.get("markers", []) if item)
+        if isinstance(verification.get("markers"), list):
+            steps.extend(str(item) for item in verification.get("markers", []) if item)
+        if harness_result.get("verify_or_stop"):
+            steps.append(str(harness_result.get("verify_or_stop")))
+        family_runs.append(
+            {
+                "task_family": task_family,
+                "status": harness_result.get("status") or row.get("status"),
+                "coverage_ready": bool(row.get("coverage_ready")),
+                "verify_or_stop": harness_result.get("verify_or_stop") or row.get("verify_or_stop"),
+                "steps": list(dict.fromkeys(steps)),
+                "case_labels": list(row.get("case_labels", [])) if isinstance(row.get("case_labels"), list) else [],
+                "evidence_markers": list(row.get("evidence", {}).get("markers", []))
+                if isinstance(row.get("evidence"), dict) and isinstance(row.get("evidence", {}).get("markers"), list)
+                else [],
+                "contract_outputs": list(harness.get("contract_outputs", []))
+                if isinstance(harness.get("contract_outputs"), list)
+                else [],
+            }
+        )
+
+    runner_family_count = sum(1 for item in family_runs if item.get("coverage_ready"))
+    runner_status = (
+        "daily_driver_ready"
+        if matrix.get("matrix_status") == "multi_family_case_matrix_ready"
+        and harness.get("harness_status") == "daily_driver_ready"
+        else "repeatability_gap_remaining"
+    )
+    return {
+        "format": "agent_orchestrator.daily_driver_runner_artifact.v1",
+        "runner_status": runner_status,
+        "runner_family_count": runner_family_count,
+        "runner_family_runs": family_runs,
+        "contract_outputs": list(harness.get("contract_outputs", []))
+        if isinstance(harness.get("contract_outputs"), list)
+        else [],
+        "next_external_step": harness.get("next_external_step"),
+        "matrix_status": matrix.get("matrix_status"),
+        "harness_status": harness.get("harness_status"),
+        "summary": (
+            f"status={runner_status} "
+            f"families={runner_family_count} "
+            f"matrix={matrix.get('matrix_status')} "
+            f"harness={harness.get('harness_status')} "
+            f"next_external_step={harness.get('next_external_step')}"
+        ),
+    }
+
+
 def _proven_repo_task_family(case: dict[str, object]) -> str | None:
     if not isinstance(case, dict) or str(case.get("scenario_type")) != "repo_task_acceptance":
         return None
@@ -5501,6 +5834,10 @@ def _comparative_benchmark_summary(cases: list[dict[str, object]]) -> dict[str, 
         {},
     )
     comparison_grade_assessment["external_comparison_harness_surface"] = external_comparison_harness_surface
+    daily_driver_case_matrix = _daily_driver_case_matrix(cases)
+    daily_driver_repeatability_harness = _daily_driver_repeatability_harness(cases)
+    daily_driver_runner_artifact = _daily_driver_runner_artifact(cases)
+    external_opencode_harness = build_external_opencode_harness_bundle()
     comparative_daily_driver_summary = build_comparative_daily_driver_summary(
         proof_strength=comparison_proof_strength,
         benchmark_digest={
@@ -5510,6 +5847,9 @@ def _comparative_benchmark_summary(cases: list[dict[str, object]]) -> dict[str, 
         comparative_benchmark={
             "comparison_posture": comparison_posture,
             "daily_driver_main_path_ready": independent_daily_driver_case_ready,
+            "daily_driver_case_matrix": daily_driver_case_matrix,
+            "daily_driver_repeatability_harness": daily_driver_repeatability_harness,
+            "daily_driver_runner_artifact": daily_driver_runner_artifact,
         },
     )
     comparative_completion_summary = build_comparative_completion_summary(
@@ -5607,6 +5947,16 @@ def _comparative_benchmark_summary(cases: list[dict[str, object]]) -> dict[str, 
         "approval_boundary_digest": approval_boundary_digest,
         "comparative_daily_driver_summary": comparative_daily_driver_summary,
         "comparative_completion_summary": comparative_completion_summary,
+        "daily_driver_case_matrix": daily_driver_case_matrix,
+        "daily_driver_repeatability_harness": daily_driver_repeatability_harness,
+        "daily_driver_runner_artifact": daily_driver_runner_artifact,
+        "external_opencode_harness": external_opencode_harness,
+        "external_opencode_case_pack": external_opencode_harness.get("case_pack", {}),
+        "opencode_runner_adapter": external_opencode_harness.get("opencode_run_records", {}),
+        "native_vs_opencode_comparative_report": external_opencode_harness.get("comparative_evidence_report", {}),
+        "authoritative_native_vs_opencode_report": external_opencode_harness.get("authoritative_comparative_report", {}),
+        "external_opencode_instrumentation_closure": external_opencode_harness.get("instrumentation_closure", {}),
+        "external_opencode_operator_decision": external_opencode_harness.get("operator_decision", {}),
         "comparison_grade_assessment": comparison_grade_assessment,
         "external_comparison_harness_surface": external_comparison_harness_surface,
         "shared_evidence_surface": [

@@ -198,6 +198,56 @@ def _native_tool_readiness_with_fallback(source: dict[str, object]) -> dict[str,
     }
 
 
+def _adapter_execution_fact_with_fallback(summary: dict[str, object]) -> dict[str, object]:
+    fact = summary_dict(summary, "adapter_execution_fact")
+    if fact:
+        return fact
+    shared = summary_dict(summary, "adapter_shared_contract")
+    if not shared:
+        execution_artifact_summary = summary_dict(summary, "execution_artifact_summary")
+        fact = summary_dict(execution_artifact_summary, "adapter_execution_fact")
+        if fact:
+            return fact
+        shared = summary_dict(execution_artifact_summary, "adapter_shared_contract")
+    if not shared:
+        return {}
+    family = summary_text(shared, "adapter_family")
+    kind = summary_text(shared, "agent_kind")
+    return {
+        "format": "agent_orchestrator.adapter_execution_fact.v1",
+        "runtime_name": "coding_agent" if kind == "coding_agent" else family or "unknown",
+        "execution_mode": "coding_agent" if kind == "coding_agent" else summary_text(shared, "default_path"),
+        "task_kind": "direct_fix",
+        "default_path": summary_text(shared, "default_path"),
+        "operating_boundary": summary_text(shared, "operating_boundary"),
+        "comparison_mode": summary_text(shared, "comparison_mode"),
+        "source_visibility": {
+            "operator_can_distinguish_source": True,
+            "shared_status_semantics": True,
+            "source_label": f"{family}:{kind}" if family or kind else None,
+        },
+    }
+
+
+def _print_native_tool_evidence(evidence: dict[str, object]) -> None:
+    if not evidence:
+        return
+    counts = summary_dict(evidence, "tool_counts")
+    print(
+        "native_tool_evidence: "
+        f"format={evidence.get('format')} "
+        f"records={evidence.get('evidence_record_count', 0)} "
+        f"patch_ready={evidence.get('patch_evidence_ready')} "
+        f"verify_ready={evidence.get('verify_evidence_ready')} "
+        f"patch_preview={counts.get('patch_preview', 0)} "
+        f"structured_patch={counts.get('structured_patch', 0)} "
+        f"diff_preview={counts.get('diff_preview', 0)} "
+        f"verify={counts.get('verify', 0)} "
+        f"latest_verify={evidence.get('latest_verification_status')} "
+        f"exit_code={evidence.get('latest_verification_exit_code')}"
+    )
+
+
 def _derived_adapter_productization_surface(
     adapter_shared: dict[str, object],
     adapter_capability: dict[str, object],
@@ -843,6 +893,19 @@ def print_execution_session_summary(payload: dict[str, object]) -> None:
                 f"adapter_ready={summary_dict(shared_productization_surface, 'contract_readiness').get('adapter_ready')} "
                 f"planner_ready={summary_dict(shared_productization_surface, 'contract_readiness').get('planner_ready')}"
             )
+    adapter_execution_fact = _adapter_execution_fact_with_fallback(summary)
+    if adapter_execution_fact:
+        print(
+            "adapter_execution_fact: "
+            f"format={summary_text(adapter_execution_fact, 'format')} "
+            f"runtime_name={summary_text(adapter_execution_fact, 'runtime_name')} "
+            f"execution_mode={summary_text(adapter_execution_fact, 'execution_mode')} "
+            f"task_kind={summary_text(adapter_execution_fact, 'task_kind')} "
+            f"default_path={summary_text(adapter_execution_fact, 'default_path')} "
+            f"boundary={summary_text(adapter_execution_fact, 'operating_boundary')} "
+            f"comparison_mode={summary_text(adapter_execution_fact, 'comparison_mode')} "
+            f"source_label={summary_text(adapter_execution_fact.get('source_visibility', {}), 'source_label')}"
+        )
     if tool_usage:
         recent = ",".join(str(item) for item in tool_usage.get("recent_tools", [])) if isinstance(tool_usage.get("recent_tools"), list) else ""
         print(
@@ -851,6 +914,7 @@ def print_execution_session_summary(payload: dict[str, object]) -> None:
             f"trace_count={tool_usage.get('trace_count')} "
             f"recent={recent or 'none'}"
         )
+        _print_native_tool_evidence(summary_dict(summary, "native_tool_evidence"))
         if tool_productization_surface:
             readiness = _native_tool_readiness_with_fallback(tool_productization_surface)
             print(
@@ -1266,6 +1330,10 @@ def print_workspace_state_summary(payload: dict[str, object]) -> None:
             f"direct_proof={benchmark_digest.get('direct_proof_status')} "
             f"repeatability={benchmark_digest.get('repeatability_status')} "
             f"daily_driver_repeatability_tier={benchmark_digest.get('daily_driver_repeatability_tier')} "
+            f"daily_driver_case_matrix_status={benchmark_digest.get('daily_driver_case_matrix_status')} "
+            f"daily_driver_case_matrix_families={benchmark_digest.get('daily_driver_case_matrix_covered_family_count')} "
+            f"daily_driver_repeatability_harness_status={benchmark_digest.get('daily_driver_repeatability_harness_status')} "
+            f"daily_driver_repeatability_harness_families={benchmark_digest.get('daily_driver_repeatability_harness_passing_family_count')} "
             f"daily_driver_cases={benchmark_digest.get('daily_driver_main_path_ready_cases')} "
             f"comparison_grade_status={benchmark_digest.get('comparison_grade_status')} "
             f"external_harness_status={benchmark_digest.get('external_harness_status')} "
@@ -1472,6 +1540,20 @@ def print_workspace_state_summary(payload: dict[str, object]) -> None:
                 f"default_path={comparative_adapter_summary.get('default_path')} "
                 f"boundary={comparative_adapter_summary.get('ownership_boundary')} "
                 f"unified_contract={comparative_adapter_summary.get('unified_adapter_contract_ready')}"
+            )
+
+        adapter_execution_fact = _adapter_execution_fact_with_fallback(payload)
+        if adapter_execution_fact:
+            print(
+                "adapter_execution_fact: "
+                f"format={summary_text(adapter_execution_fact, 'format')} "
+                f"runtime_name={summary_text(adapter_execution_fact, 'runtime_name')} "
+                f"execution_mode={summary_text(adapter_execution_fact, 'execution_mode')} "
+                f"task_kind={summary_text(adapter_execution_fact, 'task_kind')} "
+                f"default_path={summary_text(adapter_execution_fact, 'default_path')} "
+                f"boundary={summary_text(adapter_execution_fact, 'operating_boundary')} "
+                f"comparison_mode={summary_text(adapter_execution_fact, 'comparison_mode')} "
+                f"source_label={summary_text(adapter_execution_fact.get('source_visibility', {}), 'source_label')}"
             )
         adapter_capability = (
             payload.get("adapter_capability", {})
@@ -1777,6 +1859,20 @@ def print_workspace_state_summary(payload: dict[str, object]) -> None:
                 f"direct={comparative_daily_driver_summary.get('direct_proof_status')} "
                 f"repeatability={comparative_daily_driver_summary.get('repeatability_status')}"
             )
+        comparative_daily_driver_runner_artifact = (
+            benchmark.get("daily_driver_runner_artifact", {})
+            if isinstance(benchmark.get("daily_driver_runner_artifact"), dict)
+            else comparative_daily_driver_summary.get("daily_driver_runner_artifact", {})
+            if isinstance(comparative_daily_driver_summary.get("daily_driver_runner_artifact"), dict)
+            else {}
+        )
+        if comparative_daily_driver_runner_artifact:
+            print(
+                "comparative_daily_driver_runner_artifact: "
+                f"status={comparative_daily_driver_runner_artifact.get('runner_status')} "
+                f"families={comparative_daily_driver_runner_artifact.get('runner_family_count')} "
+                f"next_external_step={comparative_daily_driver_runner_artifact.get('next_external_step')}"
+            )
         comparative_completion_summary = build_comparative_completion_summary(
             benchmark_digest=benchmark_digest,
             comparative_benchmark=benchmark,
@@ -1889,6 +1985,20 @@ def print_workspace_state_summary(payload: dict[str, object]) -> None:
             f"reason={exploration.get('candidate_reason')} "
             f"selected={selected or 'none'}"
         )
+        repository_understanding = exploration.get("repository_understanding", {}) if isinstance(exploration.get("repository_understanding"), dict) else {}
+        if repository_understanding:
+            reasoning = ",".join(
+                str(item.get("path"))
+                for item in repository_understanding.get("candidate_evidence", [])
+                if isinstance(item, dict) and item.get("path")
+            )
+            print(
+                "repository_understanding: "
+                f"reason={repository_understanding.get('candidate_reason')} "
+                f"candidates={repository_understanding.get('candidate_count', 0)} "
+                f"context_reason={repository_understanding.get('context_selection_reason')} "
+                f"selected={reasoning or 'none'}"
+            )
         evidence = exploration.get("exploration_evidence", {}) if isinstance(exploration.get("exploration_evidence"), dict) else {}
         if evidence:
             shared = ",".join(str(item) for item in evidence.get("shared_evidence_surface", [])) if isinstance(evidence.get("shared_evidence_surface"), list) else ""
@@ -2220,6 +2330,7 @@ def print_workspace_state_summary(payload: dict[str, object]) -> None:
                 f"trace_count={tool_usage.get('trace_count')} "
                 f"recent={recent or 'none'}"
             )
+            _print_native_tool_evidence(evidence_summary.get("native_tool_evidence", {}) if isinstance(evidence_summary.get("native_tool_evidence"), dict) else {})
             if tool_productization_surface:
                 readiness = _native_tool_readiness_with_fallback(tool_productization_surface)
                 print(

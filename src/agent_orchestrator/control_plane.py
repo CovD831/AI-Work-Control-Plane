@@ -39,6 +39,7 @@ from agent_orchestrator.control_plane_workspace import workspace_recovery_dashbo
 from agent_orchestrator.events import EventStore
 from agent_orchestrator.execution.state_store import ExecutionStateStore
 from agent_orchestrator.jobs import AgentJob, FileJobRuntime, now_iso
+from agent_orchestrator.native_productization import build_product_ux_snapshot, build_rc_adoption_report, build_release_candidate_report, build_release_operator_bundle, run_rc_adoption
 from agent_orchestrator.memory import MemoryRecord, MemoryStore
 from agent_orchestrator.planning import PlanSession
 from agent_orchestrator.planning_governance import get_governance_status
@@ -538,6 +539,10 @@ def build_evidence_bundle(project_root: Path | str = ".", compliance: dict[str, 
         "tool_inventory": _tool_inventory_payload(project_root=root),
         "usage_cost": _usage_cost_placeholder(),
         "memory_recommendation": _evidence_memory_recommendation(root, gate_evidence, compliance_payload),
+        "native_product_ux": build_product_ux_snapshot(project_root=root, runs_root=root / ".agent_orchestrator" / "runs"),
+        "native_release_candidate": build_release_candidate_report(project_root=root, runs_root=root / ".agent_orchestrator" / "runs"),
+        "native_release_bundle": build_release_operator_bundle(project_root=root, runs_root=root / ".agent_orchestrator" / "runs"),
+        "native_rc_adoption": build_rc_adoption_report(run_rc_adoption(project_root=root, runs_root=root / ".agent_orchestrator" / "runs", dry_run=True)).get("summary", {}),
         "created_at": now_iso(),
     }
     WorkspaceIndexStore(root / ".agent_orchestrator" / "workspace").record_artifact("evidence_bundle", payload)

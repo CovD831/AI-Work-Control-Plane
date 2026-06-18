@@ -503,6 +503,25 @@ class RepoExplorer:
             if isinstance(read_result.get("records"), list)
             else []
         )
+        candidate_reason = (
+            "explicit_existing_paths"
+            if existing_paths
+            else "filename_matches"
+            if filename_matches
+            else "search_matches"
+            if search_result.get("match_count")
+            else "repo_map_fallback"
+        )
+        repository_understanding = _repository_understanding_evidence(
+            candidate_paths=candidate_paths[: self.max_candidates],
+            candidate_reason=candidate_reason,
+            explicit_paths=explicit_paths,
+            existing_paths=existing_paths,
+            filename_matches=filename_matches,
+            search_matches=search_matches,
+            outline_records=outline_records,
+            read_records=read_records,
+        )
         artifact = self.artifact_store.write_repo_exploration(
             run_id=_execution_run_id(request),
             workspace_root=str(self.workspace_root),
@@ -532,28 +551,13 @@ class RepoExplorer:
                     "mapped_directory_count": repo_map_result.get("directory_count"),
                     "filename_match_count": len(filename_matches),
                     "outline_record_count": len(outline_records),
-                    "candidate_reason": (
-                        "explicit_existing_paths"
-                        if existing_paths
-                        else "filename_matches"
-                        if filename_matches
-                        else "search_matches"
-                        if search_result.get("match_count")
-                        else "repo_map_fallback"
-                    ),
+                    "candidate_reason": candidate_reason,
                     "selected_candidates": candidate_paths[: self.max_candidates],
                 },
+                "repository_understanding": repository_understanding,
                 "exploration_evidence": {
                     "format": "agent_orchestrator.native_exploration_evidence.v1",
-                    "candidate_reason": (
-                        "explicit_existing_paths"
-                        if existing_paths
-                        else "filename_matches"
-                        if filename_matches
-                        else "search_matches"
-                        if search_result.get("match_count")
-                        else "repo_map_fallback"
-                    ),
+                    "candidate_reason": candidate_reason,
                     "explicit_path_hits": existing_paths,
                     "filename_match_count": len(filename_matches),
                     "filename_match_paths": filename_match_paths[: self.max_candidates],
@@ -585,6 +589,136 @@ class RepoExplorer:
                 },
             },
         )
+
+
+def _repository_understanding_evidence(
+    *,
+    candidate_paths: list[str],
+    candidate_reason: str,
+    explicit_paths: list[str],
+    existing_paths: list[str],
+    filename_matches: list[dict[str, object]],
+    search_matches: list[dict[str, object]],
+    outline_records: list[dict[str, object]],
+    read_records: list[dict[str, object]],
+) -> dict[str, object]:
+    filename_by_path = {
+        str(item.get("path")): item
+        for item in filename_matches
+        if isinstance(item, dict) and item.get("path")
+    }
+    search_by_path = {
+        str(item.get("path")): item
+        for item in search_matches
+        if isinstance(item, dict) and item.get("path")
+    }
+    outline_by_path = {
+        str(item.get("path")): item
+        for item in outline_records
+        if isinstance(item, dict) and item.get("path")
+    }
+    read_paths = {
+        str(item.get("path"))
+        for item in read_records
+        if isinstance(item, dict) and item.get("path")
+    }
+    candidate_evidence: list[dict[str, object]] = []
+    for index, path in enumerate(candidate_paths):
+        filename_match = filename_by_path.get(path, {})
+        search_match = search_by_path.get(path, {})
+        outline = outline_by_path.get(path, {})
+        evidence_sources: list[str] = []
+        if path in existing_paths:
+            evidence_sources.append("explicit_path")
+        if filename_match:
+            evidence_sources.append("filename_match")
+        if search_match:
+            evidence_sources.append("content_search")
+        if outline:
+            evidence_sources.append("structure_outline")
+        if path in read_paths:
+            evidence_sources.append("bounded_read")
+        if not evidence_sources:
+            evidence_sources.append("repo_map_fallback")
+        outline_entries = outline.get("outline", []) if isinstance(outline.get("outline"), list) else []
+        candidate_evidence.append(
+            {
+                "path": path,
+                "rank": index + 1,
+                "selection_reason": _candidate_selection_reason(
+                    path=path,
+                    candidate_reason=candidate_reason,
+                    evidence_sources=evidence_sources,
+                ),
+                "evidence_sources": evidence_sources,
+                "filename_score": filename_match.get("score") if filename_match else None,
+                "matched_fragments": list(filename_match.get("matched_fragments", []))
+                if isinstance(filename_match.get("matched_fragments"), list)
+                else [],
+                "search_score": search_match.get("score") if search_match else None,
+                "matched_terms": list(search_match.get("matched_terms", []))
+                if isinstance(search_match.get("matched_terms"), list)
+                else [],
+                "outline_entry_count": len(outline_entries),
+                "read": path in read_paths,
+            }
+        )
+    return {
+        "format": "agent_orchestrator.repository_understanding.v1",
+        "candidate_reason": candidate_reason,
+        "explicit_paths": list(explicit_paths),
+        "explicit_path_hits": list(existing_paths),
+        "candidate_count": len(candidate_evidence),
+        "candidate_evidence": candidate_evidence,
+        "context_selection_reason": _context_selection_reason(candidate_reason, candidate_evidence),
+        "main_path_effects": {
+            "affects_edit_targets": True,
+            "affects_verification_targets": True,
+            "records_selection_rationale": True,
+            "can_trigger_clarify_or_stop_when_empty": True,
+        },
+        "operator_visibility": {
+            "shared_evidence_surface": [
+                "runtime_payload",
+                "workspace_index",
+                "ui_execution_summary",
+                "cli_execution_summary",
+            ],
+            "status": "candidate_selection_rationale_recorded",
+        },
+    }
+
+
+def _candidate_selection_reason(
+    *,
+    path: str,
+    candidate_reason: str,
+    evidence_sources: list[str],
+) -> str:
+    if "explicit_path" in evidence_sources:
+        return f"{path} was explicitly referenced by the requirement and exists in the workspace."
+    if candidate_reason == "filename_matches" and "filename_match" in evidence_sources:
+        return f"{path} ranked by filename/path fragments from the requirement."
+    if candidate_reason == "search_matches" and "content_search" in evidence_sources:
+        return f"{path} ranked by content search terms from the requirement."
+    if "structure_outline" in evidence_sources:
+        return f"{path} was retained because a structural outline could be extracted."
+    return f"{path} was retained as a bounded repository-map fallback candidate."
+
+
+def _context_selection_reason(
+    candidate_reason: str,
+    candidate_evidence: list[dict[str, object]],
+) -> str:
+    if not candidate_evidence:
+        return "No repository candidates were selected; the runtime should clarify, repair discovery, or stop."
+    if candidate_reason == "explicit_existing_paths":
+        return "Explicit workspace paths were prioritized before broader repository discovery."
+    if candidate_reason == "filename_matches":
+        return "Filename and path-fragment matches were prioritized before content-search matches."
+    if candidate_reason == "search_matches":
+        return "Content-search matches were used because no stronger explicit or filename targets were found."
+    return "Repository-map fallback candidates were used because no stronger target signal was available."
 
 
 @dataclass(slots=True)
@@ -636,6 +770,13 @@ class EditExecutor:
             for item in operations
             if isinstance(item, dict) and str(item.get("path", "")).strip()
         ]
+        if not operation_paths:
+            inferred_target = _infer_single_target_path(repo_report)
+            if inferred_target and operations:
+                for operation in operations:
+                    if isinstance(operation, dict) and not str(operation.get("path", "")).strip():
+                        operation["path"] = inferred_target
+                operation_paths = [inferred_target]
         if operation_paths:
             merged_target_paths = [*operation_paths]
             for path in target_paths:
@@ -1078,6 +1219,21 @@ def _extract_operations(requirement: str) -> list[dict[str, object]]:
             )
         )
     for match in re.finditer(
+        r"""append\s+["'`](?P<content>.+?)["'`]\s+to\s+(?:the\s+)?(?:target\s+)?(?:file|module)\b""",
+        requirement,
+        flags=re.IGNORECASE,
+    ):
+        operations_with_pos.append(
+            (
+                match.start(),
+                {
+                    "kind": "append",
+                    "path": "",
+                    "content": match.group("content"),
+                },
+            )
+        )
+    for match in re.finditer(
         r"""replace\s+["'`](?P<old>.+?)["'`]\s+with\s+["'`](?P<new>.+?)["'`]\s+in\s+(?P<path>[\w./-]+\.[A-Za-z0-9]+)""",
         requirement,
         flags=re.IGNORECASE,
@@ -1088,6 +1244,22 @@ def _extract_operations(requirement: str) -> list[dict[str, object]]:
                 {
                     "kind": "replace",
                     "path": match.group("path"),
+                    "old": match.group("old"),
+                    "new": match.group("new"),
+                },
+            )
+        )
+    for match in re.finditer(
+        r"""replace\s+["'`](?P<old>.+?)["'`]\s+with\s+["'`](?P<new>.+?)["'`]\s+in\s+(?:the\s+)?(?:target\s+)?(?:file|module)\b""",
+        requirement,
+        flags=re.IGNORECASE,
+    ):
+        operations_with_pos.append(
+            (
+                match.start(),
+                {
+                    "kind": "replace",
+                    "path": "",
                     "old": match.group("old"),
                     "new": match.group("new"),
                 },
@@ -1142,6 +1314,15 @@ def _extract_operations(requirement: str) -> list[dict[str, object]]:
         )
     operations_with_pos.sort(key=lambda item: item[0])
     return [item for _, item in operations_with_pos]
+
+
+
+
+def _infer_single_target_path(repo_report: RepoExplorationReport) -> str | None:
+    candidate_paths = list(dict.fromkeys([*repo_report.existing_paths, *repo_report.candidate_paths]))
+    if len(candidate_paths) == 1:
+        return candidate_paths[0]
+    return None
 
 
 def _verification_target_paths(target_paths: list[str]) -> list[str]:

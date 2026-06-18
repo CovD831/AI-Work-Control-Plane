@@ -21,6 +21,22 @@ from agent_orchestrator.cli_team import TeamCommandHandlers, run_team_command
 from agent_orchestrator.command import ProviderHealthCheck, RuntimeModeRouter, direct_api_auth_status
 from agent_orchestrator.execution import CodingAgentExecutionRuntime, ExecutionRequest, LegacyExecutionRuntime
 from agent_orchestrator.intake import ExecutionMode, IntentIntake, TaskRouter
+from agent_orchestrator.native_productization import (
+    build_rc_adoption_report,
+    build_evidence_consumption_summary,
+    build_native_product_posture,
+    build_release_candidate_report,
+    build_release_operator_bundle,
+    build_setup_diagnosis,
+    run_product_smoke,
+    run_release_candidate_validation,
+    run_rc_adoption,
+    write_release_candidate_report,
+    write_release_candidate_validation,
+    write_release_operator_bundle,
+    write_rc_adoption_ledger,
+    write_rc_adoption_report,
+)
 from agent_orchestrator.orchestrator import Orchestrator
 from agent_orchestrator.policies import OrchestrationMode, get_policy
 from agent_orchestrator.planning import PlanStore, TeamOrchestrator
@@ -136,6 +152,63 @@ def main() -> None:
     health_parser.add_argument("--cache-ttl", type=int, default=60, help="Provider health cache TTL in seconds.")
     health_parser.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
+    product_parser = subparsers.add_parser("product", help="Inspect native productization posture and daily-driver readiness.")
+    product_subparsers = product_parser.add_subparsers(dest="product_command")
+    product_posture = product_subparsers.add_parser("posture", help="Show operator-readable native product posture.")
+    product_posture.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    product_posture.add_argument("--authoritative-report", help="Optional authoritative OpenCode comparison report JSON.")
+    product_posture.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    product_diagnose = product_subparsers.add_parser("diagnose", help="Diagnose provider/runtime setup for native product use.")
+    product_diagnose.add_argument("--refresh", action="store_true")
+    product_diagnose.add_argument("--cache-ttl", type=int, default=60)
+    product_diagnose.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    product_smoke = product_subparsers.add_parser("smoke", help="Run a minimal native daily-driver smoke task.")
+    product_smoke.add_argument("--requirement", default="Productization smoke: prove native operator surface can start and summarize a daily-driver task.")
+    product_smoke.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    product_evidence = product_subparsers.add_parser("evidence", help="Show operator-readable evidence consumption summary.")
+    product_evidence.add_argument("--authoritative-report", help="Optional authoritative OpenCode comparison report JSON.")
+    product_evidence.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    product_rc = product_subparsers.add_parser("rc-report", help="Build a local native release-candidate gate/report artifact.")
+    product_rc.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    product_rc.add_argument("--authoritative-report", help="Optional authoritative OpenCode comparison report JSON.")
+    product_rc.add_argument("--output", help="Optional JSON artifact path for the RC report.")
+    product_rc.add_argument("--refresh", action="store_true")
+    product_rc.add_argument("--cache-ttl", type=int, default=60)
+    product_rc.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    product_validate = product_subparsers.add_parser("rc-validate", help="Run or declare local RC validation commands and write a validation artifact.")
+    product_validate.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    product_validate.add_argument("--authoritative-report", help="Optional authoritative OpenCode comparison report JSON.")
+    product_validate.add_argument("--output", help="Optional JSON artifact path for the validation run.")
+    product_validate.add_argument("--dry-run", action="store_true", help="Declare validation commands without executing them.")
+    product_validate.add_argument("--skip-smoke", action="store_true")
+    product_validate.add_argument("--skip-tests", action="store_true")
+    product_validate.add_argument("--timeout", type=int, default=60)
+    product_validate.add_argument("--refresh", action="store_true")
+    product_validate.add_argument("--cache-ttl", type=int, default=60)
+    product_validate.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    product_bundle = product_subparsers.add_parser("rc-bundle", help="Build an operator handoff bundle for the local native RC.")
+    product_bundle.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    product_bundle.add_argument("--authoritative-report", help="Optional authoritative OpenCode comparison report JSON.")
+    product_bundle.add_argument("--validation", help="Optional RC validation JSON artifact to include.")
+    product_bundle.add_argument("--output", help="Optional JSON artifact path for the operator bundle.")
+    product_bundle.add_argument("--refresh", action="store_true")
+    product_bundle.add_argument("--cache-ttl", type=int, default=60)
+    product_bundle.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    product_adopt = product_subparsers.add_parser("rc-adopt", help="Run the native RC dogfood adoption loop and write an adoption ledger.")
+    product_adopt.add_argument("--runs-root", default=".agent_orchestrator/runs")
+    product_adopt.add_argument("--authoritative-report", help="Optional authoritative OpenCode comparison report JSON.")
+    product_adopt.add_argument("--validation", help="Optional RC validation JSON artifact to consume.")
+    product_adopt.add_argument("--bundle", help="Optional RC bundle JSON artifact to consume.")
+    product_adopt.add_argument("--output", help="Optional JSON artifact path for the adoption ledger.")
+    product_adopt.add_argument("--dry-run", action="store_true", help="Record adoption lanes without executing local changes.")
+    product_adopt.add_argument("--refresh", action="store_true")
+    product_adopt.add_argument("--cache-ttl", type=int, default=60)
+    product_adopt.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+    product_adoption_report = product_subparsers.add_parser("rc-adoption-report", help="Build an operator-readable native RC adoption report from a ledger.")
+    product_adoption_report.add_argument("--ledger", required=True, help="Native RC adoption ledger JSON artifact.")
+    product_adoption_report.add_argument("--output", help="Optional JSON artifact path for the adoption report.")
+    product_adoption_report.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
     evidence_parser = subparsers.add_parser("evidence", help="Capture workflow evidence reports.")
     evidence_subparsers = evidence_parser.add_subparsers(dest="evidence_command")
 
@@ -159,6 +232,46 @@ def main() -> None:
     evidence_compare.add_argument("--current", required=True, help="Current evidence JSON path.")
     evidence_compare.add_argument("--output", required=True, help="Markdown trend output path.")
     evidence_compare.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+
+    evidence_case_pack = evidence_subparsers.add_parser("case-pack", help="Write the external OpenCode same-contract case pack.")
+    evidence_case_pack.add_argument("--output", required=True, help="JSON case pack output path.")
+    evidence_case_pack.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    evidence_native_run = evidence_subparsers.add_parser("native-run", help="Write native runner records for a same-contract case pack.")
+    evidence_native_run.add_argument("--case-pack", required=True, help="Same-contract case pack JSON path.")
+    evidence_native_run.add_argument("--output", required=True, help="Native run records JSON output path.")
+    evidence_native_run.add_argument("--command-template", help="Optional shell command template executed once per case.")
+    evidence_native_run.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    evidence_opencode_run = evidence_subparsers.add_parser("opencode-run", help="Write minimal OpenCode runner records for a same-contract case pack.")
+    evidence_opencode_run.add_argument("--case-pack", required=True, help="Same-contract case pack JSON path.")
+    evidence_opencode_run.add_argument("--output", required=True, help="OpenCode run records JSON output path.")
+    evidence_opencode_run.add_argument("--command-template", help="Optional shell command template executed once per case.")
+    evidence_opencode_run.add_argument("--workspace-dir", help="Optional workspace directory for runner execution and git snapshotting.")
+    evidence_opencode_run.add_argument("--authoritative-runner", action="store_true", help="Mark the command template as an authoritative OpenCode runner, not a smoke command.")
+    evidence_opencode_run.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    evidence_external_report = evidence_subparsers.add_parser("external-report", help="Write native vs OpenCode comparative evidence report.")
+    evidence_external_report.add_argument("--case-pack", required=True, help="Same-contract case pack JSON path.")
+    evidence_external_report.add_argument("--native-records", required=True, help="Native run records JSON path.")
+    evidence_external_report.add_argument("--opencode-records", required=True, help="OpenCode run records JSON path.")
+    evidence_external_report.add_argument("--output", required=True, help="Comparative report JSON output path.")
+    evidence_external_report.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+
+    evidence_normalize_records = evidence_subparsers.add_parser("normalize-records", help="Normalize native or OpenCode run records for authoritative comparison.")
+    evidence_normalize_records.add_argument("--case-pack", required=True, help="Same-contract case pack JSON path.")
+    evidence_normalize_records.add_argument("--records", required=True, help="Raw run records JSON path.")
+    evidence_normalize_records.add_argument("--output", required=True, help="Normalized records JSON output path.")
+    evidence_normalize_records.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
+
+    evidence_authoritative_report = evidence_subparsers.add_parser("authoritative-report", help="Write normalized authoritative native vs OpenCode comparative report.")
+    evidence_authoritative_report.add_argument("--case-pack", required=True, help="Same-contract case pack JSON path.")
+    evidence_authoritative_report.add_argument("--native-records", required=True, help="Native run records JSON path.")
+    evidence_authoritative_report.add_argument("--opencode-records", required=True, help="OpenCode run records JSON path.")
+    evidence_authoritative_report.add_argument("--output", required=True, help="Authoritative comparative report JSON output path.")
+    evidence_authoritative_report.add_argument("--format", choices=FORMAT_CHOICES, default="pretty")
 
     ui_parser = subparsers.add_parser("ui", help="启动本地治理控制台。")
     ui_parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind.")
@@ -540,6 +653,116 @@ def main() -> None:
         _emit_json(_provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl), args)
         return
 
+    if args.command == "product":
+        if args.product_command == "posture":
+            payload = build_native_product_posture(
+                provider_health_snapshot=_provider_health_snapshot(),
+                runs_root=args.runs_root,
+                project_root=Path.cwd(),
+                authoritative_report_path=getattr(args, "authoritative_report", None),
+            )
+            if args.format != "json":
+                _print_product_posture(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        if args.product_command == "diagnose":
+            payload = build_setup_diagnosis(_provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl))
+            if args.format != "json":
+                _print_product_diagnosis(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        if args.product_command == "smoke":
+            payload = run_product_smoke(requirement=args.requirement, project_root=Path.cwd())
+            if args.format != "json":
+                _print_product_smoke(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        if args.product_command == "evidence":
+            payload = build_evidence_consumption_summary(project_root=Path.cwd(), authoritative_report_path=getattr(args, "authoritative_report", None))
+            if args.format != "json":
+                _print_product_evidence(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        if args.product_command == "rc-report":
+            payload = build_release_candidate_report(
+                provider_health_snapshot=_provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl),
+                runs_root=args.runs_root,
+                project_root=Path.cwd(),
+                authoritative_report_path=getattr(args, "authoritative_report", None),
+            )
+            if args.output:
+                payload["artifact"] = write_release_candidate_report(args.output, payload)
+            if args.format != "json":
+                _print_product_rc_report(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        if args.product_command == "rc-validate":
+            payload = run_release_candidate_validation(
+                provider_health_snapshot=_provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl),
+                runs_root=args.runs_root,
+                project_root=Path.cwd(),
+                authoritative_report_path=getattr(args, "authoritative_report", None),
+                dry_run=args.dry_run,
+                include_smoke=not args.skip_smoke,
+                include_tests=not args.skip_tests,
+                timeout_seconds=args.timeout,
+            )
+            if args.output:
+                payload["artifact"] = write_release_candidate_validation(args.output, payload)
+            if args.format != "json":
+                _print_product_rc_validation(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        if args.product_command == "rc-bundle":
+            payload = build_release_operator_bundle(
+                provider_health_snapshot=_provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl),
+                runs_root=args.runs_root,
+                project_root=Path.cwd(),
+                authoritative_report_path=getattr(args, "authoritative_report", None),
+                validation_path=getattr(args, "validation", None),
+            )
+            if args.output:
+                payload["artifact"] = write_release_operator_bundle(args.output, payload)
+            if args.format != "json":
+                _print_product_rc_bundle(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        if args.product_command == "rc-adopt":
+            payload = run_rc_adoption(
+                provider_health_snapshot=_provider_health_snapshot(refresh=args.refresh, ttl_seconds=args.cache_ttl),
+                runs_root=args.runs_root,
+                project_root=Path.cwd(),
+                authoritative_report_path=getattr(args, "authoritative_report", None),
+                validation_path=getattr(args, "validation", None),
+                bundle_path=getattr(args, "bundle", None),
+                dry_run=args.dry_run,
+            )
+            if args.output:
+                payload["artifact"] = write_rc_adoption_ledger(args.output, payload)
+            if args.format != "json":
+                _print_product_rc_adoption(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        if args.product_command == "rc-adoption-report":
+            ledger = json.loads(Path(args.ledger).read_text(encoding="utf-8"))
+            payload = build_rc_adoption_report(ledger)
+            if args.output:
+                payload["artifact"] = write_rc_adoption_report(args.output, payload)
+            if args.format != "json":
+                _print_product_rc_adoption_report(payload)
+            else:
+                _emit_json(payload, args)
+            return
+        parser.error("a product subcommand is required")
+
     if args.command == "evidence":
         run_evidence_command(args)
         return
@@ -644,6 +867,126 @@ def main() -> None:
         run = orchestrator.poll_run(result.run_id) if result.run_id else result.payload
         _print_run_summary(run)
         print(json.dumps(result.payload, ensure_ascii=False, indent=2))
+
+
+def _print_product_posture(payload: dict[str, object]) -> None:
+    print(f"product_posture: {payload.get('product_posture')}")
+    print(f"active_goal: {payload.get('active_goal')}")
+    run_status = payload.get("run_status", {}) if isinstance(payload.get("run_status"), dict) else {}
+    print(f"run_status: {run_status.get('status')} latest={run_status.get('latest_run_id')} reason={run_status.get('reason')}")
+    setup = payload.get("provider_runtime_posture", {}) if isinstance(payload.get("provider_runtime_posture"), dict) else {}
+    print(f"provider_posture: {setup.get('overall_posture')} release_candidate={setup.get('release_candidate_verdict')}")
+    for provider in setup.get("providers", []):
+        if isinstance(provider, dict):
+            state = "available" if provider.get("available") else "degraded"
+            print(f"  provider: {provider.get('provider')} {state} fix={provider.get('fix_hint')}")
+    comparison = payload.get("authoritative_comparison_summary", {}) if isinstance(payload.get("authoritative_comparison_summary"), dict) else {}
+    print(f"instrumentation_closure: {comparison.get('instrumentation_closure')} cases={comparison.get('case_result_count')}")
+    print(f"operator_decision: {comparison.get('operator_decision')}")
+    blocker = payload.get("blocker_recovery", {}) if isinstance(payload.get("blocker_recovery"), dict) else {}
+    print(f"blocker: {blocker.get('blocker')} recovery={blocker.get('recovery_reason')}")
+    print(f"next_action: {payload.get('next_action')}")
+    commands = payload.get("recommended_commands", []) if isinstance(payload.get("recommended_commands"), list) else []
+    if commands:
+        print("recommended_commands: " + " | ".join(str(item) for item in commands))
+
+
+def _print_product_diagnosis(payload: dict[str, object]) -> None:
+    print(f"setup_posture: {payload.get('overall_posture')}")
+    print(f"release_candidate: {payload.get('release_candidate_verdict')} ready={payload.get('install_release_candidate_ready')}")
+    matrix = payload.get("readiness_matrix", {}) if isinstance(payload.get("readiness_matrix"), dict) else {}
+    for row in matrix.get("rows", []):
+        if isinstance(row, dict):
+            state = "ready" if row.get("available") else "degraded"
+            print(
+                f"runtime: {row.get('runtime_id')} {state} "
+                f"type={row.get('runtime_type')} auth={row.get('auth_config_status')} "
+                f"fallback={row.get('fallback')} fix={row.get('fix_hint')}"
+            )
+    smoke_commands = payload.get("smoke_commands", []) if isinstance(payload.get("smoke_commands"), list) else []
+    if smoke_commands:
+        print("smoke_commands: " + " | ".join(str(item) for item in smoke_commands[:3]))
+
+
+def _print_product_smoke(payload: dict[str, object]) -> None:
+    print(f"smoke: {payload.get('status')}")
+    summary = payload.get("operator_summary", {}) if isinstance(payload.get("operator_summary"), dict) else {}
+    print(f"next_action: {summary.get('next_action')}")
+
+
+def _print_product_evidence(payload: dict[str, object]) -> None:
+    daily = payload.get("daily_driver_repeatability", {}) if isinstance(payload.get("daily_driver_repeatability"), dict) else {}
+    comparison = payload.get("authoritative_opencode_comparison", {}) if isinstance(payload.get("authoritative_opencode_comparison"), dict) else {}
+    print(f"daily_driver: {daily.get('state')} families={daily.get('family_count')}")
+    print(f"instrumentation_closure: {comparison.get('instrumentation_closure')}")
+    print(f"operator_decision: {comparison.get('operator_decision')}")
+    print(f"next_step: {payload.get('native_productization_next_step')}")
+
+
+def _print_product_rc_report(payload: dict[str, object]) -> None:
+    print(f"release_candidate: {payload.get('verdict')} ready={payload.get('install_release_candidate_ready')}")
+    summary = payload.get("operator_summary", {}) if isinstance(payload.get("operator_summary"), dict) else {}
+    print(f"operator: outcome={summary.get('outcome')} verify_or_stop={summary.get('verify_or_stop')} next_action={summary.get('next_action')}")
+    runtime = payload.get("runtime_summary", {}) if isinstance(payload.get("runtime_summary"), dict) else {}
+    print(f"runtime_verdict: {runtime.get('release_candidate_verdict')}")
+    degraded = runtime.get("degraded_paths", []) if isinstance(runtime.get("degraded_paths"), list) else []
+    if degraded:
+        print("degraded_paths: " + " | ".join(str(item.get("runtime_id")) for item in degraded if isinstance(item, dict)))
+    validation = payload.get("validation_path", {}) if isinstance(payload.get("validation_path"), dict) else {}
+    smoke = validation.get("smoke_commands", []) if isinstance(validation.get("smoke_commands"), list) else []
+    tests = validation.get("test_commands", []) if isinstance(validation.get("test_commands"), list) else []
+    if smoke:
+        print("smoke_commands: " + " | ".join(str(item) for item in smoke[:4]))
+    if tests:
+        print("test_commands: " + " | ".join(str(item) for item in tests[:3]))
+    blockers = payload.get("blockers", []) if isinstance(payload.get("blockers"), list) else []
+    warnings = payload.get("warnings", []) if isinstance(payload.get("warnings"), list) else []
+    print("blockers: " + (" | ".join(str(item) for item in blockers) if blockers else "none"))
+    if warnings:
+        print("warnings: " + " | ".join(str(item) for item in warnings))
+    artifact = payload.get("artifact", {}) if isinstance(payload.get("artifact"), dict) else {}
+    if artifact.get("path"):
+        print(f"artifact: {artifact.get('path')} state={artifact.get('state')}")
+
+
+def _print_product_rc_validation(payload: dict[str, object]) -> None:
+    print(f"rc_validation: {payload.get('verdict')} dry_run={payload.get('dry_run')} commands={payload.get('command_count')}")
+    summary = payload.get("operator_summary", {}) if isinstance(payload.get("operator_summary"), dict) else {}
+    print(f"operator: outcome={summary.get('outcome')} verify_or_stop={summary.get('verify_or_stop')} next_action={summary.get('next_action')}")
+    for item in payload.get("commands", []) if isinstance(payload.get("commands"), list) else []:
+        if isinstance(item, dict):
+            print(f"command: {item.get('kind')} status={item.get('status')} exit={item.get('exit_status')} duration_ms={item.get('duration_ms')} cmd={item.get('command')}")
+    blockers = payload.get("blockers", []) if isinstance(payload.get("blockers"), list) else []
+    warnings = payload.get("warnings", []) if isinstance(payload.get("warnings"), list) else []
+    print("blockers: " + (" | ".join(str(item) for item in blockers) if blockers else "none"))
+    if warnings:
+        print("warnings: " + " | ".join(str(item) for item in warnings))
+    artifact = payload.get("artifact", {}) if isinstance(payload.get("artifact"), dict) else {}
+    if artifact.get("path"):
+        print(f"artifact: {artifact.get('path')} state={artifact.get('state')}")
+
+
+def _print_product_rc_bundle(payload: dict[str, object]) -> None:
+    print(f"rc_bundle: {payload.get('verdict')}")
+    summary = payload.get("operator_summary", {}) if isinstance(payload.get("operator_summary"), dict) else {}
+    print(f"operator: outcome={summary.get('outcome')} verify_or_stop={summary.get('verify_or_stop')} next_action={summary.get('next_action')}")
+    report = payload.get("report", {}) if isinstance(payload.get("report"), dict) else {}
+    validation = payload.get("validation", {}) if isinstance(payload.get("validation"), dict) else {}
+    print(f"report: verdict={report.get('verdict')} validation={validation.get('verdict')} dry_run={validation.get('dry_run')}")
+    smoke = payload.get("smoke_commands", []) if isinstance(payload.get("smoke_commands"), list) else []
+    tests = payload.get("test_commands", []) if isinstance(payload.get("test_commands"), list) else []
+    if smoke:
+        print("smoke_commands: " + " | ".join(str(item) for item in smoke[:3]))
+    if tests:
+        print("test_commands: " + " | ".join(str(item) for item in tests[:3]))
+    blockers = payload.get("blockers", []) if isinstance(payload.get("blockers"), list) else []
+    warnings = payload.get("warnings", []) if isinstance(payload.get("warnings"), list) else []
+    print("blockers: " + (" | ".join(str(item) for item in blockers) if blockers else "none"))
+    if warnings:
+        print("warnings: " + " | ".join(str(item) for item in warnings))
+    artifact = payload.get("artifact", {}) if isinstance(payload.get("artifact"), dict) else {}
+    if artifact.get("path"):
+        print(f"artifact: {artifact.get('path')} state={artifact.get('state')}")
 
 
 def _build_orchestrator(runtime: str, provider: str | None) -> Orchestrator:
@@ -1034,6 +1377,30 @@ def _format_decomposition_summary_line(summary: dict[str, object]) -> str:
     )
 
 
+def _print_product_rc_adoption(payload: dict[str, object]) -> None:
+    summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
+    print(f"rc_adoption: {summary.get('verdict')} dry_run={payload.get('dry_run')} lanes={payload.get('record_count')}")
+    print(f"gap_classification: {summary.get('gap_classification')} next_action={summary.get('next_action')}")
+    for item in payload.get("records", []) if isinstance(payload.get("records"), list) else []:
+        if isinstance(item, dict):
+            print(f"lane: {item.get('lane')} decision={item.get('outcome')} pause={item.get('pause_or_failure_reason')} next={item.get('next_action')}")
+    artifact = payload.get("artifact", {}) if isinstance(payload.get("artifact"), dict) else {}
+    if artifact.get("path"):
+        print(f"artifact: {artifact.get('path')} state={artifact.get('state')}")
+
+
+def _print_product_rc_adoption_report(payload: dict[str, object]) -> None:
+    summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
+    operator = payload.get("operator_report", {}) if isinstance(payload.get("operator_report"), dict) else {}
+    print(f"rc_adoption_report: {summary.get('verdict')} supports_local_dogfood={operator.get('supports_local_dogfood')}")
+    print(f"gap_classification: {summary.get('gap_classification')} workspace_reviewable={summary.get('workspace_impact_reviewable')}")
+    print(f"next_action: {summary.get('next_action')}")
+    drift = summary.get("validation_drift", {}) if isinstance(summary.get("validation_drift"), dict) else {}
+    print(f"drift: {drift.get('drift')} rc_bundle={drift.get('rc_bundle_verdict')} validation={drift.get('validation_verdict')}")
+    artifact = payload.get("artifact", {}) if isinstance(payload.get("artifact"), dict) else {}
+    if artifact.get("path"):
+        print(f"artifact: {artifact.get('path')} state={artifact.get('state')}")
+
 def _parse_agent_flag(value: str | None) -> bool | None:
     if value is None:
         return None
@@ -1042,3 +1409,4 @@ def _parse_agent_flag(value: str | None) -> bool | None:
 
 if __name__ == "__main__":
     main()
+

@@ -568,6 +568,15 @@ def build_comparative_daily_driver_summary(
     daily_driver_main_path_anchor = proof_strength.get("daily_driver_main_path_anchor")
     if daily_driver_main_path_anchor is None and daily_driver_main_path_ready:
         daily_driver_main_path_anchor = "long_chain_native_first_repo_task"
+    daily_driver_case_matrix = comparative_benchmark.get("daily_driver_case_matrix", {})
+    if not isinstance(daily_driver_case_matrix, dict):
+        daily_driver_case_matrix = {}
+    daily_driver_repeatability_harness = comparative_benchmark.get("daily_driver_repeatability_harness", {})
+    if not isinstance(daily_driver_repeatability_harness, dict):
+        daily_driver_repeatability_harness = {}
+    daily_driver_runner_artifact = comparative_benchmark.get("daily_driver_runner_artifact", {})
+    if not isinstance(daily_driver_runner_artifact, dict):
+        daily_driver_runner_artifact = {}
     daily_driver_repeatability_judgment = (
         "main_path_anchor_proven_repeatability_gap_remaining"
         if daily_driver_main_path_ready and proof_strength.get("repeatability_ready") is not True
@@ -585,6 +594,9 @@ def build_comparative_daily_driver_summary(
         "daily_driver_repeatability_tier": daily_driver_repeatability_tier,
         "daily_driver_main_path_anchor": daily_driver_main_path_anchor,
         "daily_driver_repeatability_judgment": daily_driver_repeatability_judgment,
+        "daily_driver_case_matrix": daily_driver_case_matrix,
+        "daily_driver_repeatability_harness": daily_driver_repeatability_harness,
+        "daily_driver_runner_artifact": daily_driver_runner_artifact,
         "direct_proof_status": proof_strength.get("direct_proof_status"),
         "repeatability_status": proof_strength.get("repeatability_status"),
         "stronger_task_family_count": proof_strength.get("stronger_task_family_count"),
@@ -604,6 +616,9 @@ def build_comparative_daily_driver_summary(
             f"anchor={daily_driver_main_path_anchor or 'none'} "
             f"judgment={daily_driver_repeatability_judgment} "
             f"families={independent_count} "
+            f"matrix={daily_driver_case_matrix.get('matrix_status') or 'none'} "
+            f"harness={daily_driver_repeatability_harness.get('harness_status') or 'none'} "
+            f"runner={daily_driver_runner_artifact.get('runner_status') or 'none'} "
             f"direct={proof_strength.get('direct_proof_status')} "
             f"repeatability={proof_strength.get('repeatability_status')}"
         ),
@@ -1340,6 +1355,21 @@ def build_runtime_comparative_benchmark_digest(benchmark: dict[str, object]) -> 
         if isinstance(benchmark.get("approval_boundary_digest"), dict)
         else {}
     )
+    daily_driver_case_matrix = (
+        benchmark.get("daily_driver_case_matrix", {})
+        if isinstance(benchmark.get("daily_driver_case_matrix"), dict)
+        else {}
+    )
+    daily_driver_repeatability_harness = (
+        benchmark.get("daily_driver_repeatability_harness", {})
+        if isinstance(benchmark.get("daily_driver_repeatability_harness"), dict)
+        else {}
+    )
+    daily_driver_runner_artifact = (
+        benchmark.get("daily_driver_runner_artifact", {})
+        if isinstance(benchmark.get("daily_driver_runner_artifact"), dict)
+        else {}
+    )
     return {
         "native_default_path": benchmark.get("native_default_path"),
         "native_task_class": benchmark.get("native_task_class"),
@@ -1373,6 +1403,26 @@ def build_runtime_comparative_benchmark_digest(benchmark: dict[str, object]) -> 
         "planner_candidate_status": proof_strength.get("planner_candidate_status"),
         "adapter_unification_status": proof_strength.get("adapter_unification_status"),
         "daily_driver_repeatability_tier": proof_strength.get("daily_driver_repeatability_tier"),
+        "daily_driver_case_matrix_status": daily_driver_case_matrix.get("matrix_status"),
+        "daily_driver_case_matrix_covered_family_count": daily_driver_case_matrix.get("covered_family_count"),
+        "daily_driver_case_matrix_covered_case_count": daily_driver_case_matrix.get("covered_case_count"),
+        "daily_driver_case_matrix_covered_families": list(daily_driver_case_matrix.get("covered_families", []))
+        if isinstance(daily_driver_case_matrix.get("covered_families"), list)
+        else [],
+        "daily_driver_case_matrix_matrix_rows": list(daily_driver_case_matrix.get("matrix_rows", []))
+        if isinstance(daily_driver_case_matrix.get("matrix_rows"), list)
+        else [],
+        "daily_driver_repeatability_harness_status": daily_driver_repeatability_harness.get("harness_status"),
+        "daily_driver_repeatability_harness_passing_family_count": daily_driver_repeatability_harness.get("passing_family_count"),
+        "daily_driver_repeatability_harness_failed_family_count": daily_driver_repeatability_harness.get("failed_family_count"),
+        "daily_driver_repeatability_harness_contract_outputs": list(daily_driver_repeatability_harness.get("contract_outputs", []))
+        if isinstance(daily_driver_repeatability_harness.get("contract_outputs"), list)
+        else [],
+        "daily_driver_runner_artifact_status": daily_driver_runner_artifact.get("runner_status"),
+        "daily_driver_runner_artifact_family_count": daily_driver_runner_artifact.get("runner_family_count"),
+        "daily_driver_runner_artifact_contract_outputs": list(daily_driver_runner_artifact.get("contract_outputs", []))
+        if isinstance(daily_driver_runner_artifact.get("contract_outputs"), list)
+        else [],
         "repeatability_ready": proof_strength.get("repeatability_ready"),
         "stronger_task_family_count": proof_strength.get("stronger_task_family_count"),
         "broader_task_family_count": proof_strength.get("broader_task_family_count"),

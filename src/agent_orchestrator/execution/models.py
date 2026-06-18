@@ -261,6 +261,153 @@ def derive_adapter_capability_summary(
     }
 
 
+
+def derive_adapter_execution_fact(
+    *,
+    runtime_name: str,
+    execution_mode: str,
+    task_kind: str,
+    status: str | None,
+    run_id: str | None,
+    session_id: str | None,
+    turn_id: str | None,
+    adapter_contract: dict[str, object] | None = None,
+    adapter_shared_contract: dict[str, object] | None = None,
+    adapter_capability_surface: dict[str, object] | None = None,
+    evidence_outputs: list[object] | None = None,
+    recovery_surfaces: list[object] | None = None,
+) -> dict[str, object]:
+    """Normalize native and external runtime adapter facts into one governed schema."""
+
+    adapter_contract = adapter_contract if isinstance(adapter_contract, dict) else {}
+    adapter_shared_contract = (
+        adapter_shared_contract if isinstance(adapter_shared_contract, dict) else {}
+    )
+    adapter_capability_surface = (
+        adapter_capability_surface if isinstance(adapter_capability_surface, dict) else {}
+    )
+    if not adapter_capability_surface and adapter_contract:
+        adapter_capability_surface = _as_dict(adapter_contract.get("capability_surface"))
+    shared_contract = _as_dict(adapter_capability_surface.get("shared_contract"))
+    if not adapter_shared_contract and shared_contract:
+        path_selection = _as_dict(shared_contract.get("path_selection"))
+        governance = _as_dict(adapter_capability_surface.get("governance"))
+        comparability = _as_dict(adapter_capability_surface.get("comparability"))
+        continuity_support = _as_dict(shared_contract.get("continuity_support"))
+        adapter_shared_contract = {
+            "format": shared_contract.get("format"),
+            "adapter_family": adapter_contract.get("adapter_family") or adapter_capability_surface.get("adapter_family"),
+            "agent_kind": adapter_contract.get("agent_kind") or adapter_capability_surface.get("agent_kind"),
+            "comparison_mode": comparability.get("comparison_mode") or shared_contract.get("comparison_mode"),
+            "default_path": path_selection.get("default_path"),
+            "operating_boundary": path_selection.get("operating_boundary"),
+            "approval_required": governance.get("approval_required"),
+            "approval_pause_supported": governance.get("approval_pause_supported"),
+            "hot_plug_supported": governance.get("hot_plug_supported"),
+            "fallback_governed": governance.get("fallback_governed"),
+            "shared_contract_resume_supported": continuity_support.get("resume_contract"),
+            "evidence_outputs": list(adapter_contract.get("evidence_outputs", []))
+            if isinstance(adapter_contract.get("evidence_outputs"), list)
+            else list(adapter_capability_surface.get("evidence_outputs", []))
+            if isinstance(adapter_capability_surface.get("evidence_outputs"), list)
+            else [],
+            "recovery_surfaces": list(adapter_contract.get("recovery_surfaces", []))
+            if isinstance(adapter_contract.get("recovery_surfaces"), list)
+            else list(adapter_capability_surface.get("recovery_surfaces", []))
+            if isinstance(adapter_capability_surface.get("recovery_surfaces"), list)
+            else [],
+            "recovery_contract": dict(shared_contract.get("recovery_contract", {}))
+            if isinstance(shared_contract.get("recovery_contract"), dict)
+            else {},
+            "operator_recovery_surface": dict(shared_contract.get("operator_recovery_surface", {}))
+            if isinstance(shared_contract.get("operator_recovery_surface"), dict)
+            else {},
+            "shared_evidence_surface": list(shared_contract.get("shared_evidence_surface", []))
+            if isinstance(shared_contract.get("shared_evidence_surface"), list)
+            else [],
+        }
+    normalized_evidence_outputs = [
+        str(item)
+        for item in (
+            evidence_outputs
+            if isinstance(evidence_outputs, list)
+            else adapter_shared_contract.get("evidence_outputs", [])
+            if isinstance(adapter_shared_contract.get("evidence_outputs"), list)
+            else adapter_contract.get("evidence_outputs", [])
+            if isinstance(adapter_contract.get("evidence_outputs"), list)
+            else []
+        )
+    ]
+    normalized_recovery_surfaces = [
+        str(item)
+        for item in (
+            recovery_surfaces
+            if isinstance(recovery_surfaces, list)
+            else adapter_shared_contract.get("recovery_surfaces", [])
+            if isinstance(adapter_shared_contract.get("recovery_surfaces"), list)
+            else adapter_contract.get("recovery_surfaces", [])
+            if isinstance(adapter_contract.get("recovery_surfaces"), list)
+            else []
+        )
+    ]
+    default_path = adapter_shared_contract.get("default_path") or _as_dict(
+        adapter_shared_contract.get("path_selection")
+    ).get("default_path")
+    operating_boundary = adapter_shared_contract.get("operating_boundary") or _as_dict(
+        adapter_shared_contract.get("path_selection")
+    ).get("operating_boundary")
+    shared_surfaces = list(
+        dict.fromkeys(
+            [
+                "runtime_payload",
+                "workspace_index",
+                "ui_execution_summary",
+                "cli_execution_summary",
+                "evidence_report",
+                *[
+                    str(item)
+                    for item in adapter_shared_contract.get("shared_evidence_surface", [])
+                    if isinstance(adapter_shared_contract.get("shared_evidence_surface"), list)
+                ],
+            ]
+        )
+    )
+    return {
+        "format": "agent_orchestrator.adapter_execution_fact.v1",
+        "runtime_name": runtime_name,
+        "execution_mode": execution_mode,
+        "task_kind": task_kind,
+        "status": status,
+        "run_id": run_id,
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "adapter_family": adapter_shared_contract.get("adapter_family") or adapter_contract.get("adapter_family"),
+        "agent_kind": adapter_shared_contract.get("agent_kind") or adapter_contract.get("agent_kind"),
+        "default_path": default_path,
+        "operating_boundary": operating_boundary,
+        "comparison_mode": adapter_shared_contract.get("comparison_mode"),
+        "hot_plug_supported": adapter_shared_contract.get("hot_plug_supported"),
+        "fallback_governed": adapter_shared_contract.get("fallback_governed"),
+        "approval_required": adapter_shared_contract.get("approval_required"),
+        "approval_pause_supported": adapter_shared_contract.get("approval_pause_supported"),
+        "resume_contract_supported": adapter_shared_contract.get("shared_contract_resume_supported"),
+        "evidence_outputs": normalized_evidence_outputs,
+        "recovery_surfaces": normalized_recovery_surfaces,
+        "recovery_contract": dict(adapter_shared_contract.get("recovery_contract", {}))
+        if isinstance(adapter_shared_contract.get("recovery_contract"), dict)
+        else {},
+        "operator_recovery_surface": dict(adapter_shared_contract.get("operator_recovery_surface", {}))
+        if isinstance(adapter_shared_contract.get("operator_recovery_surface"), dict)
+        else {},
+        "shared_evidence_surface": shared_surfaces,
+        "source_visibility": {
+            "operator_can_distinguish_source": True,
+            "source_label": f"{adapter_shared_contract.get('adapter_family') or adapter_contract.get('adapter_family')}:{adapter_shared_contract.get('agent_kind') or adapter_contract.get('agent_kind')}",
+            "shared_status_semantics": True,
+        },
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactReference:
     kind: str

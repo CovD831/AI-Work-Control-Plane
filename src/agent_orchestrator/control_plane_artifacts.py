@@ -93,11 +93,13 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
         adapter_capability_surface = payload.get("adapter_capability_surface", {})
         adapter_capability = payload.get("adapter_capability", {})
         adapter_productization_surface = payload.get("adapter_productization_surface", {})
+        adapter_execution_fact = payload.get("adapter_execution_fact", {})
         path_selection = payload.get("path_selection", {})
         strategy_summary = payload.get("strategy_summary", {})
         native_tool_surface = payload.get("native_tool_surface", {})
         native_tool_productization_surface = payload.get("native_tool_productization_surface", {})
         native_tool_trace = payload.get("native_tool_trace", {})
+        native_tool_evidence = payload.get("native_tool_evidence", {})
         native_task_proof = payload.get("native_task_proof", {})
         native_repo_task_acceptance = payload.get("native_repo_task_acceptance", {})
         native_complex_repo_task_acceptance = payload.get("native_complex_repo_task_acceptance", {})
@@ -133,6 +135,9 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
             else None,
             "adapter_productization_surface": dict(adapter_productization_surface)
             if isinstance(adapter_productization_surface, dict)
+            else None,
+            "adapter_execution_fact": dict(adapter_execution_fact)
+            if isinstance(adapter_execution_fact, dict)
             else None,
             "path_selection": dict(path_selection) if isinstance(path_selection, dict) else None,
             "planner_shared_contract": {
@@ -241,6 +246,7 @@ def artifact_summary(payload: dict[str, object]) -> dict[str, object]:
             if isinstance(native_tool_productization_surface, dict)
             else None,
             "native_tool_trace": dict(native_tool_trace) if isinstance(native_tool_trace, dict) else None,
+            "native_tool_evidence": dict(native_tool_evidence) if isinstance(native_tool_evidence, dict) else None,
             "native_tool_usage": {
                 "tool_count": len(native_tool_surface.get("tools", []))
                 if isinstance(native_tool_surface, dict) and isinstance(native_tool_surface.get("tools"), list)
