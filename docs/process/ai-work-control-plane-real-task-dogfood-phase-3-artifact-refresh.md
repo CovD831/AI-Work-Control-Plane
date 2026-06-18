@@ -20,4 +20,5 @@ pytest tests/test_evidence.py tests/test_cli.py -q
 ## Exit Criteria
 
 - Report and trend include real-task dogfood metrics.
+- Trend includes the `Comparative Proof Strength` section so baseline/current proof-strength posture remains visible.
 - Evidence commands still pass CLI tests.

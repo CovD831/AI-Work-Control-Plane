@@ -1,246 +1,42 @@
-# AI-Work-Control-Plane Product Process
+# Agent Orchestrator Product Process
 
-## Header
-- Current Dual-Layer Stage: `Stage 2 - Planning Governance Skeleton`
-- Planning Governance Progress: `decision-core-first happy path established; recovery and handoff hardening in progress`
-- Execution Strategy Progress: `iteration 4 in progress`
-- Total Product Progress: `decision-core-first happy path established with planning skeleton advancing`
-- Current Product Gap: the repository now has a basic planning governance loop, persisted plan sessions, dual-model quality gates, decision verdicts, approved-plan-driven execution provenance, execution gating, visible reviewer fallback policy, structured topology rationale, scoped changed-file compliance hooks, operator-runbook signal compliance, a structured compliance contract with changed-file header enforcement, explicit Provider / Runtime modes for `cli_inherit`, `cli_isolated`, and `direct_api`, the first AI Work Control Plane artifact pipeline, the Operations Track operator surface, the Live Recovery Track recovery surface, the Runtime Bridge Fidelity surface with Provider Session Snapshot, Runtime Operation Receipt, extended Runtime Event Stream, `team runtime inspect`, workspace/evidence/UI runtime fidelity summaries, and the native coding-agent dogfood baseline across success, blocked recovery, and repair-success chains. Remaining gaps are broader real-task dogfood coverage and deeper provider-specific bridge fidelity beyond the guarded command runtime boundary.
+## 执行方式
 
-## Purpose Of This Document
+- 主计划驱动。
+- 不再把每次实现包装成新的独立小计划。
+- 验证通过后自动进入下一段。
+- targeted tests 通过后进入下一 phase。
+- 当前执行层更接近 `单编排器 + 多角色语义 + 持久化工作流`。
+- 当前执行层还不是高自治、多中心协商式的 multi-agent system。
+- surface convergence 以 canonical contracts 为中心，projection surfaces 不是新的 durable state。
 
-This is the **single source of truth** for product progress supervision.
+## 当前过程状态
 
-It should answer two questions at all times:
+- `in_progress - basic gate active`
+- `in_progress - basic refresh and compliance checks active`
+- `in_progress - changed-file scoped pre-commit gate active`
+- `team check-compliance`
 
-1. `Where are we in the dual-layer plan?`
-2. `Are current changes still moving the project toward the intended final product shape?`
+## 关键约束
 
-Update this file at the end of every implementation iteration. Do not maintain a second competing progress narrative elsewhere.
+- Missing plan/checklist/review-round persistence is now blocked.
+- visible reviewer fallback policy 必须存在，并记录 fallback source, reason, detail, and preferred reviewer。
+- structured topology rationale 必须可见。
+- operator-runbook signal compliance 必须通过。
+- Operator runbook drift for topology and provider fallback signals is now blocked.
+- Checklist ownership is now explicit on persisted plan items.
+- hook-based compliance checks 已激活，旧的“未启用”表述不应再保留。
 
-## How To Use This Document
+## 运行模式
 
-- Keep the header current after every iteration.
-- Record accepted direction only; do not use this file for speculative side ideas.
-- Every verified iteration must include evidence and drift notes.
-- If an iteration improves only one layer while the product gap remains dominated by the other, record that drift explicitly.
-- Treat providers, bridges, runtimes, and job backends as plugin boundaries unless an iteration explicitly says otherwise.
+- `cli_inherit`
+- `cli_isolated`
+- `direct_api`
 
-## 中文分层对齐说明
+## 当前阶段认知
 
-从现在开始，过程监督时默认按以下三层判断改动归属：
-
-- `决策核心层`
-- `执行拓扑层`
-- `Provider / Runtime 层`
-
-对应中文基准说明见：
-
-- [决策核心-执行拓扑-运行时分层说明](/Users/abab/Desktop/AI-Work-Control-Plane/docs/architecture/决策核心-执行拓扑-运行时分层说明.md)
-- [长周期主执行计划](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/长周期主执行计划.md)
-- [v1.x Reference Upgrade Master Plan](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/v1x-reference-upgrade-master-plan.md)
-- [AI Work Control Plane Master Plan](/Users/abab/Desktop/AI-Work-Control-Plane/docs/process/ai-work-control-plane-master-plan.md)
-- [架构决策记录 ADR](/Users/abab/Desktop/AI-Work-Control-Plane/docs/decisions/)
-
-特别说明：
-
-- `agent team` 默认视为执行拓扑层
-- `claude / codex / command runtime` 默认视为 Provider / Runtime 层
-- `cli_inherit / cli_isolated / direct_api` 默认视为 Provider / Runtime 层
-- `PlanSession / RoundController / gap closure / approved-plan gate` 默认视为决策核心层
-
-当前执行层基线补充：
-
-- 当前执行层更接近 `单编排器 + 多角色语义 + 持久化工作流`
-- 当前执行层已经包含 handoff、review、adversarial review、work graph 等 agent-like 要素
-- 当前执行层还不是高自治、多中心协商式的 multi-agent system
-- 后续如需演进到更强多 agent 协作，必须先把协作对象、决策理由、恢复分支和检索证据结构化，再增加自治程度
-
-执行方式补充：
-
-- 后续默认按“长周期主执行计划”持续推进
-- 后续实现采用“主计划驱动”，不再把每次实现包装成新的独立小计划
-- 并行 worker / subagent 交付统一使用 `SUMMARY / CHANGES / EVIDENCE / RISKS / BLOCKERS` 五段契约，父流程只整合 bounded evidence 和 artifact path
-- 每个实现段验证通过后自动进入下一段，普通进展汇报不构成停点
-- 除非发生高风险方向变化，否则不再为每个小阶段重新起一轮大计划
-- 对于 `docs/process/agent-evolution-master-plan.md` 覆盖的演进线，每个 phase 仍然必须先写 phase plan，再执行实现，并在 targeted tests 通过后进入下一 phase
-- 当某条演进线连续数个 phase 扩展了 CLI / work graph / docs / compliance 等多个暴露面时，必须先做一次 surface convergence，再继续引入新的 runtime substrate
-- surface convergence 的默认目标是压实 canonical contracts、projection surfaces 和 implemented-vs-planned boundary，而不是继续加新行为
-
-## Final Product Shape
-
-The intended v1 product is:
-
-- a local-first CLI governance system
-- optimized for the author's real workflows before broader packaging
-- built around `Planning Governance Layer + Execution Strategy Layer`
-- capable of accepting a task plus optional strategy constraints
-- capable of running a rule-driven planning governance loop before execution
-- capable of producing persisted plans, gate history, checklists, approved execution artifacts, routed execution decisions, and synchronized documentation updates
-
-The product is not:
-
-- a bridge product
-- a tmux/session manager
-- a provider-specific orchestration shell
-- a runtime-complete agent platform
-
-## Product Layers
-
-### Planning Governance Layer
-- Goal:
-  make planning a first-class, reviewable, resumable, and enforceable product workflow before code execution begins
-- Completion Criteria:
-  plan sessions, review rounds, risk-challenge gates, decision verdicts, checklist persistence, and resume state exist and gate execution
-- Status:
-  `in_progress`
-
-### Execution Strategy Layer
-- Goal:
-  convert approved plans into explainable, policy-driven execution through replaceable plugins
-- Completion Criteria:
-  strategy signals, decision artifacts, plugin boundaries, and guardrails remain explicit and testable
-- Status:
-  `in_progress`
-
-### Documentation And Compliance Layer
-- Goal:
-  force documentation, file-header contracts, and code structure to remain synchronized through checks and hooks
-- Completion Criteria:
-  root map, module manifests, file headers, loopback checks, and hook-based blocking are all active
-- Status:
-  `in_progress - basic gate active`
-
-## Product Stages
-
-### Stage 1: Product Backbone Rewrite
-- Goal:
-  replace the previous strategy-only product narrative with a dual-layer system narrative
-- Completion Criteria:
-  README, roadmap, and process all describe the same dual-layer system with one source of truth
-- Status:
-  `in_progress`
-
-### Stage 2: Planning Governance Skeleton
-- Goal:
-  create the minimal plan-loop system that persists plans and blocks premature execution
-- Completion Criteria:
-  plan artifacts, review rounds, dual-model verdicts, gap closure logic, checklists, and resume support exist
-- Status:
-  `in_progress`
-
-### Stage 3: Fractal Documentation And Hard Sync
-- Goal:
-  make root map, module manifests, and file header contracts enforceable and automatically refreshed
-- Completion Criteria:
-  documentation mismatch is detectable and task completion updates the global context map
-- Status:
-  `in_progress - basic refresh and compliance checks active`
-
-### Stage 4: Hook Enforcement And End-to-End Convergence
-- Goal:
-  connect plan governance, execution strategy, and documentation synchronization into one enforceable workflow
-- Completion Criteria:
-  hook checks block violations and the full task lifecycle runs through all layers coherently
-- Status:
-  `in_progress - changed-file scoped pre-commit gate active`
-
-## Execution Strategy Progress Log
-
-### Iteration 1
-- Goal:
-  stabilize the strategy-control contract around `mode`, `agent_enabled`, `depth`, `provider_flow`, and depth-first failure escalation
-- Status:
-  `verified`
-- Evidence:
-  strategy-control surfaces stabilized in policy, failure, orchestrator, and CLI paths
-- Risks / Drift:
-  historical expectations now need to account for sequential upgrades
-
-### Iteration 2
-- Goal:
-  make `provider_flow` influence execution decisions without tying the strategy layer to one runtime shape
-- Status:
-  `verified`
-- Evidence:
-  provider hints and provider evidence appear in run artifacts and tests
-- Risks / Drift:
-  command runtime still shaped too much of the narrative
-
-### Iteration 3
-- Goal:
-  prove that the strategy layer can drive mixed execution plugins while keeping runtime behavior secondary
-- Status:
-  `verified`
-- Evidence:
-  mixed provider command-backed execution works in one orchestration run
-- Risks / Drift:
-  this strengthened execution evidence more than product backbone clarity
-
-### Iteration 4
-- Goal:
-  define and present the execution strategy decision contract
-- Status:
-  `verified with approved-plan handoff convergence still being hardened`
-- Evidence:
-  decision signals and decision artifacts now exist on runs and attempts; CLI summaries surface decision output; tests cover contract round-trip, approved-plan-linked provenance, and auto-mode signal carryover
-- Risks / Drift:
-  direct `run` still coexists with the `team` path, so the main remaining risk is allowing execution ergonomics to outgrow approved-plan-first governance
-- Open Questions:
-  how much further direct-run and team-run artifact convergence is needed before the internal-default loop feels complete
-
-## Planning Governance Gap List
-
-- No configurable multi-role review policy exists beyond the fixed dual-model template.
-- Decision verdicts now record reviewer fallback source, reason, detail, and preferred reviewer; broader multi-provider fallback policy is still incomplete.
-- Checklist ownership is now explicit on persisted plan items, but richer per-round transition policy is still incomplete.
-- Recovery semantics are now session-visible through `team summary` / `team next` / `team runbook`, but deeper interruption-aware round recovery is still incomplete.
-
-## Documentation Sync Gap List
-
-- Basic root map, module manifest, and file-header contract documents exist under `docs/process/`.
-- Basic documentation refresh exists through the team documentation sync path.
-- Basic hook-based compliance checks can detect process-document drift through `team check-compliance`.
-- Agent-facing documentation context now exists through `team inspect-docs`, which returns selected canonical docs with stable doc ids and doc-sync freshness.
-- Canonical architecture decisions now live under `docs/decisions/` and separate durable product decisions from derived views.
-- Operator runbook drift for topology and provider fallback signals is now blocked by compliance.
-- Compliance output now exposes structured `warnings`, `checked_files`, `required_actions`, and `recommended_commands`, while keeping hard header enforcement scoped to changed files.
-- Richer code/header comparison coverage is still missing.
-- Automatic global map refresh is now tied to key team workflow transitions, but broader task-completion refresh semantics are still incomplete.
-
-## Hook Enforcement Gap List
-
-- A repository-managed `pre-commit` hook source exists and runs `team check-compliance`.
-- The hook passes staged compliance-relevant files through `--changed-file` so source/header checks can stay scoped while still blocking drift.
-- Hook installation is still opt-in through `install-hooks`; stronger always-on enforcement is still incomplete.
-- Blocking coverage exists for basic process-document drift, but comprehensive doc/code mismatch coverage is still missing.
-- No blocking rule exists for stale file-header dependencies.
-- Missing plan/checklist/review-round persistence is now blocked for session-aware compliance checks.
-
-## Risk Register
-
-- Planning governance may sprawl unless round rules and exit conditions stay explicit.
-- Existing execution work may overfit raw requirements before approved-plan inputs exist.
-- Documentation enforcement may become noisy if it is introduced before formats are stable.
-- Hook checks may be too brittle if rolled out before false-positive handling is understood.
-
-## Technical Debt Register
-
-- Direct `run` entrypoints still coexist with the decision-core-first `team` happy path, but they now persist an approved-plan-style execution contract for convergence.
-- Product docs have now been upgraded to dual-layer language; topology/provider policy is still partly heuristic.
-- Decision artifacts exist, and team/direct-run execution contracts now share a core schema, but broader interoperability cleanup is still needed.
-- Roadmap/process/README alignment must continue to describe the current state as hardening and scope control, not as missing foundational planning-governance primitives.
-
-## Keep / Adjust Signals
-
-### Signals That Support Continuing
-- persisted plan sessions reduce ambiguity before execution begins
-- adversarial review meaningfully improves execution plans
-- execution strategy remains explainable when driven by approved plan artifacts
-- doc/code sync checks catch real drift without overwhelming noise
-
-### Signals That Support Further Shrinkage
-- most product value still comes from runtime-specific tricks rather than planning governance or strategy
-- plan review loops become too expensive relative to their benefit
-- documentation enforcement becomes mostly performative and not operationally useful
-- hooks create more friction than trust
+- native coding-agent dogfood baseline
+- 当前执行层更接近 workflow-governed orchestration runtime，而不是高自治 agent federation。
+- docs/process/agent-evolution-master-plan.md 是后续演进协议。
+- targetted tests 通过后进入下一 phase。
+- `--changed-file` 是 compliance / docs drift 的最小作用域输入。

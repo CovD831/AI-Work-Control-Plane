@@ -67,8 +67,10 @@ This document records the native coding-agent dogfood baseline for a `bounded_in
 - `comparison_posture_basis`
 - `comparison_proof_strength`
 - `comparative_daily_driver_summary`
+- `daily_driver_case_matrix`
 - `comparative_completion_summary`
 - `daily_driver_repeatability_tier`
+- `daily_driver_repeatability_harness`
 - `comparative_native_tool_summary`
 - `comparative_adapter_summary`
 - `approval_boundary_active`

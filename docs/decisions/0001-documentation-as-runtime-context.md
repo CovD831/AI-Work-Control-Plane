@@ -1,4 +1,4 @@
-# ADR 0001: Documentation As Runtime Context
+# Test ADR
 
 ## Status
 
@@ -6,19 +6,16 @@ Accepted
 
 ## Context
 
-AI-Work-Control-Plane depends on agents that need current project knowledge during long-running work. Static docs are not enough when planning, execution, compliance, and recovery all need the same source of truth.
+Test context.
 
 ## Decision
 
-Treat canonical documentation as runtime context. `team inspect-docs` and session-level docs context snapshots provide agent-ready context packages while preserving canonical docs as the source of truth.
+Test decision.
 
 ## Consequences
 
-- Agents can resume work with explicit document evidence instead of implicit memory.
-- Session artifacts record which docs were used for a task.
-- Full document content remains query output; persisted snapshots store ids, paths, freshness, relevance, and hashes.
+Test consequence.
 
 ## Related Commands
 
-- `python -m agent_orchestrator.cli team inspect-docs --query "<task>"`
-- `python -m agent_orchestrator.cli team check-compliance`
+- python -m agent_orchestrator.cli team check-compliance

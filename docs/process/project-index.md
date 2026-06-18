@@ -12,8 +12,17 @@
 - docs/process/goal-mode-native-agent-coverage-expansion.md
 - docs/process/goal-mode-native-agent-coverage-expansion-closure-audit.md
 - docs/process/goal-mode-native-agent-productization-closure-audit.md
+- docs/process/goal-mode-daily-driver-repeatability-summary.md
+- docs/process/goal-mode-daily-driver-repeatability.md
 - docs/process/native-coding-agent-phase-0-baseline.md
 - docs/process/native-coding-agent-phase-1-kernel-boundary.md
 - docs/process/native-coding-agent-phase-2-step-loop-convergence.md
 - docs/process/native-coding-agent-phase-4-verify-repair-resume.md
 - docs/process/native-coding-agent-phase-5-native-dogfood-track.md
+- docs/process/goal-mode-external-opencode-harness-summary.md
+- docs/process/goal-mode-external-opencode-harness.md
+- docs/process/goal-mode-external-opencode-authoritative-harness-summary.md
+- docs/process/goal-mode-external-opencode-authoritative-harness.md
+- docs/process/external-opencode-same-contract-cases.json
+- docs/process/goal-mode-native-productization-after-instrumentation-summary.md
+- docs/process/goal-mode-native-productization-after-instrumentation.md

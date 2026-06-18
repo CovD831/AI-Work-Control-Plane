@@ -42,8 +42,10 @@
 - comparison_posture_basis
 - comparison_proof_strength
 - comparative_daily_driver_summary
+- daily_driver_case_matrix
 - comparative_completion_summary
 - daily_driver_repeatability_tier
+- daily_driver_repeatability_harness
 - independent_daily_driver_repo_task_families_proven
 - external_comparison_harness_surface
 - stronger_task_families

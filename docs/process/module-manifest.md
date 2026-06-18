@@ -13,12 +13,14 @@
 - `cli_presenters.py`: Formatting helpers for CLI session and execution output.
 - `cli_team.py`: Team command dispatch for the CLI.
 - `command.py`: Command-based provider integration for real Claude/Codex runs.
+- `compliance_signal.py`: Compliance-visible stub module.
 - `control_plane.py`: AI Work Control Plane artifact models and snapshot builders.
 - `control_plane_approvals.py`: Approval item models and persistence for the control plane.
 - `control_plane_artifacts.py`: Artifact references and JSON helpers for the control plane.
 - `control_plane_constants.py`: Stable constants for AI Work Control Plane artifacts.
 - `control_plane_governance.py`: Governance bundle export and inspection for the control plane.
 - `control_plane_ledger.py`: Run ledger builder for control-plane recovery artifacts.
+- `control_plane_posture.py`: Shared session posture summaries for control-plane artifacts.
 - `control_plane_recovery.py`: Recovery timeline and recommendation builders for the control plane.
 - `control_plane_runtime.py`: Runtime event stream and provider session snapshots for the control plane.
 - `control_plane_topology.py`: Read-only execution path snapshot builder for the control plane.
@@ -31,17 +33,21 @@
 - `jobs.py`: Durable job lifecycle models and runtimes.
 - `memory.py`: Lightweight append-only memory records for orchestration evidence.
 - `messages.py`: Structured agent-to-agent messages for team orchestration.
+- `native_productization.py`: Operator-facing native productization posture and smoke helpers.
 - `observability.py`: Lightweight event recording for orchestration runs.
+- `opencode_harness.py`: Same-contract external OpenCode harness records for daily-driver comparison.
 - `orchestrator.py`: End-to-end adaptive orchestration pipeline.
 - `planning.py`: Planning governance models and team orchestration helpers.
 - `planning_governance.py`: Governance snapshot helpers derived from planning-session state.
 - `planning_support.py`: Compliance and session-guidance helpers for planning workflows.
 - `policies.py`: Policy profiles for deriving modes from the success-first parent architecture.
+- `productization_surface.py`: Shared productization surface helpers for native execution evidence.
 - `review.py`: Structured review result models.
 - `roles.py`: Responsibility registry for governance-oriented operator views.
 - `routing.py`: Deterministic policy routing for automatic orchestration mode selection.
 - `run_store.py`: Local persistence for orchestration runs.
 - `state_machine.py`: Task state machine for orchestration runs.
+- `stub.py`: Stub module.
 - `tasks.py`: Task contract and result models for the orchestration pipeline.
 - `tmux_runtime.py`: Optional tmux-backed job runtime.
 - `topology.py`: Execution topology helpers for agent-enabled orchestration.

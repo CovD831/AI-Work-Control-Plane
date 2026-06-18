@@ -1,0 +1,188 @@
+{
+  "contract_version": "external_opencode_same_contract.v1",
+  "case_family_count": 5,
+  "required_task_families": [
+    "docs_update",
+    "single_file_repair",
+    "multi_file_operator_surface",
+    "test_driven_small_feature",
+    "failure_clarify_approval_path"
+  ],
+  "required_evidence_surface": [
+    "runtime_payload",
+    "workspace_index_summary",
+    "operator_summary",
+    "failure_pause_recovery_reason"
+  ],
+  "runner_contract": {
+    "native": "native_external_runner_record.v1",
+    "opencode": "opencode_external_runner_record.v1",
+    "comparative_report": "native_vs_opencode_comparative_evidence.v1"
+  },
+  "cases": [
+    {
+      "case_id": "docs_update_001",
+      "task_family": "docs_update",
+      "repo_state_ref": "current_daily_driver_repeatability_baseline",
+      "input_prompt": "Update the goal summary/detail docs so P0-P3 status, evidence baseline, and next operator action remain consistent.",
+      "expected_touch_scope": [
+        "docs/process/**"
+      ],
+      "expected_outputs": [
+        "summary updated",
+        "detail updated",
+        "cross-link intact"
+      ],
+      "verify_command": "pytest tests/test_docs_process.py -q",
+      "manual_verify_contract": [
+        "summary references detail",
+        "P0-P3 sections present",
+        "non-goals preserved"
+      ],
+      "stop_condition": "verify passes or an explicit doc-level stop reason is recorded",
+      "pause_condition": "missing source evidence or write approval is required",
+      "failure_condition": "docs disagree, no verify evidence, or no stop reason",
+      "required_evidence_surface": [
+        "runtime_payload",
+        "workspace_index_summary",
+        "operator_summary",
+        "failure_pause_recovery_reason"
+      ],
+      "native_runner_entry": "agent-orchestrator evidence capture --case-file docs/process/external-opencode-same-contract-cases.json --output native-run.json",
+      "opencode_runner_entry": "agent-orchestrator evidence opencode-run --case-pack docs/process/external-opencode-same-contract-cases.json --output opencode-run.json",
+      "comparison_notes": "same prompt, doc touch scope, and verify/stop standard for both runners"
+    },
+    {
+      "case_id": "single_file_repair_001",
+      "task_family": "single_file_repair",
+      "repo_state_ref": "current_daily_driver_repeatability_baseline",
+      "input_prompt": "Perform a one-file behavior repair and prove it with a focused test or explicit stop reason.",
+      "expected_touch_scope": [
+        "src/agent_orchestrator/**",
+        "tests/**"
+      ],
+      "expected_outputs": [
+        "single implementation file repaired",
+        "focused verification recorded"
+      ],
+      "verify_command": "pytest tests/test_coding_agent_runtime.py -q",
+      "manual_verify_contract": [
+        "touch scope is bounded",
+        "repair reason is visible",
+        "verification or stop is recorded"
+      ],
+      "stop_condition": "focused verification passes or repair cannot proceed with a semantic stop reason",
+      "pause_condition": "ambiguous target behavior or approval boundary blocks the edit",
+      "failure_condition": "multiple unrelated files changed, no verification, or recovery reason missing",
+      "required_evidence_surface": [
+        "runtime_payload",
+        "workspace_index_summary",
+        "operator_summary",
+        "failure_pause_recovery_reason"
+      ],
+      "native_runner_entry": "agent-orchestrator evidence capture --case-file docs/process/external-opencode-same-contract-cases.json --output native-run.json",
+      "opencode_runner_entry": "agent-orchestrator evidence opencode-run --case-pack docs/process/external-opencode-same-contract-cases.json --output opencode-run.json",
+      "comparison_notes": "same one-file repair contract and verify/stop gate"
+    },
+    {
+      "case_id": "multi_file_operator_surface_001",
+      "task_family": "multi_file_operator_surface",
+      "repo_state_ref": "current_daily_driver_repeatability_baseline",
+      "input_prompt": "Update a multi-file operator surface so runtime payload, workspace index, and CLI/operator summary describe the same fact chain.",
+      "expected_touch_scope": [
+        "src/agent_orchestrator/**",
+        "tests/**",
+        "docs/process/**"
+      ],
+      "expected_outputs": [
+        "runtime payload aligned",
+        "workspace index aligned",
+        "CLI/operator summary aligned"
+      ],
+      "verify_command": "pytest tests/test_evidence.py tests/test_cli.py -q",
+      "manual_verify_contract": [
+        "fact chain visible on at least two surfaces",
+        "operator summary has next action"
+      ],
+      "stop_condition": "surface verification passes or mismatch is stopped with evidence pointers",
+      "pause_condition": "approval needed for broad multi-file surface changes",
+      "failure_condition": "surfaces diverge, no next action, or no workspace index summary",
+      "required_evidence_surface": [
+        "runtime_payload",
+        "workspace_index_summary",
+        "operator_summary",
+        "failure_pause_recovery_reason"
+      ],
+      "native_runner_entry": "agent-orchestrator evidence capture --case-file docs/process/external-opencode-same-contract-cases.json --output native-run.json",
+      "opencode_runner_entry": "agent-orchestrator evidence opencode-run --case-pack docs/process/external-opencode-same-contract-cases.json --output opencode-run.json",
+      "comparison_notes": "same multi-surface consistency contract for both runners"
+    },
+    {
+      "case_id": "test_driven_small_feature_001",
+      "task_family": "test_driven_small_feature",
+      "repo_state_ref": "current_daily_driver_repeatability_baseline",
+      "input_prompt": "Add a small test-driven contract feature, update the minimal implementation, and record verification.",
+      "expected_touch_scope": [
+        "src/agent_orchestrator/**",
+        "tests/**"
+      ],
+      "expected_outputs": [
+        "test added or updated",
+        "implementation updated",
+        "verification recorded"
+      ],
+      "verify_command": "pytest tests/test_evidence.py -q",
+      "manual_verify_contract": [
+        "test fails without feature",
+        "implementation is minimal",
+        "verification evidence is linked"
+      ],
+      "stop_condition": "test passes or stop reason explains why feature cannot be safely implemented",
+      "pause_condition": "test intent is ambiguous or requires operator choice",
+      "failure_condition": "implementation lacks a test, verify missing, or failure has no next step",
+      "required_evidence_surface": [
+        "runtime_payload",
+        "workspace_index_summary",
+        "operator_summary",
+        "failure_pause_recovery_reason"
+      ],
+      "native_runner_entry": "agent-orchestrator evidence capture --case-file docs/process/external-opencode-same-contract-cases.json --output native-run.json",
+      "opencode_runner_entry": "agent-orchestrator evidence opencode-run --case-pack docs/process/external-opencode-same-contract-cases.json --output opencode-run.json",
+      "comparison_notes": "same test-first expected output and verify/stop gate"
+    },
+    {
+      "case_id": "failure_clarify_approval_path_001",
+      "task_family": "failure_clarify_approval_path",
+      "repo_state_ref": "current_daily_driver_repeatability_baseline",
+      "input_prompt": "Exercise a failure, clarify, approval pause, resume, or stop path and record the semantic recovery reason.",
+      "expected_touch_scope": [
+        "docs/process/**",
+        "src/agent_orchestrator/**",
+        "tests/**"
+      ],
+      "expected_outputs": [
+        "pause or stop reason",
+        "recovery next action",
+        "operator-readable summary"
+      ],
+      "verify_command": null,
+      "manual_verify_contract": [
+        "pause/failure/stop reason is semantic",
+        "resume expectation is explicit",
+        "workspace is not damaged"
+      ],
+      "stop_condition": "explicit stop reason with next action is recorded",
+      "pause_condition": "approval, missing context, or unsafe change boundary is reached",
+      "failure_condition": "blocked state has no reason, no next action, or workspace integrity is unclear",
+      "required_evidence_surface": [
+        "runtime_payload",
+        "workspace_index_summary",
+        "operator_summary",
+        "failure_pause_recovery_reason"
+      ],
+      "native_runner_entry": "agent-orchestrator evidence capture --case-file docs/process/external-opencode-same-contract-cases.json --output native-run.json",
+      "opencode_runner_entry": "agent-orchestrator evidence opencode-run --case-pack docs/process/external-opencode-same-contract-cases.json --output opencode-run.json",
+      "comparison_notes": "same boundary-semantics contract; stop is acceptable when verify is not applicable"
+    }
+  ]
+}
